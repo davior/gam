@@ -115,7 +115,13 @@ def embedded_library_fixture(library, session, monkeypatch):
             ("I made a sandwich in the kitchen this morning.", 300.0),
         ],
     )
-    return {"giordano": giordano, "schwab": schwab, "client": library, "stub": stub}
+    return {
+        "giordano": giordano,
+        "schwab": schwab,
+        "client": library,
+        "stub": stub,
+        "add": add,
+    }
 
 
 def search(client, q, **params):
@@ -145,12 +151,58 @@ def test_the_snippet_is_the_line_not_the_whole_transcript(embedded_library):
 
 
 def test_an_exact_phrase_still_ranks_first(embedded_library):
-    """Guards the fusion from becoming the vector index in disguise. A verbatim quote is
-    exactly what keyword search is for, and it must not be diluted."""
+    """A verbatim quote is exactly what keyword search is for, and it must not be
+    diluted.
+
+    On its own this is weak evidence: the stub puts "industrial" and "revolution" on the
+    economics axis, so the vector index would have picked Davos too. It says the right
+    answer comes back, not that keyword search is why. The next test is the one that
+    pins that down.
+    """
     body = search(embedded_library["client"], "fourth industrial revolution")
 
     assert body["data"][0]["asset"]["name"] == "Davos panel"
     assert "keyword" in body["data"][0]["sources"]
+
+
+def test_containing_the_words_beats_merely_meaning_them(embedded_library, session):
+    """The real guard against the fusion being the vector index in disguise.
+
+    Every other search test would still pass if the keyword list were dropped from the
+    fusion entirely, because the two retrievers agree on the answer. Here they are made
+    to disagree: one asset says the words, another only means them, and the vector index
+    prefers the one that only means them. If keyword search is carrying any weight at
+    all, the asset that actually contains the phrase comes out on top.
+    """
+    stub, add = embedded_library["stub"], embedded_library["add"]
+
+    # Pure weapons vector, and not one word of the query anywhere in it.
+    decoy = add("Defence briefing", "", [("Armament reviews were completed.", 10.0)])
+    # Contains the phrase verbatim, but the cooking words drag its vector off-axis.
+    holder = add(
+        "Kitchen chemistry",
+        "",
+        [("The aerosol dispersion recipe came from the kitchen.", 20.0)],
+    )
+
+    # ── the premise, asserted rather than assumed ──
+    # Semantic search prefers the decoy: it has to, or this test proves nothing.
+    ranked = vectors.search(
+        session,
+        "user-under-test",
+        stub.embed(["aerosol dispersion"])[0],
+        model=stub.model,
+    )
+    order = [hit.asset_id for hit in ranked]
+    assert order.index(decoy.id) < order.index(holder.id)
+
+    # And keyword search cannot see the decoy at all.
+    hits = fts.search_segments(session, "user-under-test", "aerosol dispersion")
+    assert all(hit.asset_id != decoy.id for hit in hits)
+
+    # ── the claim ──
+    names = [row["asset"]["name"] for row in search(embedded_library["client"], "aerosol dispersion")["data"]]
+    assert names.index("Kitchen chemistry") < names.index("Defence briefing")
 
 
 def test_a_name_only_match_is_found(embedded_library):
