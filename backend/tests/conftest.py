@@ -103,6 +103,26 @@ def auth_client_fixture(session):
     fastapi_app.dependency_overrides.clear()
 
 
+@pytest.fixture(name="real_auth_library")
+def real_auth_library_fixture(session, media_dir):
+    """Storage overridden, authentication real.
+
+    `library` overrides `current_user`, which is right for tests about assets and wrong
+    for tests about who is allowed to do what — an override cannot fail the way the
+    real dependency can. Anything asserting on tokens, cookies or the CSRF guard has to
+    go through the genuine path, so it gets this instead.
+    """
+    from app.routers.assets import get_storage
+    from app.storage import LocalStorage
+
+    storage = LocalStorage(media_dir)
+    fastapi_app.dependency_overrides[get_session] = lambda: session
+    fastapi_app.dependency_overrides[get_storage] = lambda: storage
+    with TestClient(fastapi_app) as client:
+        yield client
+    fastapi_app.dependency_overrides.clear()
+
+
 @pytest.fixture(name="media_dir")
 def media_dir_fixture(tmp_path, monkeypatch):
     """Point storage at a temp directory for one test.

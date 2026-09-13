@@ -28,9 +28,10 @@ import hmac
 import logging
 import time
 from typing import Annotated, Optional
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import Cookie, Depends, Header, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
@@ -66,7 +67,59 @@ def _unauthorized(message: str) -> HTTPException:
     )
 
 
+# ─── CSRF, for the cookie path only ──────────────────────────────────────────
+#
+# A bearer token cannot be attached by a cross-site form, an <img>, or a fetch the
+# browser makes on another site's behalf — so the header path needs no protection. The
+# cookie is an ambient credential and does need it.
+#
+# The case that makes this urgent is upload: a cross-origin POST carrying
+# multipart/form-data is a *simple* request, so the browser sends it with no preflight
+# to block. CORS would stop the attacker reading the response; it would not stop the
+# write. Gecko Notes added this guard with the cookie; GAM accepts the same cookie and
+# must do the same.
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _host_of(url: str) -> str:
+    try:
+        return urlsplit(url).netloc.lower()
+    except ValueError:
+        return ""
+
+
+def _origin_allowed_for_cookie(request: Request) -> bool:
+    """Whether a cookie-authenticated request may proceed.
+
+    Fails closed on a missing Origin: a browser always sends one (or a Referer) on a
+    state-changing request, so its absence means this did not come from a browser doing
+    what a browser does.
+    """
+    if request.method.upper() in _SAFE_METHODS:
+        return True
+
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if not origin:
+        return False
+
+    origin_host = _host_of(origin)
+    if not origin_host:
+        return False
+
+    # Same-origin is always allowed — it is GAM's own frontend talking to GAM's own
+    # API, which is the normal deployment (nginx serves both on one origin). Comparing
+    # against the Host header rather than a configured value means this needs no extra
+    # setting and cannot drift from where the app is actually served.
+    request_host = (request.headers.get("host") or "").lower()
+    if request_host and origin_host == request_host:
+        return True
+
+    return any(origin_host == _host_of(allowed) for allowed in settings.cors_origins)
+
+
 def current_user(
+    request: Request,
     authorization: Annotated[Optional[str], Header()] = None,
     gecko_session: Annotated[Optional[str], Cookie()] = None,
 ) -> UserCtx:
@@ -82,6 +135,14 @@ def current_user(
         token = authorization[7:].strip()
     elif gecko_session:
         token = gecko_session.strip()
+        if not _origin_allowed_for_cookie(request):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "forbidden_origin",
+                    "message": "Cookie authentication requires an allowed Origin",
+                },
+            )
 
     if not token:
         # Only after both real transports have been tried, so a dev environment still

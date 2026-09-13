@@ -39,7 +39,12 @@ def make_token(
 def test_bearer_header_is_accepted(client):
     response = client.get("/api/me", headers={"Authorization": f"Bearer {make_token()}"})
     assert response.status_code == 200
-    assert response.json()["data"] == {"id": "notes-user-1", "username": "davior"}
+
+    # Assert the identity, not the exact field set: /api/me also reports what the local
+    # shadow row knows, and a whole-dict comparison would break every time that grows.
+    body = response.json()["data"]
+    assert body["id"] == "notes-user-1"
+    assert body["username"] == "davior"
 
 
 def test_session_cookie_is_accepted(client):
@@ -126,3 +131,125 @@ def test_dependency_override_still_works(auth_client):
     response = auth_client.get("/api/me")
     assert response.status_code == 200
     assert response.json()["data"]["username"] == "tester"
+
+
+# ─── CSRF on the cookie path ─────────────────────────────────────────────────
+#
+# The cookie is an ambient credential: the browser attaches it to cross-site requests
+# on its own. A bearer token cannot be attached that way, which is why only this path
+# needs a guard.
+
+
+def test_cross_origin_cookie_write_is_refused(real_auth_library):
+    """The hole this closes.
+
+    A cross-origin POST carrying multipart/form-data is a *simple* request, so no
+    preflight stands between an attacker's page and this endpoint. CORS would stop them
+    reading the response; it would not stop the upload landing in someone's library.
+    """
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("evil.jpg", b"\xff\xd8\xff", "image/jpeg"))],
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "forbidden_origin"
+
+
+def test_cross_origin_cookie_write_is_refused_via_referer(real_auth_library):
+    """A request with no Origin but a Referer is judged on the Referer."""
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("evil.jpg", b"\xff\xd8\xff", "image/jpeg"))],
+        headers={"Referer": "https://evil.example/attack.html"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_cookie_write_with_no_origin_at_all_is_refused(client):
+    """Fails closed. A browser always sends one on a state-changing request, so its
+    absence means this did not come from a browser doing what a browser does."""
+    client.cookies.set("gecko_session", make_token())
+
+    response = client.request("DELETE", "/api/assets/whatever")
+    assert response.status_code == 403
+
+
+def test_same_origin_cookie_write_is_allowed(real_auth_library):
+    """GAM's own frontend must keep working — it is served from the same origin as the
+    API, and it authenticates by cookie once the suite session exists."""
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("photo.jpg", b"\xff\xd8\xff\xe0" + b"\x00" * 64, "image/jpeg"))],
+        # TestClient's base_url is http://testserver, so this is same-origin.
+        headers={"Origin": "http://testserver"},
+    )
+
+    assert response.status_code in (201, 400), response.text
+    assert response.status_code != 403
+
+
+def test_an_allowlisted_origin_cookie_write_is_allowed(real_auth_library, monkeypatch):
+    """A configured sibling origin passes, which is what CORS_ORIGIN is for."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cors_origin", "https://notes.geckopico.com")
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("photo.jpg", b"\xff\xd8\xff\xe0" + b"\x00" * 64, "image/jpeg"))],
+        headers={"Origin": "https://notes.geckopico.com"},
+    )
+
+    assert response.status_code != 403
+
+
+def test_cookie_reads_are_unaffected(real_auth_library):
+    """Safe methods change nothing, so a foreign Origin on a GET is not a threat — and
+    refusing them would break an <img> or <video> pointed at a signed URL."""
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.get("/api/assets", headers={"Origin": "https://evil.example"})
+    assert response.status_code == 200
+
+
+def test_the_header_path_is_exempt(real_auth_library):
+    """A bearer token cannot be attached by a cross-site form or image, so the guard
+    does not apply — and applying it would break every API client that is not a
+    browser."""
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("photo.jpg", b"\xff\xd8\xff\xe0" + b"\x00" * 64, "image/jpeg"))],
+        headers={
+            "Authorization": f"Bearer {make_token()}",
+            "Origin": "https://evil.example",
+        },
+    )
+
+    assert response.status_code != 403
+
+
+def test_a_lookalike_origin_does_not_pass(real_auth_library, monkeypatch):
+    """Host comparison, not a prefix match: notes.geckopico.com.evil.example must not
+    satisfy an allowlist entry of notes.geckopico.com."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "cors_origin", "https://notes.geckopico.com")
+    real_auth_library.cookies.set("gecko_session", make_token())
+
+    response = real_auth_library.post(
+        "/api/assets",
+        files=[("files", ("evil.jpg", b"\xff\xd8\xff", "image/jpeg"))],
+        headers={"Origin": "https://notes.geckopico.com.evil.example"},
+    )
+
+    assert response.status_code == 403

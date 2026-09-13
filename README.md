@@ -87,6 +87,9 @@ cp .env.example .env     # JWT_SECRET_KEY is required
 docker compose up --build -d
 ```
 
+For a real deployment on `gam.geckopico.com`, see
+[`docs/deployment.md`](docs/deployment.md).
+
 `JWT_SECRET_KEY` **must match the value Gecko Notes uses** — that shared secret is what
 lets GAM verify a session Notes issued. Generate one with `openssl rand -hex 32` if you
 are running GAM standalone.
