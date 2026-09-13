@@ -46,7 +46,9 @@ describe('auth store bootstrap', () => {
   })
 
   it('distinguishes an unreachable backend from a signed-out user', async () => {
-    vi.spyOn(authApi, 'me').mockRejectedValue(new AxiosError('Network Error', 'ERR_NETWORK'))
+    vi.spyOn(authApi, 'me').mockRejectedValue(
+      new AxiosError('Network Error', 'ERR_NETWORK')
+    )
 
     await useAuthStore.getState().bootstrap()
 
@@ -58,11 +60,19 @@ describe('auth store bootstrap', () => {
   it('does not fire a second request while one is in flight', async () => {
     // React 18 StrictMode mounts effects twice in development, so this is the normal
     // case rather than an edge one.
-    const me = vi.spyOn(authApi, 'me').mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve({ id: 'u1', username: 'a' }), 10))
-    )
+    const me = vi
+      .spyOn(authApi, 'me')
+      .mockImplementation(
+        () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ id: 'u1', username: 'a' }), 10)
+          )
+      )
 
-    await Promise.all([useAuthStore.getState().bootstrap(), useAuthStore.getState().bootstrap()])
+    await Promise.all([
+      useAuthStore.getState().bootstrap(),
+      useAuthStore.getState().bootstrap(),
+    ])
 
     expect(me).toHaveBeenCalledTimes(1)
   })

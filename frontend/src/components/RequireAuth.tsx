@@ -22,7 +22,9 @@ export default function RequireAuth({ children }: Props) {
   if (status === 'idle' || status === 'loading') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <span className="text-sm text-gray-500 dark:text-gray-400">Checking your session…</span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">
+          Checking your session…
+        </span>
       </div>
     )
   }
@@ -45,7 +47,11 @@ export default function RequireAuth({ children }: Props) {
             {error ?? 'Gecko Asset Manager uses your Gecko Notes account.'}
           </p>
           {!error && (
-            <button type="button" className="btn btn-primary w-full" onClick={redirectToLogin}>
+            <button
+              type="button"
+              className="btn btn-primary w-full"
+              onClick={redirectToLogin}
+            >
               Sign in with Gecko Notes
             </button>
           )}

@@ -40,7 +40,9 @@ describe('RequireAuth', () => {
 
   it('offers sign-in when anonymous', () => {
     renderGate({ status: 'anonymous', error: null })
-    expect(screen.getByRole('button', { name: /sign in with gecko notes/i })).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /sign in with gecko notes/i })
+    ).toBeInTheDocument()
     expect(screen.queryByText('protected content')).not.toBeInTheDocument()
   })
 

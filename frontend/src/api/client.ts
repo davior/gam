@@ -58,7 +58,10 @@ client.interceptors.request.use((config) => {
  * also fail before it reaches the backend — a dropped connection, a proxy error — and
  * "undefined" is not something to show a user.
  */
-export function apiErrorMessage(error: unknown, fallback = 'Something went wrong'): string {
+export function apiErrorMessage(
+  error: unknown,
+  fallback = 'Something went wrong'
+): string {
   if (axios.isAxiosError(error)) {
     const detail = (error as AxiosError<{ detail?: { message?: string } }>).response?.data
       ?.detail
@@ -73,7 +76,8 @@ export function apiErrorMessage(error: unknown, fallback = 'Something went wrong
 /** The machine-readable code, for branching on a specific failure. */
 export function apiErrorCode(error: unknown): string | null {
   if (axios.isAxiosError(error)) {
-    const detail = (error as AxiosError<{ detail?: { code?: string } }>).response?.data?.detail
+    const detail = (error as AxiosError<{ detail?: { code?: string } }>).response?.data
+      ?.detail
     return detail?.code ?? null
   }
   return null

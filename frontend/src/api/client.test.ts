@@ -11,7 +11,9 @@ function axiosErrorWith(data: unknown, code?: string): AxiosError {
 
 describe('apiErrorMessage', () => {
   it('prefers the backend message', () => {
-    const error = axiosErrorWith({ detail: { code: 'too_large', message: 'File is too big' } })
+    const error = axiosErrorWith({
+      detail: { code: 'too_large', message: 'File is too big' },
+    })
     expect(apiErrorMessage(error)).toBe('File is too big')
   })
 

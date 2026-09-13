@@ -34,12 +34,20 @@ export default function AppShell({ children }: Props) {
               type="button"
               onClick={toggleTheme}
               className="btn btn-ghost p-2"
-              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              aria-label={
+                theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+              }
             >
-              {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4" />
+              ) : (
+                <Moon className="h-4 w-4" />
+              )}
             </button>
             {user && (
-              <span className="text-sm text-gray-600 dark:text-gray-400">{user.username}</span>
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {user.username}
+              </span>
             )}
           </div>
         </div>
