@@ -262,3 +262,22 @@ def test_delete_someone_elses_asset_is_a_404(library, session):
 
     assert library.delete(f"/api/assets/{other.id}").status_code == 404
     assert session.get(Asset, other.id) is not None
+
+
+def test_image_has_no_duration_or_codec(library):
+    """ffprobe models a still as a one-frame video, reporting codec "mjpeg" and a
+    0.04s duration. Carried through, that puts a "0:00" badge on every image tile."""
+    asset = _upload(library, "sample_image.jpg").json()["created"][0]
+
+    assert asset["duration_seconds"] is None
+    assert asset["codec"] is None
+    # The dimensions are real and must survive.
+    assert (asset["width"], asset["height"]) == (800, 600)
+
+
+def test_video_keeps_its_duration_and_codec(library):
+    """Guards the fix above from being over-broad."""
+    asset = _upload(library, "sample_video.mp4").json()["created"][0]
+
+    assert asset["duration_seconds"] == pytest.approx(2.0, abs=0.3)
+    assert asset["codec"] == "h264"

@@ -20,6 +20,7 @@ from app.config import settings
 from app.ingest import thumbnails
 from app.ingest.filetypes import (
     SOURCE_UPLOAD,
+    TYPE_IMAGE,
     asset_type_for,
     display_name_from,
     extension_of,
@@ -97,10 +98,19 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     try:
         with storage.materialise(asset.storage_key) as path:
             result = probe(path)
-            asset.duration_seconds = result.duration_seconds
             asset.width = result.width
             asset.height = result.height
-            asset.codec = result.codec
+
+            # ffprobe models a still image as a one-frame video stream, so a JPEG
+            # comes back with codec "mjpeg" and a duration of one frame — 0.04s. Both
+            # are artefacts of that model rather than facts about the picture, and
+            # carrying them through would put a "0:00" badge on every image tile and
+            # list a codec for a file that has none. probe() stays a faithful reporter
+            # of what ffprobe said; deciding what is meaningful for an asset type
+            # belongs here.
+            if asset.asset_type != TYPE_IMAGE:
+                asset.duration_seconds = result.duration_seconds
+                asset.codec = result.codec
 
             preview = thumbnails.generate(
                 path,
