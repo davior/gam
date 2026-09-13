@@ -29,6 +29,16 @@ from app.auth import UserCtx  # noqa: E402
 TEST_USER_ID = "user-under-test"
 
 
+@pytest.fixture
+def anyio_backend():
+    """Run `@pytest.mark.anyio` tests on asyncio only.
+
+    anyio's plugin would otherwise parameterise every async test across asyncio and
+    trio, and trio is not a dependency — the app runs under uvicorn/asyncio.
+    """
+    return "asyncio"
+
+
 @pytest.fixture(name="engine")
 def engine_fixture():
     """An in-memory database shared across connections.
