@@ -1,0 +1,26 @@
+# Overlay for reverse-proxy deployments.
+#
+# The app containers listen on plain HTTP; an external reverse proxy (Caddy, from the
+# infra repo) terminates TLS and routes gam.geckopico.com to the frontend over a shared
+# Docker network. This file is what joins them to it — without it the frontend sits on
+# gam_default, unreachable from the proxy, and every request is a 502.
+#
+# Activate explicitly:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+#
+# Or, better, set this in .env so a plain `docker compose up -d` cannot forget it:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
+
+services:
+  backend:
+    networks:
+      - default
+      - web
+  frontend:
+    networks:
+      - default
+      - web
+
+networks:
+  web:
+    external: true
