@@ -62,6 +62,11 @@ valuable thing in the file. This is gecko-notes' house style and it is worth kee
 
 ## After every change (dev environment)
 
+Dev ports are 8001 and 5174, not 8000 and 5173 — gecko-notes uses those and both
+apps run at once. `vite.config.ts`'s proxy target has to match the port uvicorn is
+started on, or the frontend reaches gecko-notes' backend, which shares
+`JWT_SECRET_KEY` and answers instead of erroring.
+
 The backend runs on **Python 3.13**, pinned by `.python-version` and matched by
 `backend/Dockerfile` and CI. Not "3.13 or newer" — the pinned Pillow and numpy ship
 wheels no further than 3.13, and on a newer interpreter pip silently compiles them from
@@ -69,10 +74,10 @@ source and fails there. Build the venv with `uv venv` (which reads `.python-vers
 or `python3.13 -m venv`, never a bare `python3`.
 
 ```bash
-# Backend — http://localhost:8000 (auto-reloads on save)
-cd backend && uvicorn app.main:app --reload --port 8000
+# Backend — http://localhost:8001 (auto-reloads on save)
+cd backend && uvicorn app.main:app --reload --port 8001
 
-# Frontend — http://localhost:5173 (Vite HMR; proxies /api and /media to :8000)
+# Frontend — http://localhost:5174 (Vite HMR; proxies /api and /media to :8001)
 cd frontend && npm run dev
 ```
 

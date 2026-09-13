@@ -67,6 +67,9 @@ Matches Gecko Notes, so the two stay maintainable together:
 
 Requires **Python 3.13**, Node 20+, and `ffmpeg`/`ffprobe` on `PATH`.
 
+Dev ports are **8001** (backend) and **5174** (frontend), not the usual 8000/5173:
+gecko-notes claims those, and the two apps get run side by side.
+
 Python 3.13 exactly, not "3.13 or newer": the pinned Pillow and numpy publish wheels up
 to 3.13 only, and on a newer interpreter pip quietly falls back to compiling them from
 source, which fails without a C toolchain and libjpeg headers. `.python-version` pins it,
@@ -74,17 +77,17 @@ so `uv venv` picks the right interpreter — downloading it if you don't have on
 your system Python stops mattering.
 
 ```bash
-# Backend — http://localhost:8000
+# Backend — http://localhost:8001
 cd backend
 uv venv && source .venv/bin/activate      # honours .python-version
 uv pip install -r requirements-dev.txt
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 
 # Without uv, name the interpreter explicitly — a bare `python3` is what breaks:
 #   python3.13 -m venv .venv && source .venv/bin/activate
 #   pip install -r requirements-dev.txt
 
-# Frontend — http://localhost:5173 (proxies /api and /media to :8000)
+# Frontend — http://localhost:5174 (proxies /api and /media to :8001)
 cd frontend
 npm install
 npm run dev

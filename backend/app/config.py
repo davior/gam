@@ -62,7 +62,6 @@ class Settings(BaseSettings):
 
     # ─── http ────────────────────────────────────────────────────────────────
     cors_origin: str = ""
-    app_base_url: str = "http://localhost:5173"
 
     # ─── jobs ────────────────────────────────────────────────────────────────
     job_heartbeat_seconds: int = 30
