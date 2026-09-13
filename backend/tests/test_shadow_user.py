@@ -4,9 +4,10 @@ GAM does not own identity, but a verified token is not a user row — and withou
 knows a subject string and nothing else.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from app.auth import UserCtx
+from app.clock import utcnow
 from app.models.user import User
 from app.services.users import LAST_SEEN_REFRESH, ensure_user
 from tests.test_auth import make_token
@@ -72,7 +73,7 @@ def test_a_stale_last_seen_is_refreshed(session):
     ensure_user(session, ctx)
 
     user = session.get(User, "u1")
-    user.last_seen = datetime.utcnow() - LAST_SEEN_REFRESH - timedelta(minutes=1)
+    user.last_seen = utcnow() - LAST_SEEN_REFRESH - timedelta(minutes=1)
     session.add(user)
     session.commit()
     stale = user.last_seen

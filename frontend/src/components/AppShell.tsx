@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Moon, Settings, Sun } from 'lucide-react'
+import { Moon, Search, Settings, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
@@ -45,6 +45,9 @@ export default function AppShell({ children }: Props) {
                 <Moon className="h-4 w-4" />
               )}
             </button>
+            <Link to="/search" className="btn btn-ghost p-2" aria-label="Search">
+              <Search className="h-4 w-4" />
+            </Link>
             <Link to="/settings" className="btn btn-ghost p-2" aria-label="Settings">
               <Settings className="h-4 w-4" />
             </Link>

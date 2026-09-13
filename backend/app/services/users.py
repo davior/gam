@@ -15,11 +15,12 @@ put a second service on GAM's request path and let Notes being slow make GAM slo
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlmodel import Session
 
 from app.auth import UserCtx
+from app.clock import utcnow
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ def ensure_user(session: Session, ctx: UserCtx) -> User:
     turn into a failed request.
     """
     user = session.get(User, ctx.id)
-    now = datetime.utcnow()
+    now = utcnow()
 
     if user is None:
         user = User(id=ctx.id, username=ctx.username or "", created_at=now, last_seen=now)

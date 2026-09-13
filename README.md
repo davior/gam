@@ -65,14 +65,24 @@ Matches Gecko Notes, so the two stay maintainable together:
 
 ## Development
 
-Requires Python 3.11+, Node 20+, and `ffmpeg`/`ffprobe` on `PATH`.
+Requires **Python 3.13**, Node 20+, and `ffmpeg`/`ffprobe` on `PATH`.
+
+Python 3.13 exactly, not "3.13 or newer": the pinned Pillow and numpy publish wheels up
+to 3.13 only, and on a newer interpreter pip quietly falls back to compiling them from
+source, which fails without a C toolchain and libjpeg headers. `.python-version` pins it,
+so `uv venv` picks the right interpreter — downloading it if you don't have one — and
+your system Python stops mattering.
 
 ```bash
 # Backend — http://localhost:8000
 cd backend
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt
+uv venv && source .venv/bin/activate      # honours .python-version
+uv pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8000
+
+# Without uv, name the interpreter explicitly — a bare `python3` is what breaks:
+#   python3.13 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements-dev.txt
 
 # Frontend — http://localhost:5173 (proxies /api and /media to :8000)
 cd frontend

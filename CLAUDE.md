@@ -40,7 +40,10 @@ here.
   helper per router.
 - Structured data is JSON-as-TEXT in a `str` column, decoded on read.
 - Primary keys are `str(uuid.uuid4())` generated at the call site.
-- Timestamps are naive UTC, named `created_at` / `updated_at` consistently.
+- Timestamps are naive UTC, named `created_at` / `updated_at` consistently, and come
+  from `app.clock.utcnow` — never `datetime.utcnow()` (deprecated, scheduled for
+  removal) and never `datetime.now(UTC)` (aware, so it raises TypeError the moment
+  anything subtracts it from a value read back out of the database).
 - Tests go through `TestClient` against real routes, not by calling router functions
   directly.
 
@@ -58,6 +61,12 @@ recording a constraint, a rejected alternative or a load-bearing subtlety is the
 valuable thing in the file. This is gecko-notes' house style and it is worth keeping.
 
 ## After every change (dev environment)
+
+The backend runs on **Python 3.13**, pinned by `.python-version` and matched by
+`backend/Dockerfile` and CI. Not "3.13 or newer" — the pinned Pillow and numpy ship
+wheels no further than 3.13, and on a newer interpreter pip silently compiles them from
+source and fails there. Build the venv with `uv venv` (which reads `.python-version`)
+or `python3.13 -m venv`, never a bare `python3`.
 
 ```bash
 # Backend — http://localhost:8000 (auto-reloads on save)

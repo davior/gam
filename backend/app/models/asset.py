@@ -5,6 +5,8 @@ from typing import Optional
 from sqlalchemy import Index
 from sqlmodel import Field, SQLModel
 
+from app.clock import utcnow
+
 
 def new_asset_id() -> str:
     return str(uuid.uuid4())
@@ -84,6 +86,6 @@ class Asset(SQLModel, table=True):
     # changed, and when its metadata was last edited. Collapsing them would lose the
     # ability to answer "what have I described recently" separately from "what have I
     # added recently".
-    upload_date: datetime = Field(default_factory=datetime.utcnow, index=True)
-    modified_date: datetime = Field(default_factory=datetime.utcnow)
-    metadata_modified_date: datetime = Field(default_factory=datetime.utcnow)
+    upload_date: datetime = Field(default_factory=utcnow, index=True)
+    modified_date: datetime = Field(default_factory=utcnow)
+    metadata_modified_date: datetime = Field(default_factory=utcnow)

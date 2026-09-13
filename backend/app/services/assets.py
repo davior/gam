@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-from datetime import datetime
 from typing import AsyncIterator, Optional
 
 from sqlmodel import Session
 
 from app.auth import sign_media_key
+from app.clock import utcnow
 from app.config import settings
 from app.ingest import thumbnails
 from app.ingest.filetypes import (
@@ -29,6 +29,7 @@ from app.ingest.filetypes import (
 from app.ingest.probe import probe
 from app.models.asset import Asset
 from app.schemas_assets import AssetRead
+from app.search import fts
 from app.storage import LocalStorage, StorageError, new_key, thumb_key_for
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ async def ingest_upload(
     session.commit()
     session.refresh(asset)
 
+    _reindex(session, asset)
     _describe(session, storage, asset)
     return asset
 
@@ -132,6 +134,20 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     session.add(asset)
     session.commit()
     session.refresh(asset)
+    _reindex(session, asset)
+
+
+def _reindex(session: Session, asset: Asset) -> None:
+    """Keep the keyword index in step with the row.
+
+    Never raises: a stale search index is a worse search result, while a failed upload
+    is a lost file. The two are not remotely equal, so indexing does not get a vote on
+    whether the write succeeded.
+    """
+    try:
+        fts.index_asset(session, asset)
+    except Exception:  # noqa: BLE001 - see above
+        logger.warning("Could not index asset %s for search", asset.id, exc_info=True)
 
 
 def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
@@ -143,8 +159,14 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     """
     storage_key, thumb_key = asset.storage_key, asset.thumb_key
 
+    asset_id = asset.id
     session.delete(asset)
     session.commit()
+
+    try:
+        fts.remove_asset(session, asset_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not un-index asset %s", asset_id, exc_info=True)
 
     for key in (storage_key, thumb_key):
         if key:
@@ -172,11 +194,12 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
         provenance[field] = "human"
 
     asset.field_provenance = json.dumps(provenance, sort_keys=True)
-    asset.metadata_modified_date = datetime.utcnow()
+    asset.metadata_modified_date = utcnow()
 
     session.add(asset)
     session.commit()
     session.refresh(asset)
+    _reindex(session, asset)
     return asset
 
 

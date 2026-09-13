@@ -333,6 +333,61 @@ Found while reading; each is independent of the above.
 
 ---
 
+## GN-7 — python-jose is on five CVEs  *(security, independent of GAM)*
+
+`backend/requirements.txt:10` pins `python-jose[cryptography]==3.3.0`, released in 2021.
+PyPI reports five advisories against it, all fixed in 3.4.0:
+
+| Advisory | What it is |
+|---|---|
+| CVE-2024-33663 | Algorithm confusion with OpenSSH ECDSA and other key formats — the class that ends in forged tokens |
+| CVE-2024-33664 | DoS via a crafted JWE during decode |
+| CVE-2024-29370 | DoS in `jwe.decrypt` (listed with no fixed version) |
+
+This is the library Notes uses to sign and verify every session token, so it is worth
+reading carefully rather than filing as a routine bump.
+
+**How exposed Notes actually is: less than that table suggests.** `backend/app/auth.py:47`
+decodes as `jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])` — an explicit
+single-algorithm allowlist, which is the documented mitigation for CVE-2024-33663. The two
+DoS advisories are in the JWE paths, and Notes issues JWS. So this closes a gap and
+removes a dated dependency; it is not a live hole, and it does not warrant an emergency
+deploy.
+
+**The change:** `python-jose[cryptography]==3.3.0` → `==3.5.0`. No API change — GAM made
+exactly this bump and its 352 tests passed untouched, auth tests included. Keep the
+explicit `algorithms=` allowlist regardless of version; it is good practice independent
+of any CVE.
+
+There is a second reason beyond the advisories. 3.3.0's `jose/jwt.py` calls
+`datetime.utcnow()`, which is deprecated from Python 3.12 and *scheduled for removal*.
+When it goes, JWT verification raises on import and every login in Notes fails. 3.5.0
+uses `datetime.now(UTC)` instead. That failure would arrive on a routine Python upgrade,
+with no code change in Notes to point at.
+
+---
+
+## GN-8 — Python version  *(housekeeping, do it with GN-7)*
+
+Notes runs Python 3.11 (`backend/Dockerfile:1`, `.github/workflows/ci.yml:44`). GAM has
+moved to 3.13 and the suite should stay aligned, since the two repos share vendored
+modules and backport fixes between each other.
+
+It costs nothing in dependencies. Checked against Notes' own `requirements.txt`: Pillow
+10.4.0 publishes cp313 wheels, bcrypt 4.0.1 ships `abi3`, and everything else pinned there
+is `py3-none`. So it is two lines — `python:3.11-slim` → `python:3.13-slim`, and
+`python-version: '3.11'` → `'3.13'` — plus a `.python-version` file holding `3.13`, which
+is what makes a contributor's system interpreter stop mattering (`uv venv` reads it and
+downloads the right one).
+
+Do **not** go to 3.14 without budgeting for it: Pillow 10.4.0 has no 3.14 wheel, so it
+would force Pillow to 12.x, and in Notes that lands in `video/compose.py` — the renderer,
+which has close to no test coverage. That is what made GAM choose 3.13. The symptom if
+someone tries it anyway is `Failed building wheel for Pillow`, which names neither Python
+nor the version, and which is how this was found.
+
+---
+
 ## Order of application
 
 GN-3 (config) → GN-1 (cookie + CSRF + tests) → GN-2 (session endpoint + redirect

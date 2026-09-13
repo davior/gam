@@ -26,8 +26,14 @@ logger = logging.getLogger(__name__)
 DEEPGRAM_API_KEY = "deepgram_api_key"
 DEEPGRAM_MODEL = "deepgram_model"
 
+EMBEDDING_PROVIDER = "embedding_provider"
+EMBEDDING_MODEL = "embedding_model"
+EMBEDDING_DIMENSIONS = "embedding_dimensions"
+OPENAI_API_KEY = "openai_api_key"
+OLLAMA_BASE_URL = "ollama_base_url"
+
 # Keys whose value is encrypted at rest. Anything not in here is stored as plain JSON.
-SECRET_KEYS = frozenset({DEEPGRAM_API_KEY})
+SECRET_KEYS = frozenset({DEEPGRAM_API_KEY, OPENAI_API_KEY})
 
 
 def get_setting(session: Session, user_id: str, key: str, default: Any = None) -> Any:
@@ -94,3 +100,7 @@ def has_setting(session: Session, user_id: str, key: str) -> bool:
 
 def load_deepgram_key(session: Session, user_id: str) -> Optional[str]:
     return get_setting(session, user_id, DEEPGRAM_API_KEY) or None
+
+
+def load_openai_key(session: Session, user_id: str) -> Optional[str]:
+    return get_setting(session, user_id, OPENAI_API_KEY) or None

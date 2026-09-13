@@ -4,6 +4,8 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+from app.clock import utcnow
+
 
 def new_id() -> str:
     return str(uuid.uuid4())
@@ -27,5 +29,5 @@ class User(SQLModel, table=True):
     # the token alone does not carry an address.
     email: Optional[str] = None
     is_admin: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     last_seen: Optional[datetime] = None
