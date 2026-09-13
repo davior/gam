@@ -25,6 +25,7 @@ from app.database import get_session
 from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import media as media_router
+from app.routers import search as search_router
 from app.routers import settings as settings_router
 from app.routers import transcripts as transcripts_router
 from app.schemas import DataResponse, HealthResponse
@@ -131,6 +132,7 @@ app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
 # say so rather than inventing a parallel /api/transcripts tree.
 app.include_router(transcripts_router.router, prefix="/api/assets", tags=["transcripts"])
 app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])
+app.include_router(search_router.router, prefix="/api/search", tags=["search"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 # Not under /api: these URLs go straight into <img src> and <video src>, and the
 # signature in the query string is what authorises them.
