@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import AsyncIterator, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
@@ -12,9 +13,12 @@ from app.auth import CurrentUser
 from app.database import get_session
 from app.ingest.filetypes import ASSET_TYPES
 from app.models.asset import Asset
+from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult
+from app.schemas_tags import AssetTagsWrite, BulkTagsResult, BulkTagsWrite, TagRead
 from app.services import assets as service
+from app.services import tags as tag_service
 from app.storage import LocalStorage, build_storage
 
 router = APIRouter()
@@ -125,25 +129,55 @@ def list_assets(
     user: CurrentUser,
     asset_type: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None, max_length=200),
+    tag: List[str] = Query(default_factory=list),
+    category_id: Optional[str] = Query(default=None),
+    source: Optional[str] = Query(default=None, max_length=50),
+    min_duration: Optional[float] = Query(default=None, ge=0),
+    max_duration: Optional[float] = Query(default=None, ge=0),
+    uploaded_after: Optional[datetime] = Query(default=None),
+    uploaded_before: Optional[datetime] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
     storage: LocalStorage = Depends(get_storage),
 ) -> ListResponse[AssetRead]:
-    """The library, newest first.
+    """The library, newest first, narrowed by whatever the caller asked for.
 
-    `q` is a substring match for now — real search (FTS5 and embeddings) is M5. It is
-    here because a library you cannot filter at all is unusable well before then.
+    `q` is a substring match. Real search is `/api/search` (M5); this stays because the
+    library grid filters as you type against the rows it is already showing, which is a
+    different job from ranked retrieval.
+
+    Every filter here narrows. `tag` repeats and is ANDed — someone who picks two tags
+    wants the assets that are both, and an OR would hand back a longer list than they
+    started with, which is the opposite of what pressing a filter is for.
     """
     if asset_type and asset_type not in ASSET_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"code": "bad_request", "message": f"Unknown asset type: {asset_type}"},
         )
+    if min_duration is not None and max_duration is not None and min_duration > max_duration:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "bad_request",
+                "message": "min_duration cannot be greater than max_duration",
+            },
+        )
 
     filters = [Asset.user_id == user.id]
     if asset_type:
         filters.append(Asset.asset_type == asset_type)
+    if source:
+        filters.append(Asset.source == source)
+    if min_duration is not None:
+        filters.append(col(Asset.duration_seconds) >= min_duration)
+    if max_duration is not None:
+        filters.append(col(Asset.duration_seconds) <= max_duration)
+    if uploaded_after is not None:
+        filters.append(col(Asset.upload_date) >= uploaded_after)
+    if uploaded_before is not None:
+        filters.append(col(Asset.upload_date) <= uploaded_before)
     if q and q.strip():
         term = f"%{q.strip()}%"
         filters.append(
@@ -151,6 +185,21 @@ def list_assets(
             | col(Asset.description).ilike(term)
             | col(Asset.original_name).ilike(term)
         )
+
+    # Tag and category filters resolve to a set of ids first. Both are questions about
+    # the join table rather than about the asset row, and an id set keeps them from
+    # turning the main query into a pile of correlated subqueries — one per tag, in the
+    # AND case.
+    if tag:
+        matched = tag_service.asset_ids_with_all_tags(session, user.id, tag)
+        if not matched:
+            return _empty_page(limit, offset)
+        filters.append(col(Asset.id).in_(matched))
+    if category_id:
+        in_category = tag_service.asset_ids_in_category(session, user.id, category_id)
+        if not in_category:
+            return _empty_page(limit, offset)
+        filters.append(col(Asset.id).in_(in_category))
 
     total = session.exec(select(func.count()).select_from(Asset).where(*filters)).one()
 
@@ -162,12 +211,27 @@ def list_assets(
         .offset(offset)
     ).all()
 
+    # One query for the whole page's tags, not one per row.
+    tags_by_asset = tag_service.tags_for_many(session, [row.id for row in rows])
+
     return ListResponse[AssetRead](
-        data=[service.to_read_model(row, storage) for row in rows],
+        data=[
+            service.to_read_model(row, storage, tags_by_asset.get(row.id, []))
+            for row in rows
+        ],
         total=total,
         limit=limit,
         offset=offset,
     )
+
+
+def _empty_page(limit: int, offset: int) -> ListResponse[AssetRead]:
+    """No asset can match, so say so without asking the database again.
+
+    An unknown tag or an empty category is not an error — it is a filter that excludes
+    everything, and `IN ()` is both awkward to build and pointless to run.
+    """
+    return ListResponse[AssetRead](data=[], total=0, limit=limit, offset=offset)
 
 
 @router.get("/{asset_id}", response_model=DataResponse[AssetRead])
@@ -219,3 +283,105 @@ def delete_asset(
 ) -> None:
     asset = _owned(asset_id, user.id, session)
     service.delete_asset(session, storage, asset)
+
+
+# ─── tagging ─────────────────────────────────────────────────────────────────
+
+
+def _tag_read(tag) -> TagRead:
+    return TagRead(id=tag.id, name=tag.name, category_id=tag.category_id)
+
+
+@router.post("/{asset_id}/tags", response_model=ListResponse[TagRead])
+def add_asset_tags(
+    asset_id: str,
+    payload: AssetTagsWrite,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> ListResponse[TagRead]:
+    """Attach tags by name, creating any that do not exist yet.
+
+    By name rather than by id because the tag box does not know whether what was typed
+    exists — making the client resolve that first turns one interaction into two round
+    trips and a race where two tabs both create the same tag.
+
+    Returns the asset's full tag set rather than what was added, so the client can
+    replace its state instead of reconciling it.
+    """
+    asset = _owned(asset_id, user.id, session)
+
+    for name in payload.names:
+        tag = tag_service.get_or_create(session, user.id, name)
+        if tag is not None:
+            tag_service.attach(session, asset.id, tag.id)
+
+    service.reindex_ids(session, [asset.id])
+    return _current_tags(session, asset.id)
+
+
+@router.delete("/{asset_id}/tags/{tag_id}", response_model=ListResponse[TagRead])
+def remove_asset_tag(
+    asset_id: str,
+    tag_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> ListResponse[TagRead]:
+    """Detach a tag from this asset. The tag itself survives — it is still in the
+    vocabulary, and other assets may carry it."""
+    asset = _owned(asset_id, user.id, session)
+    tag = session.get(Tag, tag_id)
+    if tag is None or tag.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "Tag not found"},
+        )
+
+    tag_service.detach(session, asset.id, tag.id)
+    service.reindex_ids(session, [asset.id])
+    return _current_tags(session, asset.id)
+
+
+def _current_tags(session: Session, asset_id: str) -> ListResponse[TagRead]:
+    rows = tag_service.tags_for(session, asset_id)
+    return ListResponse[TagRead](
+        data=[_tag_read(tag) for tag in rows], total=len(rows), limit=len(rows), offset=0
+    )
+
+
+@router.post("/tags/bulk", response_model=DataResponse[BulkTagsResult])
+def bulk_tag_assets(
+    payload: BulkTagsWrite,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[BulkTagsResult]:
+    """Apply and remove tags across a selection in one call.
+
+    Ownership is filtered first and the filtered list is what everything downstream uses,
+    so ids belonging to somebody else are dropped rather than acted on — a selection
+    arrives from the client and is not evidence of anything. `updated` reports what was
+    actually touched, which is how a caller notices the difference.
+
+    Adds are applied before removes: asking for both on the same tag is contradictory,
+    and removing last means the result matches what the user last clicked.
+    """
+    owned = tag_service.owned_asset_ids(session, user.id, payload.asset_ids)
+    if not owned:
+        return DataResponse[BulkTagsResult](data=BulkTagsResult(updated=0))
+
+    added = []
+    for name in payload.add:
+        tag = tag_service.get_or_create(session, user.id, name)
+        if tag is not None:
+            added.append(tag)
+
+    for asset_id in owned:
+        for tag in added:
+            tag_service.attach(session, asset_id, tag.id)
+        for tag_id in payload.remove:
+            tag_service.detach(session, asset_id, tag_id)
+
+    service.reindex_ids(session, owned)
+
+    return DataResponse[BulkTagsResult](
+        data=BulkTagsResult(updated=len(owned), tags_added=[_tag_read(t) for t in added])
+    )

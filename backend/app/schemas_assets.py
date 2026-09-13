@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -35,9 +35,25 @@ class AssetRead(BaseModel):
     # vanished underneath the database shows as missing instead of as a broken image.
     missing: bool = False
 
+    # Batch-loaded for a listing, never per row: sixty assets a page each asking for
+    # their own tags is sixty queries that grow with the page.
+    tags: List["AssetTagRead"] = Field(default_factory=list)
+
     upload_date: datetime
     modified_date: datetime
     metadata_modified_date: datetime
+
+
+class AssetTagRead(BaseModel):
+    """A tag as it appears on an asset.
+
+    Deliberately thinner than the catalogue's `TagRead`: no usage count, because showing
+    one here would mean counting per tag per asset, and nothing in this view displays it.
+    """
+
+    id: str
+    name: str
+    category_id: Optional[str] = None
 
 
 class AssetUpdate(BaseModel):

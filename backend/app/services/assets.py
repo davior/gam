@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Iterable, Optional
 
 from sqlmodel import Session
 
@@ -28,8 +28,9 @@ from app.ingest.filetypes import (
 )
 from app.ingest.probe import probe
 from app.models.asset import Asset
-from app.schemas_assets import AssetRead
+from app.schemas_assets import AssetRead, AssetTagRead
 from app.search import fts
+from app.services import tags
 from app.storage import LocalStorage, StorageError, new_key, thumb_key_for
 
 logger = logging.getLogger(__name__)
@@ -140,14 +141,28 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
 def _reindex(session: Session, asset: Asset) -> None:
     """Keep the keyword index in step with the row.
 
+    Tags are read here rather than passed in, and that is the point: this is the single
+    function every write path already calls, so tagging, untagging, bulk apply and tag
+    deletion all keep search correct by doing what they were going to do anyway. Passing
+    `tags_text` from each caller would work exactly until one of them forgot, and the
+    symptom — a tag that is attached but unsearchable — is invisible without looking.
+
     Never raises: a stale search index is a worse search result, while a failed upload
     is a lost file. The two are not remotely equal, so indexing does not get a vote on
     whether the write succeeded.
     """
     try:
-        fts.index_asset(session, asset)
+        fts.index_asset(session, asset, tags_text=tags.tags_text_for(session, asset.id))
     except Exception:  # noqa: BLE001 - see above
         logger.warning("Could not index asset %s for search", asset.id, exc_info=True)
+
+
+def reindex_ids(session: Session, asset_ids: Iterable[str]) -> None:
+    """Re-index a set of assets after something changed their tags in bulk."""
+    for asset_id in set(asset_ids):
+        asset = session.get(Asset, asset_id)
+        if asset is not None:
+            _reindex(session, asset)
 
 
 def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
@@ -206,8 +221,15 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
 # ─── serialisation ───────────────────────────────────────────────────────────
 
 
-def to_read_model(asset: Asset, storage: LocalStorage) -> AssetRead:
-    """An Asset as the API returns it, with freshly signed URLs."""
+def to_read_model(
+    asset: Asset, storage: LocalStorage, asset_tags: Optional[list] = None
+) -> AssetRead:
+    """An Asset as the API returns it, with freshly signed URLs.
+
+    `asset_tags` is passed in rather than fetched. A listing loads every row's tags in
+    one query and hands each one its slice; fetching here instead would put a query per
+    asset on the hottest path in the application.
+    """
     file_url = _signed_url(asset.storage_key)
     thumb_url = _signed_url(asset.thumb_key)
 
@@ -233,6 +255,10 @@ def to_read_model(asset: Asset, storage: LocalStorage) -> AssetRead:
         file_url=file_url,
         thumb_url=thumb_url,
         missing=missing,
+        tags=[
+            AssetTagRead(id=t.id, name=t.name, category_id=t.category_id)
+            for t in (asset_tags or [])
+        ],
         upload_date=asset.upload_date,
         modified_date=asset.modified_date,
         metadata_modified_date=asset.metadata_modified_date,
