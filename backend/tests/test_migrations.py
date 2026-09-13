@@ -68,3 +68,29 @@ def test_upgrade_is_repeatable(alembic_config):
     config, _ = alembic_config
     command.upgrade(config, "head")
     command.upgrade(config, "head")
+
+
+def test_the_migration_and_the_test_ddl_agree(alembic_config):
+    """Guards the one place this schema is written twice.
+
+    The migration carries a literal copy of the FTS5 DDL — a migration must describe the
+    schema as it was, not import live code that can change under it — and conftest builds
+    the same tables from constants so it need not run the chain per test. That is two
+    copies, so this asserts the real migration produces exactly the columns those
+    constants claim. Without it, a schema change could pass every test against a shape
+    production does not have.
+    """
+    import sqlite3
+
+    from app.search.fts import ASSET_FTS_COLUMNS, SEGMENT_FTS_COLUMNS
+
+    config, db_path = alembic_config
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        for table, expected in (
+            ("asset_fts", ASSET_FTS_COLUMNS),
+            ("segment_fts", SEGMENT_FTS_COLUMNS),
+        ):
+            actual = tuple(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
+            assert actual == expected, f"{table}: migration has {actual}, constants say {expected}"

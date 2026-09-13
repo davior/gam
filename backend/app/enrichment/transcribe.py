@@ -20,6 +20,7 @@ from app.enrichment.audio import AudioExtractionError, extract_audio
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.models.asset import Asset
 from app.models.transcript import TranscriptSegment
+from app.search import fts
 from app.settings_store import DEEPGRAM_MODEL, load_deepgram_key, get_setting
 from app.storage import build_storage
 
@@ -80,6 +81,18 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
     progress("Storing", 90, f"{len(transcript.segments)} segments")
 
     stored = _store_segments(session, asset, transcript)
+
+    # Index what was said, so it is findable the moment the job finishes rather than
+    # waiting for some later sweep.
+    try:
+        rows = session.exec(
+            select(TranscriptSegment)
+            .where(TranscriptSegment.asset_id == asset.id)
+            .order_by(col(TranscriptSegment.idx))
+        ).all()
+        fts.index_segments(session, asset.id, rows)
+    except Exception:  # noqa: BLE001 - a transcript that exists beats one indexed
+        logger.warning("Could not index the transcript of %s", asset.id, exc_info=True)
 
     asset.transcript_status = "done"
     asset.transcript_model = transcript.model

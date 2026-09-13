@@ -70,6 +70,15 @@ def engine_fixture():
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+
+    # FTS5 tables are virtual, so SQLModel's metadata knows nothing about them and
+    # create_all cannot make them. Built from the same DDL the migration uses; that the
+    # two agree is asserted in test_migrations.py.
+    from app.search.fts import create_search_tables
+
+    with engine.begin() as connection:
+        create_search_tables(connection)
+
     yield engine
     SQLModel.metadata.drop_all(engine)
 
