@@ -41,14 +41,23 @@ class FakeJob(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+# Detached from the application's metadata immediately after definition. Declaring a
+# table registers it on SQLModel.metadata globally, which had two consequences: every
+# test database grew a stray `fakejob` table from create_all, and Alembic autogenerate
+# saw a model with no corresponding table and proposed creating one. A test fixture has
+# no business appearing in the application's schema.
+SQLModel.metadata.remove(FakeJob.__table__)
+
+
 @pytest.fixture(name="job_engine")
 def job_engine_fixture():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
-    SQLModel.metadata.create_all(engine, tables=[FakeJob.__table__])
+    # Created directly from the table object, since it is no longer in the metadata.
+    FakeJob.__table__.create(engine)
     yield engine
-    SQLModel.metadata.drop_all(engine, tables=[FakeJob.__table__])
+    FakeJob.__table__.drop(engine)
 
 
 def make_job(engine, **fields) -> str:

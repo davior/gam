@@ -10,6 +10,9 @@ python-jose[cryptography]==3.3.0
 cryptography>=42.0.0
 python-dotenv>=1.0.0
 slowapi==0.1.9
+# Brute-force cosine over the embedding matrix. Already present transitively; pinned
+# because search depends on it directly.
+numpy==2.1.3
 Pillow==10.4.0
 # PDF first-page previews. Apache/BSD licensed with self-contained wheels — PyMuPDF is
 # AGPL and would put obligations on anyone deploying this, and pdf2image needs a

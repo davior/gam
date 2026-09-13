@@ -1,9 +1,13 @@
 """add FTS5 search indexes
 
 Two virtual tables: one over an asset's own metadata, one over what is said inside it.
-Written as raw SQL because SQLModel has no notion of a virtual table, and autogenerate
-cannot see one — a future `alembic revision --autogenerate` will not try to drop these,
-because it never learns they exist.
+Written as raw SQL because SQLModel has no notion of a virtual table.
+
+That invisibility cuts the other way, and dangerously: autogenerate sees tables present
+in the database but absent from the models, and writes DROP statements for them. The
+first run after this migration produced eleven, which between them would have destroyed
+the entire search index. `include_object` in alembic/env.py is what stops that, and it
+has to stay.
 
 The UNINDEXED columns are along for the ride: FTS5 stores them so a hit can be resolved
 to an asset and a timestamp without a second query, but does not tokenise them, so an

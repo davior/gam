@@ -21,6 +21,10 @@ from app.database import engine
 # blind to anything not imported by the time this runs.
 import app.models  # noqa: F401
 
+# Filters the FTS5 virtual tables out of autogenerate. See its docstring: without it,
+# autogenerate writes DROP statements for the entire search index.
+from app.search.fts import include_object  # noqa: E402
+
 config = context.config
 
 if config.config_file_name is not None:
@@ -36,6 +40,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         render_as_batch=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -50,6 +55,7 @@ def run_migrations_online() -> None:
             # Without this a column whose type changed in the models produces no
             # migration, and the drift is invisible until a query fails.
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()

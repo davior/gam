@@ -13,9 +13,16 @@ KIND_DESCRIBE = "describe"
 KIND_SUMMARIZE = "summarize"
 KIND_AUTOTAG = "autotag"
 KIND_EMBED = "embed"
+KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
 
 ENRICHMENT_KINDS = frozenset(
-    {KIND_TRANSCRIBE, KIND_DESCRIBE, KIND_SUMMARIZE, KIND_AUTOTAG, KIND_EMBED}
+    {
+        KIND_TRANSCRIBE,
+        KIND_DESCRIBE,
+        KIND_SUMMARIZE,
+        KIND_AUTOTAG,
+        KIND_EMBED,
+    }
 )
 
 

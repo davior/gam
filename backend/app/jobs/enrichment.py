@@ -13,6 +13,9 @@ from typing import Optional
 
 from app.config import settings
 from app.database import engine
+from app.embeddings import EmbeddingError
+from app.enrichment.embed import EmbeddingUnavailable
+from app.enrichment.embed import run as run_embed
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
 from app.jobs.runner import (
@@ -23,7 +26,7 @@ from app.jobs.runner import (
     set_fields,
 )
 from app.models.asset import Asset
-from app.models.job import EnrichmentJob, KIND_TRANSCRIBE
+from app.models.job import EnrichmentJob, KIND_EMBED, KIND_TRANSCRIBE
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,9 @@ def _run_job(job_id: str) -> None:
             if job.kind == KIND_TRANSCRIBE:
                 count = run_transcribe(session, asset, progress)
                 detail = f"{count} segment{'' if count == 1 else 's'}"
+            elif job.kind == KIND_EMBED:
+                count = run_embed(session, asset, progress)
+                detail = f"{count} vector{'' if count == 1 else 's'}"
             else:
                 raise TranscriptionError(f"Unknown enrichment kind: {job.kind}")
 
@@ -126,6 +132,12 @@ def _run_job(job_id: str) -> None:
             if job.status in ACTIVE_STATUSES:
                 set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             logger.info("Enrichment job %s cancelled", job_id)
+
+        except (EmbeddingUnavailable, EmbeddingError) as exc:
+            message = str(exc)
+            _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
 
         except TranscriptionError as exc:
             message = str(exc)

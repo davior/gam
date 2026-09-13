@@ -72,6 +72,31 @@ CREATE VIRTUAL TABLE segment_fts USING fts5(
 ASSET_FTS_COLUMNS = ("asset_id", "user_id", "name", "description", "summary", "tags_text")
 SEGMENT_FTS_COLUMNS = ("segment_id", "asset_id", "user_id", "body", "start_time")
 
+# The virtual tables, plus the shadow tables SQLite creates behind each one
+# (_data, _idx, _content, _docsize, _config).
+FTS_TABLE_PREFIXES = (ASSET_FTS, SEGMENT_FTS)
+
+
+def is_fts_table(name: str) -> bool:
+    return any(name == base or name.startswith(f"{base}_") for base in FTS_TABLE_PREFIXES)
+
+
+def include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Alembic autogenerate filter. Lives here, and is imported by alembic/env.py.
+
+    None of these tables appear in SQLModel.metadata — SQLAlchemy has no notion of a
+    virtual table — so autogenerate sees them in the database, fails to find them in the
+    models, and helpfully writes DROP statements.
+
+    That is not hypothetical: the first autogenerate run after the search index was
+    added produced eleven drop_table calls which between them would have destroyed the
+    whole index. This filter is what stops the next one, and test_migrations.py asserts
+    it still does.
+    """
+    if type_ == "table" and is_fts_table(name):
+        return False
+    return True
+
 
 def create_search_tables(connection) -> None:
     """Build the virtual tables on a connection that has none.

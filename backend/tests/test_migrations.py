@@ -94,3 +94,38 @@ def test_the_migration_and_the_test_ddl_agree(alembic_config):
         ):
             actual = tuple(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
             assert actual == expected, f"{table}: migration has {actual}, constants say {expected}"
+
+
+def test_autogenerate_does_not_try_to_drop_the_search_index(alembic_config, monkeypatch):
+    """The landmine this guards against was real, not theoretical.
+
+    FTS5 virtual tables cannot appear in SQLModel.metadata, so autogenerate sees them in
+    the database, fails to find them in the models, and writes DROP statements. The
+    first run after the search index was added produced eleven of them — between them,
+    the entire search index. `include_object` in alembic/env.py filters them out.
+
+    This asserts a fresh autogenerate against an up-to-date database produces no
+    migration at all, which is the only state in which nobody has to notice the drops
+    before committing them.
+    """
+    from alembic.autogenerate import produce_migrations
+    from alembic.migration import MigrationContext
+    from sqlmodel import SQLModel, create_engine
+
+    import app.models  # noqa: F401  - registers every table
+    from app.search.fts import include_object
+
+    config, db_path = alembic_config
+    command.upgrade(config, "head")
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    with engine.connect() as connection:
+        context = MigrationContext.configure(
+            connection, opts={"include_object": include_object, "compare_type": True}
+        )
+        diff = produce_migrations(context, SQLModel.metadata)
+
+    operations = diff.upgrade_ops.as_diffs() if diff.upgrade_ops else []
+    dropped = [op for op in operations if "remove_table" in str(op[0])]
+    assert not dropped, f"autogenerate would drop: {dropped}"
+    assert not operations, f"schema and models disagree: {operations}"
