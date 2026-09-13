@@ -5,13 +5,14 @@ suite is that a token Notes signed is accepted here, and an override would prove
 nothing about that.
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from jose import jwt
 
 from app.auth import UserCtx, current_user
+from app.clock import utcnow
 from app.config import settings
 from app.database import get_session
 from app.main import app as fastapi_app
@@ -29,7 +30,7 @@ def make_token(
     payload = {
         "sub": sub,
         "username": username,
-        "exp": datetime.utcnow() + timedelta(minutes=expires_in_minutes),
+        "exp": utcnow() + timedelta(minutes=expires_in_minutes),
     }
     return jwt.encode(
         payload, secret or settings.jwt_secret_key, algorithm=settings.jwt_algorithm
@@ -85,7 +86,7 @@ def test_token_signed_with_another_secret_is_rejected(client):
 
 def test_token_without_subject_is_rejected(client):
     token = jwt.encode(
-        {"username": "davior", "exp": datetime.utcnow() + timedelta(minutes=60)},
+        {"username": "davior", "exp": utcnow() + timedelta(minutes=60)},
         settings.jwt_secret_key,
         algorithm=settings.jwt_algorithm,
     )

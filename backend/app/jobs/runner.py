@@ -27,12 +27,13 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable, Optional, Set, Type
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
 
+from app.clock import utcnow
 from app.config import settings
 from app.database import engine as default_engine
 
@@ -66,7 +67,7 @@ def is_stale(job: Any) -> bool:
     updated = getattr(job, "updated_at", None)
     if not updated:
         return False
-    return datetime.utcnow() - updated > stale_after()
+    return utcnow() - updated > stale_after()
 
 
 def set_fields(session: Session, job: Any, **fields: Any) -> None:
@@ -77,7 +78,7 @@ def set_fields(session: Session, job: Any, **fields: Any) -> None:
     """
     for key, value in fields.items():
         setattr(job, key, value)
-    job.updated_at = datetime.utcnow()
+    job.updated_at = utcnow()
     session.add(job)
     session.commit()
 
@@ -216,7 +217,7 @@ class JobQueue:
                     row = session.get(self.model, job_id)
                     if not row or row.status not in ACTIVE_STATUSES:
                         return
-                    row.updated_at = datetime.utcnow()
+                    row.updated_at = utcnow()
                     session.add(row)
                     session.commit()
             except Exception:

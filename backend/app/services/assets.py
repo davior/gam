@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-from datetime import datetime
 from typing import AsyncIterator, Optional
 
 from sqlmodel import Session
 
 from app.auth import sign_media_key
+from app.clock import utcnow
 from app.config import settings
 from app.ingest import thumbnails
 from app.ingest.filetypes import (
@@ -194,7 +194,7 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
         provenance[field] = "human"
 
     asset.field_provenance = json.dumps(provenance, sort_keys=True)
-    asset.metadata_modified_date = datetime.utcnow()
+    asset.metadata_modified_date = utcnow()
 
     session.add(asset)
     session.commit()

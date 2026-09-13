@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -11,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, col, select
 
 from app.auth import CurrentUser
+from app.clock import utcnow
 from app.database import get_session
 from app.enrichment.transcribe import can_transcribe
 from app.jobs import enrichment as enrichment_jobs
@@ -224,7 +224,7 @@ def update_segment(
 
     asset = session.get(Asset, asset_id)
     if asset:
-        asset.metadata_modified_date = datetime.utcnow()
+        asset.metadata_modified_date = utcnow()
         session.add(asset)
 
     session.commit()

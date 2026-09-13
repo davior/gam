@@ -8,9 +8,9 @@ own cap while collectively ignoring it.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Optional
 
+from app.clock import utcnow
 from app.config import settings
 from app.database import engine
 from app.embeddings import EmbeddingError
@@ -157,6 +157,6 @@ def _mark_asset_failed(session, asset: Asset, job: EnrichmentJob, status: str | 
         return
     if asset.transcript_status == "running":
         asset.transcript_status = status
-        asset.metadata_modified_date = datetime.utcnow()
+        asset.metadata_modified_date = utcnow()
         session.add(asset)
         session.commit()

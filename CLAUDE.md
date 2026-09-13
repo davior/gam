@@ -40,7 +40,10 @@ here.
   helper per router.
 - Structured data is JSON-as-TEXT in a `str` column, decoded on read.
 - Primary keys are `str(uuid.uuid4())` generated at the call site.
-- Timestamps are naive UTC, named `created_at` / `updated_at` consistently.
+- Timestamps are naive UTC, named `created_at` / `updated_at` consistently, and come
+  from `app.clock.utcnow` — never `datetime.utcnow()` (deprecated, scheduled for
+  removal) and never `datetime.now(UTC)` (aware, so it raises TypeError the moment
+  anything subtracts it from a value read back out of the database).
 - Tests go through `TestClient` against real routes, not by calling router functions
   directly.
 

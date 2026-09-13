@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Field, Session, SQLModel, create_engine
 
+from app.clock import utcnow
 from app.jobs.runner import (
     ACTIVE_STATUSES,
     JobCancelled,
@@ -37,8 +38,8 @@ class FakeJob(SQLModel, table=True):
     progress: int = Field(default=0)
     detail: str = Field(default="")
     error_message: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 # Detached from the application's metadata immediately after definition. Declaring a
@@ -177,7 +178,7 @@ def test_cancellation_is_cleared_after_the_job_finishes(job_engine):
 
 
 def test_is_stale_only_applies_to_active_jobs():
-    long_ago = datetime.utcnow() - timedelta(hours=5)
+    long_ago = utcnow() - timedelta(hours=5)
 
     assert is_stale(FakeJob(status="processing", updated_at=long_ago)) is True
     assert is_stale(FakeJob(status="queued", updated_at=long_ago)) is True
@@ -187,7 +188,7 @@ def test_is_stale_only_applies_to_active_jobs():
 
 
 def test_is_stale_is_false_for_a_job_that_just_reported():
-    assert is_stale(FakeJob(status="processing", updated_at=datetime.utcnow())) is False
+    assert is_stale(FakeJob(status="processing", updated_at=utcnow())) is False
 
 
 def test_sweeping_ends_a_job_whose_heartbeat_stopped(job_engine):
@@ -196,7 +197,7 @@ def test_sweeping_ends_a_job_whose_heartbeat_stopped(job_engine):
     stalled = make_job(job_engine, status="processing")
     with Session(job_engine) as session:
         row = session.get(FakeJob, stalled)
-        row.updated_at = datetime.utcnow() - timedelta(hours=5)
+        row.updated_at = utcnow() - timedelta(hours=5)
         session.add(row)
         session.commit()
 
@@ -226,7 +227,7 @@ def test_heartbeat_touches_only_the_timestamp(job_engine, monkeypatch):
 
     with Session(job_engine) as session:
         row = session.get(FakeJob, job_id)
-        row.updated_at = datetime.utcnow() - timedelta(minutes=10)
+        row.updated_at = utcnow() - timedelta(minutes=10)
         session.add(row)
         session.commit()
     before = read_job(job_engine, job_id).updated_at

@@ -5,6 +5,8 @@ from typing import Optional
 from sqlalchemy import Index
 from sqlmodel import Field, SQLModel
 
+from app.clock import utcnow
+
 # The enrichment actions a job can perform. One table rather than one per action:
 # they share a lifecycle, a progress shape and a cancel button, and the activity API
 # would otherwise become a union over five near-identical tables.
@@ -59,5 +61,5 @@ class EnrichmentJob(SQLModel, table=True):
 
     error_message: Optional[str] = None
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)

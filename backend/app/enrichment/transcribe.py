@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 from sqlmodel import Session, col, delete, select
 
+from app.clock import utcnow
 from app.enrichment import deepgram
 from app.enrichment.audio import AudioExtractionError, extract_audio
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
@@ -97,7 +97,7 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
     asset.transcript_status = "done"
     asset.transcript_model = transcript.model
     asset.transcript_language = transcript.language or None
-    asset.metadata_modified_date = datetime.utcnow()
+    asset.metadata_modified_date = utcnow()
     session.add(asset)
     session.commit()
 
