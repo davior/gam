@@ -44,6 +44,41 @@ services:
     networks:
       - default
 
+  # Snapshots the database and the media tree to a remote over SFTP. Media filenames
+  # are write-once UUIDs, which is what lets restic send only what is new without
+  # depending on timestamps. Sources are mounted read-only.
+  #
+  # Shares a Synology with gecko-notes' backup: distinct BACKUP_SFTP_REMOTE_PATH and a
+  # distinct restic --host keep the two repositories' snapshots apart.
+  backup:
+    build: ./ops/backup
+    restart: unless-stopped
+    volumes:
+      - ./data/db:/backup/src/db:ro
+      - ./data/media:/backup/src/media:ro
+      - ./ops/backup/secrets/id_backup:/root/.ssh/id_backup:ro
+      - ./ops/backup/secrets/known_hosts:/root/.ssh/known_hosts:ro
+      - backup_restic_cache:/var/cache/restic
+    tmpfs:
+      - /backup/tmp
+    environment:
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD}
+      - RESTIC_CACHE_DIR=/var/cache/restic
+      - BACKUP_SFTP_HOST=${BACKUP_SFTP_HOST}
+      - BACKUP_SFTP_PORT=${BACKUP_SFTP_PORT:-22}
+      - BACKUP_SFTP_USER=${BACKUP_SFTP_USER}
+      - BACKUP_SFTP_REMOTE_PATH=${BACKUP_SFTP_REMOTE_PATH:-/gam}
+      - BACKUP_CRON_SCHEDULE=${BACKUP_CRON_SCHEDULE:-0 * * * *}
+      - BACKUP_KEEP_HOURLY=${BACKUP_KEEP_HOURLY:-48}
+      - BACKUP_KEEP_DAILY=${BACKUP_KEEP_DAILY:-14}
+      - BACKUP_KEEP_WEEKLY=${BACKUP_KEEP_WEEKLY:-8}
+      - TZ=${TZ:-UTC}
+    networks:
+      - default
+
 networks:
   default:
     name: gam_default
+
+volumes:
+  backup_restic_cache:
