@@ -378,7 +378,8 @@ without middleware, with the stale-response guard and `reset()`-on-logout fan-ou
   against the shared `conftest.py` app/client/tmp-storage fixtures.
 - `cd frontend && npm test && npm run build` (`tsc --noEmit` is the typecheck gate).
 - `docker compose up --build -d && curl -f http://localhost:<APP_PORT>/api/health`.
-- Live dev: `uvicorn app.main:app --reload --port 8000` + `npm run dev`.
+- Live dev: `uvicorn app.main:app --reload --port 8001` + `npm run dev` (8001/5174, not
+  8000/5173 — gecko-notes holds those).
 
 **M1** — upload a mixed batch (jpg, mp4, mp3, pdf) and confirm: every asset gets a
 thumbnail or poster; `duration/resolution/codec` are probed; a signed URL plays and

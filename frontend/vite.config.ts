@@ -18,12 +18,21 @@ export default defineConfig({
     sourcemap: false,
   },
   server: {
-    port: 5173,
+    // 5174/8001 rather than Vite's 5173 and uvicorn's 8000, because gecko-notes uses
+    // both of those and the two apps are routinely run side by side. Vite would have
+    // drifted to 5174 on its own when 5173 was taken, but then which app is on which
+    // port depends on start order; pinning makes it decidable.
+    port: 5174,
     proxy: {
       // Same-origin in production (nginx proxies both), so the app never needs to
       // know an API host. The dev server mimics that rather than using CORS.
-      '/api': { target: 'http://localhost:8000', changeOrigin: true, ws: true },
-      '/media': { target: 'http://localhost:8000', changeOrigin: true },
+      //
+      // This target must track the port the dev backend is started on. Pointing it at
+      // 8000 while GAM runs on 8001 does not fail cleanly: it reaches gecko-notes'
+      // backend, which shares JWT_SECRET_KEY and so verifies GAM's token and answers.
+      // The result is another app's data rendered as if it were this one's.
+      '/api': { target: 'http://localhost:8001', changeOrigin: true, ws: true },
+      '/media': { target: 'http://localhost:8001', changeOrigin: true },
     },
   },
   test: {

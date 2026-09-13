@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in */frontend/*|*/backend/*) printf '%s' '{\"systemMessage\":\"🛠  Dev build to see this change: live servers — (cd frontend && npm run dev) + (cd backend && uvicorn app.main:app --reload --port 8000); or Docker — docker compose up --build -d, then hard-refresh (Ctrl/Cmd+Shift+R).\",\"suppressOutput\":true}';; esac"
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in */frontend/*|*/backend/*) printf '%s' '{\"systemMessage\":\"🛠  Dev build to see this change: live servers — (cd frontend && npm run dev) + (cd backend && uvicorn app.main:app --reload --port 8001); or Docker — docker compose up --build -d, then hard-refresh (Ctrl/Cmd+Shift+R).\",\"suppressOutput\":true}';; esac"
           }
         ]
       },
