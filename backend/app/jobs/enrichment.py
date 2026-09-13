@@ -15,7 +15,13 @@ from app.config import settings
 from app.database import engine
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
-from app.jobs.runner import JobCancelled, JobQueue, readable_error, set_fields
+from app.jobs.runner import (
+    ACTIVE_STATUSES,
+    JobCancelled,
+    JobQueue,
+    readable_error,
+    set_fields,
+)
 from app.models.asset import Asset
 from app.models.job import EnrichmentJob, KIND_TRANSCRIBE
 
@@ -66,8 +72,13 @@ def _run_job(job_id: str) -> None:
             logger.warning("Enrichment job %s vanished before it ran", job_id)
             return
 
-        # Cancelled while queued: it never starts, and the row already says so.
         if job.status == "cancelled" or q.is_cancelled(job_id):
+            # Cancelled while still queued: it never starts. It must still end
+            # terminal — a row left active waits on the stale sweeper, forty minutes
+            # away, which reads as a hang. Guarded so an already-cancelled row keeps
+            # whatever the API wrote.
+            if job.status in ACTIVE_STATUSES:
+                set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             return
 
         asset = session.get(Asset, job.asset_id)
@@ -106,9 +117,14 @@ def _run_job(job_id: str) -> None:
             )
 
         except JobCancelled:
-            # The row was already marked cancelled when the user pressed the button;
-            # this just unwinds the work and clears the asset's running state.
             _mark_asset_failed(session, asset, job, status=None)
+            # Mark the row here rather than trusting the caller to have done it. The
+            # API path marks it before signalling the queue, but the stale sweeper and
+            # any direct queue.cancel() do not — and a job left at "processing" sits
+            # there until the sweeper ends it forty minutes later, which reads to the
+            # user as a hang. Guarded so the API path's "cancelled" is not overwritten.
+            if job.status in ACTIVE_STATUSES:
+                set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             logger.info("Enrichment job %s cancelled", job_id)
 
         except TranscriptionError as exc:

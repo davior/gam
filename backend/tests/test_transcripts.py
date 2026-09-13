@@ -337,3 +337,76 @@ def test_activity_only_shows_your_own_jobs(library, session):
 
 def test_activity_requires_authentication(client):
     assert client.get("/api/activity").status_code == 401
+
+
+# ─── cancellation through the queue rather than the API ──────────────────────
+
+
+@needs_ffmpeg
+def test_a_queue_cancel_still_leaves_a_terminal_row(library, session, monkeypatch):
+    """Cancelling without marking the row first must still end it.
+
+    Two paths reach the worker's cancellation handler. The API marks the row
+    "cancelled" and then signals the queue, so the row is already terminal. The stale
+    sweeper — and any direct queue.cancel() — only signals, and the worker used to
+    assume the caller had done the marking. A row left at "processing" then sits there
+    until the sweeper ends it forty minutes later, which reads as a hang.
+
+    Found by a live run, not by the suite, which is why it is pinned here.
+    """
+    import threading
+
+    from app.jobs import enrichment as enrichment_jobs
+    from app.jobs.runner import JobCancelled
+
+    created = _upload_video(library)
+    set_setting(session, "user-under-test", DEEPGRAM_API_KEY, "dg-test-key")
+
+    job = EnrichmentJob(
+        user_id="user-under-test",
+        asset_id=created["id"],
+        kind=KIND_TRANSCRIBE,
+        asset_name="Interview",
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    job_id = job.id
+
+    queue = enrichment_jobs.queue()
+    monkeypatch.setattr(queue, "engine", session.get_bind())
+
+    # Cancel before the worker starts, so the first progress checkpoint raises.
+    queue.cancel(job_id)
+    try:
+        enrichment_jobs._run_job(job_id)
+    except JobCancelled:  # pragma: no cover - the handler should swallow it
+        pytest.fail("JobCancelled escaped the worker")
+    finally:
+        queue._cancelled.discard(job_id)
+
+    session.expire_all()
+    ended = session.get(EnrichmentJob, job_id)
+    assert ended.status == "cancelled", f"left at {ended.status!r}"
+
+    asset = session.get(Asset, created["id"])
+    assert asset.transcript_status != "running", "the asset was left spinning"
+
+
+@needs_ffmpeg
+def test_the_api_cancel_status_is_not_overwritten(library, session, monkeypatch):
+    """The guard must not clobber a row the API already marked."""
+    from app.jobs import enrichment as enrichment_jobs
+
+    created = _upload_video(library)
+    set_setting(session, "user-under-test", DEEPGRAM_API_KEY, "dg-test-key")
+
+    job = library.post(f"/api/assets/{created['id']}/transcribe").json()["data"]
+    library.delete(f"/api/activity/enrichment/{job['id']}")
+
+    queue = enrichment_jobs.queue()
+    monkeypatch.setattr(queue, "engine", session.get_bind())
+    enrichment_jobs._run_job(job["id"])
+
+    session.expire_all()
+    assert session.get(EnrichmentJob, job["id"]).status == "cancelled"
