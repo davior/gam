@@ -18,8 +18,11 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.auth import CurrentUser
 from app.config import settings
 from app.media_tools import ffmpeg_available, ffmpeg_version
+from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import media as media_router
+from app.routers import settings as settings_router
+from app.routers import transcripts as transcripts_router
 from app.schemas import DataResponse, HealthResponse
 
 logging.basicConfig(level=logging.INFO)
@@ -37,6 +40,11 @@ async def lifespan(_app: FastAPI):
             "ffmpeg/ffprobe not found on PATH. Media probing, thumbnails and clip "
             "extraction will be unavailable."
         )
+    # Picks up anything a restart interrupted, and starts the worker threads.
+    from app.jobs import enrichment
+
+    enrichment.start()
+
     yield
 
 
@@ -101,6 +109,11 @@ def me(user: CurrentUser) -> DataResponse[dict]:
 
 
 app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
+# Mounted under the same prefix: a transcript belongs to an asset, and the URL should
+# say so rather than inventing a parallel /api/transcripts tree.
+app.include_router(transcripts_router.router, prefix="/api/assets", tags=["transcripts"])
+app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
 # Not under /api: these URLs go straight into <img src> and <video src>, and the
 # signature in the query string is what authorises them.
 app.include_router(media_router.router, prefix="/media", tags=["media"])

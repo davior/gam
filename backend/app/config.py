@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # ─── jobs ────────────────────────────────────────────────────────────────
     job_heartbeat_seconds: int = 30
     job_stale_minutes: int = 40
+    # One at a time by default. Transcription is an ffmpeg transcode followed by a
+    # long upload, both of which contend with serving the API from the same container.
+    enrichment_concurrency: int = 1
 
     # ─── development ─────────────────────────────────────────────────────────
     # Bypasses token verification and acts as this user id. Refused unless

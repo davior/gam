@@ -63,6 +63,14 @@ class Asset(SQLModel, table=True):
     height: Optional[int] = None
     codec: Optional[str] = None
 
+    # ─── transcript header ───────────────────────────────────────────────────
+    # The segments live in their own table; this is what was run and how it went, so
+    # the library can show "transcribed" without counting rows, and so a transcript
+    # records which model produced it rather than whatever is configured today.
+    transcript_status: Optional[str] = None  # none|running|done|error
+    transcript_model: Optional[str] = None
+    transcript_language: Optional[str] = None
+
     # ─── provenance of the metadata, not the file ───────────────────────────
     # JSON, {"description": "ai"|"human", ...}. FR 8.1.3 requires that a later AI run
     # never silently overwrites something a person wrote; without recording who last
