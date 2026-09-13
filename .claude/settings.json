@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // .tool_response.filePath // empty'); case \"$f\" in */frontend/*|*/backend/*) printf '%s' '{\"systemMessage\":\"🛠  Dev build to see this change: live servers — (cd frontend && npm run dev) + (cd backend && uvicorn app.main:app --reload --port 8000); or Docker — docker compose up --build -d, then hard-refresh (Ctrl/Cmd+Shift+R).\",\"suppressOutput\":true}';; esac"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null); if [ \"$b\" = \"main\" ]; then printf '%s' '{\"systemMessage\":\"🚀 Commit landed on main — deploy: git pull origin main && docker compose up --build -d  |  verify: docker compose ps && curl -f http://localhost:18082/api/health\"}'; else r=$(git remote get-url origin 2>/dev/null | sed -E 's#(\\.git)?/?$##; s#^.*[/:]([^/]+/[^/]+)$#\\1#'); printf '{\"systemMessage\":\"🔀 Committed to %s — open PR for this branch: https://github.com/%s/pulls?q=is%%3Apr+head%%3A%s\"}' \"$b\" \"$r\" \"$b\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
