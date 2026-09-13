@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import AppShell from '@/components/AppShell'
 import RequireAuth from '@/components/RequireAuth'
 import LibraryView from '@/views/LibraryView'
+import SettingsView from '@/views/SettingsView'
 import { useAuthStore } from '@/stores/auth'
 
 export default function App() {
@@ -22,6 +23,16 @@ export default function App() {
           <RequireAuth>
             <AppShell>
               <LibraryView />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <SettingsView />
             </AppShell>
           </RequireAuth>
         }

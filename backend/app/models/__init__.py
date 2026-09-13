@@ -10,6 +10,9 @@ empty migration and a silent schema drift.
 """
 
 from app.models.asset import Asset
+from app.models.job import EnrichmentJob
+from app.models.setting import UserSetting
+from app.models.transcript import TranscriptSegment
 from app.models.user import User
 
-__all__ = ["Asset", "User"]
+__all__ = ["Asset", "EnrichmentJob", "TranscriptSegment", "User", "UserSetting"]

@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
 import { useLibraryStore } from '@/stores/library'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
+import TranscriptPanel from '@/components/TranscriptPanel'
+
+/** Audio and video can be transcribed; nothing else has speech in it. */
+const SPEECH_TYPES = new Set(['audio', 'video'])
 
 interface Props {
   asset: Asset
@@ -31,6 +35,21 @@ export default function AssetDetail({ asset, onClose }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const panelRef = useRef<HTMLDivElement>(null)
+  // The detail view owns the player element so the transcript can drive it. Passing a
+  // ref down beats lifting playback state up: seeking is imperative, and mirroring
+  // currentTime into React state on every frame would re-render the whole panel
+  // sixty times a second.
+  const playerRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const [currentTime, setCurrentTime] = useState(0)
+
+  const seekTo = useCallback((seconds: number) => {
+    const player = playerRef.current
+    if (!player) return
+    player.currentTime = seconds
+    void player.play()?.catch(() => {
+      // Autoplay can be refused; the seek still happened, which is what was asked for.
+    })
+  }, [])
 
   // Re-seed when a different asset opens in the same panel, or the fields would keep
   // showing the previous one's values.
@@ -38,6 +57,7 @@ export default function AssetDetail({ asset, onClose }: Props) {
     setName(asset.name)
     setDescription(asset.description ?? '')
     setConfirmingDelete(false)
+    setCurrentTime(0)
   }, [asset.id, asset.name, asset.description])
 
   useEffect(() => {
@@ -101,8 +121,24 @@ export default function AssetDetail({ asset, onClose }: Props) {
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-auto md:flex-row">
-          <div className="flex min-h-[240px] flex-1 items-center justify-center bg-gray-900 p-2">
-            <Preview asset={asset} />
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-[240px] flex-1 items-center justify-center bg-gray-900 p-2">
+              <Preview
+                asset={asset}
+                playerRef={playerRef}
+                onTimeUpdate={setCurrentTime}
+              />
+            </div>
+
+            {SPEECH_TYPES.has(asset.asset_type) && (
+              <div className="flex max-h-[38vh] min-h-0 flex-col border-t border-gray-200 dark:border-gray-700">
+                <TranscriptPanel
+                  assetId={asset.id}
+                  onSeek={seekTo}
+                  currentTime={currentTime}
+                />
+              </div>
+            )}
           </div>
 
           <div className="w-full shrink-0 space-y-4 p-4 md:w-80">
@@ -194,7 +230,15 @@ export default function AssetDetail({ asset, onClose }: Props) {
 }
 
 /** The asset itself, played or shown in place. */
-function Preview({ asset }: { asset: Asset }) {
+function Preview({
+  asset,
+  playerRef,
+  onTimeUpdate,
+}: {
+  asset: Asset
+  playerRef: React.MutableRefObject<HTMLVideoElement | HTMLAudioElement | null>
+  onTimeUpdate: (seconds: number) => void
+}) {
   if (asset.missing || !asset.file_url) {
     return (
       <div className="p-8 text-center text-sm text-gray-400">
@@ -210,17 +254,32 @@ function Preview({ asset }: { asset: Asset }) {
     return (
       <video
         key={asset.id}
+        ref={(el) => {
+          playerRef.current = el
+        }}
         src={asset.file_url}
         controls
         preload="metadata"
         poster={asset.thumb_url ?? undefined}
-        className="max-h-[60vh] w-full"
+        onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
+        className="max-h-[45vh] w-full"
       />
     )
   }
 
   if (asset.asset_type === 'audio') {
-    return <audio key={asset.id} src={asset.file_url} controls className="w-full px-4" />
+    return (
+      <audio
+        key={asset.id}
+        ref={(el) => {
+          playerRef.current = el
+        }}
+        src={asset.file_url}
+        controls
+        onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
+        className="w-full px-4"
+      />
+    )
   }
 
   if (asset.asset_type === 'image') {

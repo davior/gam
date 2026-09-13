@@ -29,6 +29,23 @@ from app.auth import UserCtx  # noqa: E402
 TEST_USER_ID = "user-under-test"
 
 
+@pytest.fixture(autouse=True)
+def no_background_workers(monkeypatch):
+    """Keep the app's worker threads out of the test suite.
+
+    The lifespan starts them, and TestClient runs the lifespan — so without this every
+    test that builds a client spawns a sweeper thread polling the *real* engine, which
+    in a test run points at a database with no tables. It logs a stream of exceptions
+    and, worse, is real background work firing during unrelated tests.
+
+    Tests that want the worker call `_run_job` directly, which is also the only way to
+    assert on what it did.
+    """
+    from app.jobs import enrichment
+
+    monkeypatch.setattr(enrichment, "start", lambda: None)
+
+
 @pytest.fixture
 def anyio_backend():
     """Run `@pytest.mark.anyio` tests on asyncio only.
