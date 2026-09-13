@@ -12,6 +12,8 @@ const SPEECH_TYPES = new Set(['audio', 'video'])
 interface Props {
   asset: Asset
   onClose: () => void
+  /** Seconds to start playback at — a search hit opening at the moment it matched. */
+  startAt?: number
 }
 
 /** A row of the metadata table, rendered only when there is something to show. */
@@ -25,7 +27,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   )
 }
 
-export default function AssetDetail({ asset, onClose }: Props) {
+export default function AssetDetail({ asset, onClose, startAt }: Props) {
   const update = useLibraryStore((s) => s.update)
   const remove = useLibraryStore((s) => s.remove)
 
@@ -42,6 +44,26 @@ export default function AssetDetail({ asset, onClose }: Props) {
   const playerRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
 
+  // Seek once the player has enough metadata to accept it. Setting currentTime before
+  // the browser knows the duration is silently ignored, which is the difference between
+  // a search result that opens at the right moment and one that opens at zero.
+  const seekOnLoad = useCallback(
+    (player: HTMLVideoElement | HTMLAudioElement | null) => {
+      playerRef.current = player
+      if (!player || startAt === undefined) return
+
+      const apply = () => {
+        player.currentTime = startAt
+      }
+      if (player.readyState >= 1) {
+        apply()
+      } else {
+        player.addEventListener('loadedmetadata', apply, { once: true })
+      }
+    },
+    [startAt]
+  )
+
   const seekTo = useCallback((seconds: number) => {
     const player = playerRef.current
     if (!player) return
@@ -57,8 +79,8 @@ export default function AssetDetail({ asset, onClose }: Props) {
     setName(asset.name)
     setDescription(asset.description ?? '')
     setConfirmingDelete(false)
-    setCurrentTime(0)
-  }, [asset.id, asset.name, asset.description])
+    setCurrentTime(startAt ?? 0)
+  }, [asset.id, asset.name, asset.description, startAt])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -125,7 +147,7 @@ export default function AssetDetail({ asset, onClose }: Props) {
             <div className="flex min-h-[240px] flex-1 items-center justify-center bg-gray-900 p-2">
               <Preview
                 asset={asset}
-                playerRef={playerRef}
+                attachPlayer={seekOnLoad}
                 onTimeUpdate={setCurrentTime}
               />
             </div>
@@ -232,11 +254,11 @@ export default function AssetDetail({ asset, onClose }: Props) {
 /** The asset itself, played or shown in place. */
 function Preview({
   asset,
-  playerRef,
+  attachPlayer,
   onTimeUpdate,
 }: {
   asset: Asset
-  playerRef: React.MutableRefObject<HTMLVideoElement | HTMLAudioElement | null>
+  attachPlayer: (player: HTMLVideoElement | HTMLAudioElement | null) => void
   onTimeUpdate: (seconds: number) => void
 }) {
   if (asset.missing || !asset.file_url) {
@@ -254,9 +276,7 @@ function Preview({
     return (
       <video
         key={asset.id}
-        ref={(el) => {
-          playerRef.current = el
-        }}
+        ref={attachPlayer}
         src={asset.file_url}
         controls
         preload="metadata"
@@ -271,11 +291,10 @@ function Preview({
     return (
       <audio
         key={asset.id}
-        ref={(el) => {
-          playerRef.current = el
-        }}
+        ref={attachPlayer}
         src={asset.file_url}
         controls
+        preload="metadata"
         onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
         className="w-full px-4"
       />
