@@ -39,7 +39,12 @@ def make_token(
 def test_bearer_header_is_accepted(client):
     response = client.get("/api/me", headers={"Authorization": f"Bearer {make_token()}"})
     assert response.status_code == 200
-    assert response.json()["data"] == {"id": "notes-user-1", "username": "davior"}
+
+    # Assert the identity, not the exact field set: /api/me also reports what the local
+    # shadow row knows, and a whole-dict comparison would break every time that grows.
+    body = response.json()["data"]
+    assert body["id"] == "notes-user-1"
+    assert body["username"] == "davior"
 
 
 def test_session_cookie_is_accepted(client):

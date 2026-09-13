@@ -18,6 +18,10 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.auth import CurrentUser
 from app.config import settings
 from app.media_tools import ffmpeg_available, ffmpeg_version
+from fastapi import Depends
+from sqlmodel import Session
+
+from app.database import get_session
 from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import media as media_router
@@ -99,13 +103,27 @@ def health() -> HealthResponse:
 
 
 @app.get("/api/me", response_model=DataResponse[dict])
-def me(user: CurrentUser) -> DataResponse[dict]:
-    """Echo the verified caller.
+def me(
+    user: CurrentUser, session: Session = Depends(get_session)
+) -> DataResponse[dict]:
+    """Who is signed in, and the record that they were here.
 
-    The smallest possible proof that a gecko-notes session is being accepted here,
-    which is what M2's SSO work will be checked against.
+    The shadow row is written here rather than in the auth dependency because this is
+    the one call the frontend makes exactly once per session. Upserting on every
+    authenticated request would put a SELECT — and periodically a write — in front of
+    every upload and every media byte, for a row nothing on those paths reads.
     """
-    return DataResponse(data={"id": user.id, "username": user.username})
+    from app.services.users import ensure_user
+
+    record = ensure_user(session, user)
+    return DataResponse(
+        data={
+            "id": record.id,
+            "username": record.username or user.username,
+            "is_admin": record.is_admin,
+            "first_seen": record.created_at.isoformat() if record.created_at else None,
+        }
+    )
 
 
 app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
