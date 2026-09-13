@@ -59,6 +59,12 @@ valuable thing in the file. This is gecko-notes' house style and it is worth kee
 
 ## After every change (dev environment)
 
+The backend runs on **Python 3.13**, pinned by `.python-version` and matched by
+`backend/Dockerfile` and CI. Not "3.13 or newer" — the pinned Pillow and numpy ship
+wheels no further than 3.13, and on a newer interpreter pip silently compiles them from
+source and fails there. Build the venv with `uv venv` (which reads `.python-version`)
+or `python3.13 -m venv`, never a bare `python3`.
+
 ```bash
 # Backend — http://localhost:8000 (auto-reloads on save)
 cd backend && uvicorn app.main:app --reload --port 8000

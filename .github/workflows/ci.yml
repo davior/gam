@@ -36,8 +36,10 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          # Matches backend/Dockerfile (python:3.11-slim).
-          python-version: '3.11'
+          # Matches backend/Dockerfile (python:3.13-slim) and .python-version. All three
+          # must move together: the pinned Pillow and numpy publish wheels only up to
+          # 3.13, so a mismatch here compiles them from source instead of failing loudly.
+          python-version: '3.13'
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
 
