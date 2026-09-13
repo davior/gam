@@ -129,3 +129,36 @@ def test_autogenerate_does_not_try_to_drop_the_search_index(alembic_config, monk
     dropped = [op for op in operations if "remove_table" in str(op[0])]
     assert not dropped, f"autogenerate would drop: {dropped}"
     assert not operations, f"schema and models disagree: {operations}"
+
+
+def test_the_migrated_schema_enforces_case_insensitive_tag_names(alembic_config):
+    """Asserted against a migrated database, because the model metadata lied.
+
+    `Tag.__table_args__` declares a unique index on `(user_id, lower(name))`, and
+    conftest builds its tables with `SQLModel.metadata.create_all`, which honours it. But
+    Alembic's autogenerate does not emit expression indexes — it silently produced the
+    two plain indexes on `tag` and dropped this one. Every unit test would therefore have
+    had case-insensitive uniqueness while production had none, and "NATO" and "nato"
+    would both have inserted there and nowhere else.
+
+    So this checks the constraint holds where it actually has to, and it checks it by
+    inserting rather than by reading the index list: an index that exists but does not
+    bite is the same bug wearing a disguise.
+    """
+    config, db_path = alembic_config
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO tag (id, user_id, name, created_at) VALUES ('1', 'u', 'NATO', '2026-01-01')"
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO tag (id, user_id, name, created_at)"
+                " VALUES ('2', 'u', 'nato', '2026-01-01')"
+            )
+        # Scoped per user, not globally: two people may each keep their own "nato".
+        conn.execute(
+            "INSERT INTO tag (id, user_id, name, created_at)"
+            " VALUES ('3', 'other', 'nato', '2026-01-01')"
+        )

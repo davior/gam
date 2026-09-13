@@ -13,7 +13,18 @@ from app.models.asset import Asset
 from app.models.embedding import Embedding
 from app.models.job import EnrichmentJob
 from app.models.setting import UserSetting
+from app.models.tag import AssetTag, Tag, TagCategory
 from app.models.transcript import TranscriptSegment
 from app.models.user import User
 
-__all__ = ["Asset", "Embedding", "EnrichmentJob", "TranscriptSegment", "User", "UserSetting"]
+__all__ = [
+    "Asset",
+    "AssetTag",
+    "Embedding",
+    "EnrichmentJob",
+    "Tag",
+    "TagCategory",
+    "TranscriptSegment",
+    "User",
+    "UserSetting",
+]
