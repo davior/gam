@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=8.0
+# Explicit, though FastAPI pulls it in: the async storage tests need its
+# pytest plugin, and a test dependency should not rely on a transitive one.
+anyio>=4.0

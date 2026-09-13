@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { authApi, redirectToLogin, type User } from '@/api/auth'
 import { apiErrorCode, clearToken } from '@/api/client'
+import { useLibraryStore } from '@/stores/library'
 
 /**
  * Who is signed in.
@@ -53,6 +54,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   signOut() {
     clearToken()
     get().reset()
+    // Fan out to every store holding user data, so signing out cannot leave one
+    // person's library on screen for the next.
+    useLibraryStore.getState().reset()
     redirectToLogin()
   },
 

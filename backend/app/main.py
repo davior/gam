@@ -18,6 +18,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from app.auth import CurrentUser
 from app.config import settings
 from app.media_tools import ffmpeg_available, ffmpeg_version
+from app.routers import assets as assets_router
+from app.routers import media as media_router
 from app.schemas import DataResponse, HealthResponse
 
 logging.basicConfig(level=logging.INFO)
@@ -96,3 +98,9 @@ def me(user: CurrentUser) -> DataResponse[dict]:
     which is what M2's SSO work will be checked against.
     """
     return DataResponse(data={"id": user.id, "username": user.username})
+
+
+app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
+# Not under /api: these URLs go straight into <img src> and <video src>, and the
+# signature in the query string is what authorises them.
+app.include_router(media_router.router, prefix="/media", tags=["media"])

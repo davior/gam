@@ -29,6 +29,16 @@ from app.auth import UserCtx  # noqa: E402
 TEST_USER_ID = "user-under-test"
 
 
+@pytest.fixture
+def anyio_backend():
+    """Run `@pytest.mark.anyio` tests on asyncio only.
+
+    anyio's plugin would otherwise parameterise every async test across asyncio and
+    trio, and trio is not a dependency — the app runs under uvicorn/asyncio.
+    """
+    return "asyncio"
+
+
 @pytest.fixture(name="engine")
 def engine_fixture():
     """An in-memory database shared across connections.
@@ -88,3 +98,24 @@ def media_dir_fixture(tmp_path, monkeypatch):
 
     monkeypatch.setattr(settings, "media_dir", str(tmp_path))
     return tmp_path
+
+
+@pytest.fixture(name="library")
+def library_fixture(session, media_dir):
+    """A signed-in client whose storage is a temp directory.
+
+    The common case for asset tests: they need both an authenticated caller and a
+    storage root that does not touch the developer's real media tree.
+    """
+    from app.storage import LocalStorage
+    from app.routers.assets import get_storage
+
+    storage = LocalStorage(media_dir)
+    fastapi_app.dependency_overrides[get_session] = lambda: session
+    fastapi_app.dependency_overrides[get_storage] = lambda: storage
+    fastapi_app.dependency_overrides[current_user] = lambda: UserCtx(
+        id=TEST_USER_ID, username="tester"
+    )
+    with TestClient(fastapi_app) as client:
+        yield client
+    fastapi_app.dependency_overrides.clear()

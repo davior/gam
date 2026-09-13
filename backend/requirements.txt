@@ -11,3 +11,7 @@ cryptography>=42.0.0
 python-dotenv>=1.0.0
 slowapi==0.1.9
 Pillow==10.4.0
+# PDF first-page previews. Apache/BSD licensed with self-contained wheels — PyMuPDF is
+# AGPL and would put obligations on anyone deploying this, and pdf2image needs a
+# poppler binary on the host.
+pypdfium2==4.30.0
