@@ -310,6 +310,33 @@ Phase 2 (out of scope, named so it is not accidentally designed out): cloud/R2 s
 checksum dedup (the `checksum_sha256` column is already there for it), asset versioning,
 shared libraries, library-wide background transcription, scene detection.
 
+### Status
+
+Kept current as milestones land, because this document is the handoff and the container
+it was written in does not survive the session.
+
+| Milestone | State |
+|---|---|
+| M0 Genesis | Merged — [#1](https://github.com/davior/gam/pull/1) |
+| M1 Ingest & library | Merged — [#2](https://github.com/davior/gam/pull/2) |
+| M4 Transcription | Merged — [#3](https://github.com/davior/gam/pull/3) |
+| M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
+| M5 Search | In review — [#5](https://github.com/davior/gam/pull/5) |
+| M3, M6–M9 | Not started |
+
+M4 was brought forward past M2 and M3 because it is what M5 needs: there is nothing to
+search until there are transcripts. M2 was deferred because it only decides *where* GAM
+is reachable, and it was blocked on the gecko-notes changes landing (they since have, as
+`95ed2ca` there).
+
+Outstanding and outside the repo:
+
+- **The M5 acceptance test is the user's to run.** It needs a real embedding key and real
+  content; the sandbox has neither, and no test here is evidence about retrieval
+  *quality* — see #5 for exactly which half is proven.
+- A Deepgram key and an embedding provider go in through GAM's settings screen. Neither
+  is ever shared with a session.
+
 ---
 
 ## Critical files
