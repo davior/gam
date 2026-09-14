@@ -36,7 +36,11 @@ export default function TranscriptPanel({ assetId, onSeek, currentTime }: Props)
         activityApi.list({ active: true, asset_id: assetId }),
       ])
       setTranscript(fetched)
-      setJob(jobs[0] ?? null)
+      // Only this asset's *transcription*. `activityApi.list` returns active jobs of
+      // every action for the asset, newest first, and transcription now queues an embed
+      // job the moment it succeeds — so taking jobs[0] showed the embed job's progress
+      // under the transcription heading and pointed Cancel at the wrong job.
+      setJob(jobs.find((j) => j.action === 'transcribe') ?? null)
       setError(null)
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load the transcript'))

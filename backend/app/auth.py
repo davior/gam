@@ -33,6 +33,7 @@ from urllib.parse import urlsplit
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 from pydantic import BaseModel
 
 from app.config import settings
@@ -64,6 +65,28 @@ def _unauthorized(message: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={"code": "unauthorized", "message": message},
+    )
+
+
+def _session_not_accepted() -> HTTPException:
+    """The caller *is* signed in to Notes, and this app cannot verify it.
+
+    Distinct from `unauthorized` because the remedy is distinct, and because the
+    difference is invisible from the browser: both render as "please sign in", and in
+    this state signing in again returns the user to exactly the same screen. A cookie
+    that carries a well-formed token whose signature does not verify means the two apps
+    disagree about JWT_SECRET_KEY — an operator's problem that no amount of clicking
+    fixes.
+    """
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={
+            "code": "session_not_accepted",
+            "message": (
+                "You are signed in to Gecko Notes, but this app could not verify that "
+                "session. Its JWT_SECRET_KEY probably does not match Notes'."
+            ),
+        },
     )
 
 
@@ -130,11 +153,17 @@ def current_user(
     and can be overridden in tests.
     """
     token: Optional[str] = None
+    # Which transport carried it, because it changes what a failure *means*. A cookie
+    # was minted by Notes moments ago and handed over by the browser; if it will not
+    # verify, the two apps disagree about the secret. A header token came out of this
+    # app's own localStorage and could simply be stale.
+    from_cookie = False
 
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:].strip()
     elif gecko_session:
         token = gecko_session.strip()
+        from_cookie = True
         if not _origin_allowed_for_cookie(request):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -153,9 +182,23 @@ def current_user(
 
     try:
         payload = decode_token(token)
+    except ExpiredSignatureError as exc:
+        # Routine. Tokens last 30 days and then stop; nothing is misconfigured, and the
+        # user fixes it by signing in again. Stays at debug so it cannot drown the
+        # case below.
+        logger.debug("Rejected an expired token")
+        raise _unauthorized("Your session has expired. Sign in again.") from exc
     except JWTError as exc:
-        logger.debug("Rejected token: %s", exc)
-        raise _unauthorized("Invalid or expired token") from exc
+        # Not routine, and previously logged at debug — which is why a secret mismatch
+        # presented as a silent sign-in loop with nothing in the logs at default level.
+        # The commonest cause by far is the one named here, so the message carries the
+        # diagnosis rather than making somebody derive it.
+        logger.warning(
+            "Rejected a token that did not verify (%s). If this is every request, "
+            "JWT_SECRET_KEY does not match the value gecko-notes signs with.",
+            exc,
+        )
+        raise (_session_not_accepted() if from_cookie else _unauthorized("Invalid token")) from exc
 
     subject = payload.get("sub")
     if not subject:

@@ -27,6 +27,26 @@ function renderGate(state: Partial<ReturnType<typeof useAuthStore.getState>>) {
 }
 
 describe('RequireAuth', () => {
+  it('does not offer a sign-in button when the session was rejected', () => {
+    // The state that cost an afternoon in production: signed in to Notes, refused here
+    // because the secrets disagree. The old UI showed "Sign in with Gecko Notes", which
+    // sends the user around a loop that cannot terminate.
+    renderGate({
+      status: 'rejected',
+      error: 'Its JWT_SECRET_KEY probably does not match Notes\u2019.',
+    })
+
+    expect(screen.getByText(/signed in, but not accepted/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /sign in/i })).not.toBeInTheDocument()
+    expect(screen.queryByText('protected content')).not.toBeInTheDocument()
+  })
+
+  it('names the cause so an operator knows where to look', () => {
+    renderGate({ status: 'rejected', error: null })
+
+    expect(screen.getByText(/JWT_SECRET_KEY/)).toBeInTheDocument()
+  })
+
   it('shows a loading state while the session is being checked', () => {
     renderGate({ status: 'loading' })
     expect(screen.getByText(/checking your session/i)).toBeInTheDocument()

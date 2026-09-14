@@ -29,6 +29,33 @@ export default function RequireAuth({ children }: Props) {
     )
   }
 
+  // Signed in to Notes, rejected here. Deliberately offers no sign-in button: in this
+  // state the user has already proved they can sign in, and doing it again lands them
+  // right back on this screen. The only thing that helps is an operator reading the
+  // message — so the message is the whole panel.
+  if (status === 'rejected') {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50 px-4 dark:bg-gray-900">
+        <div className="card max-w-md space-y-4 p-6 text-center">
+          <div className="flex justify-center">
+            <AlertTriangle className="h-8 w-8 text-amber-500" />
+          </div>
+          <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Signed in, but not accepted
+          </h1>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {error ??
+              'You are signed in to Gecko Notes, but this app could not verify that session.'}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-500">
+            This is a configuration problem, not something you did. Signing in again will
+            not change it — the two apps need the same JWT_SECRET_KEY.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (status === 'anonymous') {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50 px-4 dark:bg-gray-900">

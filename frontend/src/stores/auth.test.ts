@@ -6,6 +6,18 @@ import { useTagStore } from '@/stores/tags'
 import * as auth from '@/api/auth'
 import { authApi } from '@/api/auth'
 
+function apiError(code: string, message: string): AxiosError {
+  const error = new AxiosError(message)
+  error.response = {
+    data: { detail: { code, message } },
+    status: 401,
+    statusText: '',
+    headers: {},
+    config: {} as never,
+  }
+  return error
+}
+
 function unauthorizedError(): AxiosError {
   const error = new AxiosError('Unauthorized')
   error.response = {
@@ -27,6 +39,23 @@ afterEach(() => {
 })
 
 describe('auth store bootstrap', () => {
+  it('distinguishes a rejected session from being signed out', async () => {
+    // Both are 401s and both used to land on `anonymous`, which put a sign-in button
+    // in front of a user for whom signing in changes nothing.
+    vi.spyOn(authApi, 'me').mockRejectedValue(
+      apiError('session_not_accepted', 'this app could not verify that session')
+    )
+
+    await useAuthStore.getState().bootstrap()
+
+    const state = useAuthStore.getState()
+    expect(state.status).toBe('rejected')
+    expect(state.user).toBeNull()
+    // The backend's sentence is carried through rather than replaced: it is the one
+    // that names the cause.
+    expect(state.error).toMatch(/could not verify/i)
+  })
+
   it('authenticates when the session is valid', async () => {
     vi.spyOn(authApi, 'me').mockResolvedValue({ id: 'u1', username: 'davior' })
 

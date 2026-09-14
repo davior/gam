@@ -5,6 +5,7 @@ suite is that a token Notes signed is accepted here, and an override would prove
 nothing about that.
 """
 
+import logging
 from datetime import timedelta
 
 import pytest
@@ -82,6 +83,63 @@ def test_token_signed_with_another_secret_is_rejected(client):
     token = make_token(secret="a-different-secret-entirely")
     response = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 401
+
+
+# ─── telling the two failures apart ──────────────────────────────────────────
+#
+# From a browser these look identical — both render "please sign in" — but only one is
+# fixed by signing in. A cookie whose signature will not verify means the two apps
+# disagree about JWT_SECRET_KEY, and clicking sign-in returns the user to the same
+# screen forever. That loop cost an afternoon in production, silently, because the
+# rejection was logged at debug.
+
+
+def test_a_cookie_that_will_not_verify_says_so_specifically(client):
+    """The unwinnable state gets its own code, so the UI can stop offering the button
+    that cannot help."""
+    client.cookies.set(settings.auth_cookie_name, make_token(secret="notes-and-gam-disagree"))
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "session_not_accepted"
+
+
+def test_the_same_token_in_a_header_keeps_the_generic_code(client):
+    """A header token came out of this app's own localStorage and may simply be stale,
+    which is not evidence about anyone's configuration."""
+    token = make_token(secret="notes-and-gam-disagree")
+    response = client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "unauthorized"
+
+
+def test_an_expired_cookie_is_not_reported_as_a_misconfiguration(client):
+    """Expiry is routine. Reporting it as a secret mismatch would send someone to
+    check a config file that is perfectly correct."""
+    client.cookies.set(settings.auth_cookie_name, make_token(expires_in_minutes=-1))
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "unauthorized"
+
+
+def test_a_bad_signature_is_logged_loudly_enough_to_find(client, caplog):
+    """The whole point of the change: at debug this was invisible in production."""
+    with caplog.at_level(logging.WARNING, logger="app.auth"):
+        client.cookies.set(settings.auth_cookie_name, make_token(secret="wrong"))
+        client.get("/api/me")
+
+    assert any("JWT_SECRET_KEY" in record.getMessage() for record in caplog.records)
+
+
+def test_an_expiry_does_not_warn(client, caplog):
+    """Otherwise a month-old tab turns into a false alarm about the deployment."""
+    with caplog.at_level(logging.WARNING, logger="app.auth"):
+        client.cookies.set(settings.auth_cookie_name, make_token(expires_in_minutes=-1))
+        client.get("/api/me")
+
+    assert caplog.records == []
 
 
 def test_token_without_subject_is_rejected(client):
