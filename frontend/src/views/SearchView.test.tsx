@@ -25,6 +25,7 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     file_url: '/media/u/a1.mp4?exp=1&sig=x',
     thumb_url: '/media/u/a1.thumb.jpg?exp=1&sig=x',
     missing: false,
+    tags: [],
     upload_date: '2026-09-13T10:00:00Z',
     modified_date: '2026-09-13T10:00:00Z',
     metadata_modified_date: '2026-09-13T10:00:00Z',

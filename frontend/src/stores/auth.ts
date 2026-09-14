@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { authApi, redirectToLogin, type User } from '@/api/auth'
 import { apiErrorCode, clearToken } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
+import { useTagStore } from '@/stores/tags'
 
 /**
  * Who is signed in.
@@ -55,8 +56,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     clearToken()
     get().reset()
     // Fan out to every store holding user data, so signing out cannot leave one
-    // person's library on screen for the next.
+    // person's library on screen for the next. The tag store counts: a vocabulary of
+    // names someone chose is as personal as the assets they filed under them, and it
+    // would otherwise sit in the next person's autocomplete.
     useLibraryStore.getState().reset()
+    useTagStore.getState().reset()
     redirectToLogin()
   },
 

@@ -1,6 +1,6 @@
 import { AxiosError } from 'axios'
 import { describe, expect, it } from 'vitest'
-import { apiErrorCode, apiErrorMessage } from '@/api/client'
+import client, { apiErrorCode, apiErrorMessage } from '@/api/client'
 
 function axiosErrorWith(data: unknown, code?: string): AxiosError {
   const error = new AxiosError('Request failed', code)
@@ -46,5 +46,38 @@ describe('apiErrorCode', () => {
   it('is null when there is no envelope', () => {
     expect(apiErrorCode(new Error('boom'))).toBeNull()
     expect(apiErrorCode(axiosErrorWith({}))).toBeNull()
+  })
+})
+
+describe('query parameter serialisation', () => {
+  const serialize = (params: Record<string, unknown>) => {
+    const serializer = client.defaults.paramsSerializer
+    if (typeof serializer === 'function') return serializer(params)
+    return serializer!.serialize!(params)
+  }
+
+  it('repeats the key for an array instead of bracketing it', () => {
+    /**
+     * The whole reason this serialiser exists. Axios' default emits `tag[]=a&tag[]=b`,
+     * and FastAPI reads a repeatable Query parameter from repeated bare keys — so the
+     * bracketed form is not rejected, it is *ignored*, and the listing comes back
+     * unfiltered with a 200. A filter that silently matches everything is the worst
+     * possible failure mode for this control, and it looks fine in a screenshot.
+     */
+    expect(serialize({ tag: ['interview', '2024'] })).toBe('tag=interview&tag=2024')
+  })
+
+  it('drops null and undefined rather than sending the word "undefined"', () => {
+    expect(serialize({ q: 'nato', source: null, category_id: undefined })).toBe('q=nato')
+  })
+
+  it('encodes values that need it', () => {
+    expect(serialize({ q: 'klaus schwab & co' })).toBe('q=klaus+schwab+%26+co')
+  })
+
+  it('keeps scalars alongside arrays', () => {
+    expect(serialize({ tag: ['a'], limit: 60, min_duration: 0 })).toBe(
+      'tag=a&limit=60&min_duration=0'
+    )
   })
 })

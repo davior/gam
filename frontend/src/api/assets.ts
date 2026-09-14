@@ -1,10 +1,13 @@
 import client from '@/api/client'
+import type { Tag } from '@/api/tags'
 
 /**
  * The asset library API.
  *
  * Types live here rather than in a shared `types/` directory — the convention carried
- * over from gecko-notes, where each api module owns the shapes it returns.
+ * over from gecko-notes, where each api module owns the shapes it returns. `Tag` is
+ * imported rather than redeclared for the same reason: the tag module owns that shape,
+ * and a second copy here is a second thing to keep in step with the server.
  */
 
 export type AssetType = 'image' | 'video' | 'audio' | 'document'
@@ -34,6 +37,9 @@ export interface Asset {
   /** The row exists but its bytes do not. */
   missing: boolean
 
+  /** Batch-loaded for a page by the server, so reading this is free. */
+  tags: Tag[]
+
   upload_date: string
   modified_date: string
   metadata_modified_date: string
@@ -50,9 +56,23 @@ export interface UploadResult {
   rejected: UploadRejection[]
 }
 
+/**
+ * Every filter the listing understands.
+ *
+ * Named exactly as the query string names them, so the object passes straight to axios
+ * with no mapping layer to drift. `tag` repeats and is ANDed by the server — picking a
+ * second tag narrows, which is the only behaviour that makes a filter chip feel right.
+ */
 export interface ListAssetsParams {
   asset_type?: AssetType
   q?: string
+  tag?: string[]
+  category_id?: string
+  source?: string
+  min_duration?: number
+  max_duration?: number
+  uploaded_after?: string
+  uploaded_before?: string
   limit?: number
   offset?: number
 }

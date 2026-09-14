@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import { useLibraryStore } from '@/stores/library'
+import { useTagStore } from '@/stores/tags'
+import * as auth from '@/api/auth'
 import { authApi } from '@/api/auth'
 
 function unauthorizedError(): AxiosError {
@@ -75,5 +78,34 @@ describe('auth store bootstrap', () => {
     ])
 
     expect(me).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('signing out', () => {
+  /**
+   * Everything holding one person's data has to be emptied here, not just the obvious
+   * one. GAM runs on a shared parent domain and signing out is the only boundary
+   * between two people on the same browser — a store left populated is the previous
+   * user's data sitting in front of the next one.
+   */
+  it('empties every store that holds user data', () => {
+    vi.spyOn(auth, 'redirectToLogin').mockImplementation(() => {})
+
+    useLibraryStore.setState({ total: 7, query: 'nato' })
+    useTagStore.setState({
+      tags: [{ id: 't1', name: 'Klaus Schwab', category_id: null }],
+      categories: [{ id: 'c1', name: 'People', parent_category_id: null }],
+      loaded: true,
+    })
+
+    useAuthStore.getState().signOut()
+
+    expect(useLibraryStore.getState().total).toBe(0)
+    expect(useLibraryStore.getState().query).toBe('')
+    expect(useTagStore.getState().tags).toEqual([])
+    expect(useTagStore.getState().categories).toEqual([])
+    // `loaded` too, or the next person's catalogue is never fetched and their tag box
+    // silently offers nothing.
+    expect(useTagStore.getState().loaded).toBe(false)
   })
 })

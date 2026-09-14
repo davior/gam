@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trash2, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
+import { tagsApi } from '@/api/tags'
+import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
+import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
+import TagInput from '@/components/TagInput'
 import TranscriptPanel from '@/components/TranscriptPanel'
 
 /** Audio and video can be transcribed; nothing else has speech in it. */
@@ -30,10 +34,15 @@ function Fact({ label, value }: { label: string; value: string }) {
 export default function AssetDetail({ asset, onClose, startAt }: Props) {
   const update = useLibraryStore((s) => s.update)
   const remove = useLibraryStore((s) => s.remove)
+  const setAssetTags = useLibraryStore((s) => s.setAssetTags)
+  const suggestions = useTagStore((s) => s.tags)
+  const rememberTags = useTagStore((s) => s.remember)
+  const ensureTagsLoaded = useTagStore((s) => s.ensureLoaded)
 
   const [name, setName] = useState(asset.name)
   const [description, setDescription] = useState(asset.description ?? '')
   const [saving, setSaving] = useState(false)
+  const [tagError, setTagError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const panelRef = useRef<HTMLDivElement>(null)
@@ -79,8 +88,15 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     setName(asset.name)
     setDescription(asset.description ?? '')
     setConfirmingDelete(false)
+    setTagError(null)
     setCurrentTime(startAt ?? 0)
   }, [asset.id, asset.name, asset.description, startAt])
+
+  // The panel can be reached from search, which never renders the filter bar, so it
+  // asks for the catalogue itself rather than assuming somebody else did.
+  useEffect(() => {
+    ensureTagsLoaded()
+  }, [ensureTagsLoaded])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -102,6 +118,29 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
       // stays open so the edit is not lost.
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Both tag endpoints answer with the asset's *whole* tag set rather than a delta, so
+  // the store is handed the server's list instead of one computed here — there is no
+  // second version of the truth to drift.
+  const addTags = async (names: string[]) => {
+    setTagError(null)
+    try {
+      const tags = await tagsApi.addToAsset(asset.id, names)
+      setAssetTags(asset.id, tags)
+      rememberTags(tags)
+    } catch (error) {
+      setTagError(apiErrorMessage(error, 'Could not add that tag'))
+    }
+  }
+
+  const removeTag = async (tagId: string) => {
+    setTagError(null)
+    try {
+      setAssetTags(asset.id, await tagsApi.removeFromAsset(asset.id, tagId))
+    } catch (error) {
+      setTagError(apiErrorMessage(error, 'Could not remove that tag'))
     }
   }
 
@@ -197,6 +236,21 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
             >
               {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
             </button>
+
+            <div>
+              <TagInput
+                tags={asset.tags}
+                suggestions={suggestions}
+                onAdd={(names) => void addTags(names)}
+                onRemove={(tagId) => void removeTag(tagId)}
+                label="Tags"
+              />
+              {tagError && (
+                <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                  {tagError}
+                </p>
+              )}
+            </div>
 
             <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
               <Fact label="Type" value={asset.asset_type} />

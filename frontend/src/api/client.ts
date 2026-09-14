@@ -16,6 +16,31 @@ const client = axios.create({
   // domain; without this, axios would not send it and every request would rely on the
   // bearer token alone.
   withCredentials: true,
+
+  /**
+   * Repeat the key for array values — `tag=a&tag=b`, not axios' default `tag[]=a`.
+   *
+   * FastAPI reads a repeatable `Query` parameter from repeated keys, and it *drops
+   * unknown parameters silently*. So the bracketed form does not fail: it returns the
+   * unfiltered list with a 200, which looks exactly like a filter that matched
+   * everything. Verified against a live server rather than assumed.
+   */
+  paramsSerializer: {
+    serialize(params: Record<string, unknown>): string {
+      const search = new URLSearchParams()
+      Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null) return
+        if (Array.isArray(value)) {
+          value.forEach((item) => {
+            if (item !== undefined && item !== null) search.append(key, String(item))
+          })
+        } else {
+          search.append(key, String(value))
+        }
+      })
+      return search.toString()
+    },
+  },
 })
 
 export const AUTH_TOKEN_KEY = 'gam_auth_token'
