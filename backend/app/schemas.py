@@ -35,6 +35,18 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class ClientConfig(BaseModel):
+    """The settings the browser needs, served rather than compiled in.
+
+    Everything here is readable by anyone who can reach the app — the endpoint has to be
+    unauthenticated, because it carries the address of the sign-in page. Nothing secret
+    goes in this model, and a test asserts the field set so adding one is a deliberate
+    act rather than an accident.
+    """
+
+    notes_base_url: str
+
+
 class HealthResponse(BaseModel):
     status: str
     version: str

@@ -148,7 +148,14 @@ activemq-data/
 *.sage.py
 
 # Environments
+#
+# `.env.*` as well as `.env`: Vite's own conventions are built on `.env.local`,
+# `.env.development` and friends, and those were NOT ignored — verified with
+# `git check-ignore` — so the first person to follow Vite's documentation would have
+# committed their secrets. The negation keeps the checked-in template visible.
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 .venv312/

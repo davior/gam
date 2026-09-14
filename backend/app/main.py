@@ -29,7 +29,7 @@ from app.routers import search as search_router
 from app.routers import settings as settings_router
 from app.routers import tags as tags_router
 from app.routers import transcripts as transcripts_router
-from app.schemas import DataResponse, HealthResponse
+from app.schemas import ClientConfig, DataResponse, HealthResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -102,6 +102,22 @@ def _default_code(status_code: int) -> str:
 def health() -> HealthResponse:
     """Unauthenticated on purpose — the container healthcheck calls it."""
     return HealthResponse(status="ok", version=VERSION, ffmpeg=ffmpeg_available())
+
+
+@app.get("/api/config", response_model=DataResponse[ClientConfig])
+def client_config() -> DataResponse[ClientConfig]:
+    """What the browser needs to know before anybody is signed in.
+
+    Unauthenticated, and it has to be: this carries the address of the sign-in page, so
+    requiring a session to read it would deadlock the login flow.
+
+    Served at runtime rather than compiled into the bundle because a Vite
+    `import.meta.env` value is fixed at *build* time. Baked in, pointing a running
+    container at a different Notes instance means rebuilding the image — which is why
+    `NOTES_BASE_URL` could be set in `.env`, plumbed through docker-compose, and still
+    have no effect on where the login button went.
+    """
+    return DataResponse(data=ClientConfig(notes_base_url=settings.notes_base_url))
 
 
 @app.get("/api/me", response_model=DataResponse[dict])

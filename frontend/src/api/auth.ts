@@ -1,4 +1,5 @@
 import client from '@/api/client'
+import { loadConfig } from '@/api/config'
 
 /**
  * Identity comes from Gecko Notes, not from here.
@@ -24,20 +25,33 @@ export const authApi = {
   },
 }
 
-/** Where the suite's sign-in page lives. Same origin in dev, Notes in production. */
-export function notesBaseUrl(): string {
-  return import.meta.env.VITE_NOTES_BASE_URL || 'https://notes.geckopico.com'
+/**
+ * Where the suite's sign-in page lives, as the backend reports it.
+ *
+ * Asynchronous because the answer arrives over the wire. There is deliberately no
+ * hardcoded production fallback any more: one used to sit here, and it meant a
+ * misconfigured development instance silently sent people to the live Notes login
+ * instead of failing in a way anyone would notice.
+ */
+export async function notesBaseUrl(): Promise<string> {
+  const config = await loadConfig()
+  return config.notes_base_url
 }
 
 /**
  * Hand the browser to Gecko Notes to sign in, asking to be sent back here.
+ *
+ * If the config never arrives the redirect does not happen, which is the right
+ * outcome: the backend being unreachable is what `RequireAuth` already reports, and
+ * bouncing to another domain would hide it.
  *
  * The return URL is passed as a parameter rather than remembered on Notes' side so
  * this works for any app in the suite without Notes knowing about them. Notes
  * validates it against a *.geckopico.com allowlist — see GN-2 — which is what keeps
  * this from being an open redirect.
  */
-export function redirectToLogin(): void {
+export async function redirectToLogin(): Promise<void> {
+  const base = await notesBaseUrl()
   const target = encodeURIComponent(window.location.href)
-  window.location.href = `${notesBaseUrl()}/login?redirect=${target}`
+  window.location.href = `${base}/login?redirect=${target}`
 }

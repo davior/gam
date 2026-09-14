@@ -50,7 +50,7 @@ export default function RequireAuth({ children }: Props) {
             <button
               type="button"
               className="btn btn-primary w-full"
-              onClick={redirectToLogin}
+              onClick={() => void redirectToLogin()}
             >
               Sign in with Gecko Notes
             </button>

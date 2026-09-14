@@ -61,7 +61,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // would otherwise sit in the next person's autocomplete.
     useLibraryStore.getState().reset()
     useTagStore.getState().reset()
-    redirectToLogin()
+    void redirectToLogin()
   },
 
   reset() {

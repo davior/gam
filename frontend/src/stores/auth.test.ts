@@ -89,7 +89,7 @@ describe('signing out', () => {
    * user's data sitting in front of the next one.
    */
   it('empties every store that holds user data', () => {
-    vi.spyOn(auth, 'redirectToLogin').mockImplementation(() => {})
+    vi.spyOn(auth, 'redirectToLogin').mockResolvedValue(undefined)
 
     useLibraryStore.setState({ total: 7, query: 'nato' })
     useTagStore.setState({
