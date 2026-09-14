@@ -321,7 +321,7 @@ it was written in does not survive the session.
 | M1 Ingest & library | Merged — [#2](https://github.com/davior/gam/pull/2) |
 | M4 Transcription | Merged — [#3](https://github.com/davior/gam/pull/3) |
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
-| M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5) — **acceptance not yet run, see below** |
+| M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; repaired in #11 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
 | **M6–M9** | **Not started.** M7 is the only one with no external dependency. |
 
@@ -337,12 +337,21 @@ CSP's Notes origin follow `NOTES_BASE_URL`.
 These survive no session and are not blocked on anything in this repository. Each one is
 a thing a future session will otherwise assume is done.
 
-1. **M5's acceptance criterion has never actually been run.** The SRS's Giordano and
-   Schwab queries returning the right asset at the right second needs a real embedding
-   key. The keyword half is verified end to end; the semantic half is exercised only by
-   tests with stubbed retrievers, which prove the *fusion* is correct and say nothing
-   about retrieval quality. Until it is run, treat M5 as structurally complete and
-   qualitatively unmeasured.
+1. **M5's acceptance criterion has never been run, and until #11 it could not be.**
+   This entry used to say the acceptance test merely awaited a real embedding key, which
+   was wrong in a way worth recording: there was no way to supply one. `settings_store`
+   defined `EMBEDDING_PROVIDER` and `OPENAI_API_KEY`, `build_embedder` read them, and
+   nothing in between could write them — the settings router exposed Deepgram only. Nor
+   did anything ever create an `embed` job: the worker's `KIND_EMBED` branch had no
+   caller, so the vector table could only be filled by a test. Semantic search was off
+   for every user, permanently and silently, while the search view told them to "add an
+   embedding provider in Settings".
+
+   #11 closes both halves. What remains is genuinely the user's: run the Giordano and
+   Schwab queries against real content with a real key. The keyword half is verified end
+   to end; the semantic half is exercised only by tests with stubbed retrievers, which
+   prove the *fusion* is correct and say nothing about retrieval quality. Until that run
+   happens, treat M5 as structurally complete and qualitatively unmeasured.
 2. **GN-7 and GN-8 are specified and unapplied** (python-jose on five CVEs; the Python
    version). They are changes to `davior/gecko-notes`, not here — see
    `docs/gecko-notes-integration.md`.
@@ -364,7 +373,9 @@ Outstanding and outside the repo:
   content; the sandbox has neither, and no test here is evidence about retrieval
   *quality* — see #5 for exactly which half is proven.
 - A Deepgram key and an embedding provider go in through GAM's settings screen. Neither
-  is ever shared with a session.
+  is ever shared with a session. The embedding half of that screen did not exist until
+  #11 — if a future session finds a claim here that cannot be reached from the UI, that
+  is the failure mode to check for first.
 
 ---
 

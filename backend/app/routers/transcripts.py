@@ -12,11 +12,11 @@ from sqlmodel import Session, col, select
 from app.auth import CurrentUser
 from app.clock import utcnow
 from app.database import get_session
+from app.embeddings import build_embedder
 from app.enrichment.transcribe import can_transcribe
 from app.jobs import enrichment as enrichment_jobs
-from app.jobs.runner import ACTIVE_STATUSES
 from app.models.asset import Asset
-from app.models.job import EnrichmentJob, KIND_TRANSCRIBE
+from app.models.job import KIND_EMBED, KIND_TRANSCRIBE
 from app.models.transcript import TranscriptSegment
 from app.schemas import DataResponse
 from app.schemas_jobs import ActivityJobRead
@@ -106,15 +106,7 @@ def start_transcription(
 
     # One at a time per asset. Two concurrent runs would race to replace the same
     # segments and bill twice for the same audio.
-    existing = session.exec(
-        select(EnrichmentJob)
-        .where(
-            EnrichmentJob.asset_id == asset.id,
-            EnrichmentJob.kind == KIND_TRANSCRIBE,
-            col(EnrichmentJob.status).in_(ACTIVE_STATUSES),
-        )
-    ).first()
-    if existing:
+    if enrichment_jobs.active_job(session, asset.id, KIND_TRANSCRIBE) is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -123,20 +115,47 @@ def start_transcription(
             },
         )
 
-    job = EnrichmentJob(
-        user_id=user.id,
-        asset_id=asset.id,
-        kind=KIND_TRANSCRIBE,
-        status="queued",
-        stage="Queued",
-        asset_name=asset.name,
-    )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
+    job = enrichment_jobs.submit(session, asset, KIND_TRANSCRIBE)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
-    enrichment_jobs.enqueue(job.id)
 
+@router.post("/{asset_id}/embed", response_model=DataResponse[ActivityJobRead], status_code=202)
+def start_embedding(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue an embedding pass over one asset.
+
+    Transcription chains into this on its own, so this endpoint is for the cases that
+    never transcribe: a photograph or a document, whose name, description and summary
+    are what make it findable by meaning. It is also how an asset embedded under an
+    older provider gets re-embedded after the user changes one.
+    """
+    asset = _owned_asset(asset_id, user.id, session)
+
+    if build_embedder(session, user.id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "embedding_unavailable",
+                "message": (
+                    "No embedding provider is configured. Add one in Settings to enable "
+                    "semantic search."
+                ),
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_EMBED) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "This asset is already being embedded",
+            },
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_EMBED)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
 

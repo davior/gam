@@ -105,6 +105,21 @@ def delete_tag(session: Session, tag: Tag) -> list[str]:
     return asset_ids
 
 
+def detach_all_from_asset(session: Session, asset_id: str) -> None:
+    """Drop every tag attachment belonging to one asset.
+
+    Called when the asset itself is deleted. This is not merely tidiness: `AssetTag`
+    declares `asset_id` as a foreign key with no `ON DELETE` action, and the engine
+    turns `PRAGMA foreign_keys=ON` on for every connection, so SQLite *refuses* to
+    delete an asset that still carries a tag. Without this the delete raises
+    `FOREIGN KEY constraint failed` and the caller returns a 500.
+
+    Does not commit: the caller deletes the asset in the same transaction, and a
+    commit here would leave the row untagged if that delete then failed.
+    """
+    session.exec(delete(AssetTag).where(col(AssetTag.asset_id) == asset_id))
+
+
 # ─── attachment ──────────────────────────────────────────────────────────────
 
 

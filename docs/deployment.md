@@ -116,6 +116,25 @@ Nothing to configure at deploy time. Each user adds their own Deepgram key at
 **Settings → Speech to text**; it is encrypted with a key derived from
 `JWT_SECRET_KEY` before it is stored, and is never returned to the browser.
 
+## Semantic search
+
+Also nothing at deploy time, and also per user: **Settings → Semantic search**. Two
+providers, and the choice is a privacy decision as much as a cost one.
+
+- **OpenAI** needs an API key, stored the same encrypted way as the Deepgram one. Text
+  — transcripts included — is sent to OpenAI to be embedded.
+- **Ollama** needs no key, only an address (default `http://localhost:11434`) and the
+  model pulled on that host. Nothing leaves the machine.
+
+Until a provider is set, search still works but matches words only, and says so. Newly
+transcribed assets are embedded automatically; anything already in the library needs
+`POST /api/assets/{id}/embed`, since embedding a whole library at once is bulk
+enrichment and belongs with the rest of it in M6.
+
+Changing the model later does not invalidate what is stored — vectors record the model
+that produced them and only matching ones are searched — so a switch quietly shrinks
+the searchable set until the affected assets are embedded again.
+
 ## Updating
 
 ```bash

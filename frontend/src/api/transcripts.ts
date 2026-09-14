@@ -94,26 +94,3 @@ export const activityApi = {
       .then((r) => r.data.data)
   },
 }
-
-export interface SpeechSettings {
-  deepgram_key_configured: boolean
-  deepgram_model: string
-  available_models: Array<{ id: string; label: string }>
-}
-
-export const speechSettingsApi = {
-  get(): Promise<SpeechSettings> {
-    return client
-      .get<DataResponse<SpeechSettings>>('/settings/speech')
-      .then((r) => r.data.data)
-  },
-
-  update(changes: {
-    deepgram_api_key?: string
-    deepgram_model?: string
-  }): Promise<SpeechSettings> {
-    return client
-      .put<DataResponse<SpeechSettings>>('/settings/speech', changes)
-      .then((r) => r.data.data)
-  },
-}

@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sqlmodel import Session, col, select
+
 from app.clock import utcnow
 from app.config import settings
 from app.database import engine
-from app.embeddings import EmbeddingError
+from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
 from app.enrichment.embed import run as run_embed
 from app.enrichment.transcribe import TranscriptionError
@@ -57,6 +59,43 @@ def start() -> None:
 
 def enqueue(job_id: str) -> None:
     queue().enqueue(job_id)
+
+
+def active_job(session: Session, asset_id: str, kind: str) -> Optional[EnrichmentJob]:
+    """A queued or running job of this kind for this asset, if there is one.
+
+    One at a time per asset per kind: two concurrent runs race to replace the same rows
+    and bill twice for the same work.
+    """
+    return session.exec(
+        select(EnrichmentJob).where(
+            EnrichmentJob.asset_id == asset_id,
+            EnrichmentJob.kind == kind,
+            col(EnrichmentJob.status).in_(ACTIVE_STATUSES),
+        )
+    ).first()
+
+
+def submit(session: Session, asset: Asset, kind: str) -> EnrichmentJob:
+    """Create a job row and hand it to the queue.
+
+    The row is committed before the queue is told about it. The worker looks the job up
+    by id in its own session, so enqueueing first is a race it can lose.
+    """
+    job = EnrichmentJob(
+        user_id=asset.user_id,
+        asset_id=asset.id,
+        kind=kind,
+        status="queued",
+        stage="Queued",
+        asset_name=asset.name,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    enqueue(job.id)
+    return job
 
 
 def _run_job(job_id: str) -> None:
@@ -122,6 +161,9 @@ def _run_job(job_id: str) -> None:
                 error_message=None,
             )
 
+            if job.kind == KIND_TRANSCRIBE:
+                _chain_embedding(session, asset)
+
         except JobCancelled:
             _mark_asset_failed(session, asset, job, status=None)
             # Mark the row here rather than trusting the caller to have done it. The
@@ -149,6 +191,35 @@ def _run_job(job_id: str) -> None:
             logger.exception("Enrichment job %s crashed", job_id)
             _mark_asset_failed(session, asset, job)
             set_fields(session, job, status="error", stage="", error_message=readable_error(exc))
+
+
+def _chain_embedding(session: Session, asset: Asset) -> None:
+    """Embed an asset as soon as it has a transcript, without being asked.
+
+    A transcript that is not embedded is invisible to half of search, and nothing else
+    in the app would ever ask for the embed job — asking the user to press a second
+    button to make the first one count is not a feature.
+
+    Guarded on a provider actually being configured. Queueing unconditionally would put
+    a red "no embedding provider" row in the activity feed after every single
+    transcription, which trains people to ignore the feed.
+    """
+    try:
+        if build_embedder(session, asset.user_id) is None:
+            logger.info(
+                "Not embedding asset %s: no embedding provider configured for this user",
+                asset.id,
+            )
+            return
+
+        if active_job(session, asset.id, KIND_EMBED) is not None:
+            return
+
+        submit(session, asset, KIND_EMBED)
+    except Exception:  # noqa: BLE001 - a transcript that succeeded must stay succeeded
+        # The whole body, not just the submit: reading the provider config parses stored
+        # values, and a bad one must not turn a finished transcription into a failed job.
+        logger.warning("Could not queue embedding for asset %s", asset.id, exc_info=True)
 
 
 def _mark_asset_failed(session, asset: Asset, job: EnrichmentJob, status: str | None = "error") -> None:
