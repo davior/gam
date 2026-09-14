@@ -323,7 +323,7 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| **M6–M9** | **Not started.** M7 is the only one with no external dependency. |
+| **M6–M9** | **Not started.** M6 is specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) — most of its provider model already works in gecko-notes and should be ported, not designed. M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
 [#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
