@@ -70,6 +70,26 @@ Requires **Python 3.13**, Node 20+, and `ffmpeg`/`ffprobe` on `PATH`.
 Dev ports are **8001** (backend) and **5174** (frontend), not the usual 8000/5173:
 gecko-notes claims those, and the two apps get run side by side.
 
+**`.env` first — it is not only for Docker.** `backend/app/config.py` reads the
+repo-root `.env` by absolute path, so `uvicorn` uses it too:
+
+```bash
+cp .env.example .env
+```
+
+Two entries matter before anything works:
+
+- `JWT_SECRET_KEY` — required, and must match gecko-notes'. The app refuses to start
+  without it.
+- `CORS_ORIGIN=http://localhost:5174` — **development only.** Behind nginx both halves
+  of the app share one origin, so production needs nothing here. Under Vite they are two:
+  the browser sends `Origin: http://localhost:5174` while the dev proxy rewrites `Host`
+  to `localhost:8001`, and the origin check compares host *and* port. Without it every
+  cookie-authenticated `POST` — every upload — returns 403 `forbidden_origin`
+  ("Cookie authentication requires an allowed Origin").
+
+Settings are read once at import, so restart `uvicorn` after editing `.env`.
+
 Python 3.13 exactly, not "3.13 or newer": the pinned Pillow and numpy publish wheels up
 to 3.13 only, and on a newer interpreter pip quietly falls back to compiling them from
 source, which fails without a C toolchain and libjpeg headers. `.python-version` pins it,
