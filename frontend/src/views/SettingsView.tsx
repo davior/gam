@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ArrowLeft, Check, KeyRound, Search } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import {
@@ -8,6 +8,8 @@ import {
   type SpeechSettings,
 } from '@/api/settings'
 import { apiErrorMessage } from '@/api/client'
+import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
+import { isActive, useActivityStore } from '@/stores/activity'
 
 /** A saved-tick that clears itself, shared by both panels. */
 function useSavedFlash(): [boolean, () => void] {
@@ -192,6 +194,51 @@ function EmbeddingPanel() {
 
   const isOpenAI = settings?.provider === 'openai'
 
+  // Coverage is model-relative, so it is reloaded whenever the provider or model
+  // changes — which is what makes the "changing the model leaves existing vectors
+  // behind" warning below actionable rather than ominous: the pending count jumps and
+  // the button comes back.
+  const [coverage, setCoverage] = useState<EmbeddingCoverage | null>(null)
+  const configured = settings?.configured ?? false
+  const activeModel = settings?.model
+
+  const loadCoverage = useCallback(() => {
+    if (!configured) {
+      setCoverage(null)
+      return
+    }
+    embeddingsApi
+      .status()
+      .then(setCoverage)
+      .catch(() => setCoverage(null))
+  }, [configured])
+
+  useEffect(() => {
+    loadCoverage()
+  }, [loadCoverage, activeModel])
+
+  const backfillJob = useActivityStore((s) =>
+    s.jobs.find((j) => j.action === 'backfill_embeddings')
+  )
+  const cancelJob = useActivityStore((s) => s.cancel)
+  const refreshActivity = useActivityStore((s) => s.refresh)
+  const backfillRunning = backfillJob ? isActive(backfillJob) : false
+
+  // When the run ends, the count is stale by exactly the amount the run just fixed.
+  useEffect(() => {
+    if (backfillJob && !isActive(backfillJob)) loadCoverage()
+  }, [backfillJob, loadCoverage])
+
+  const startBackfill = async () => {
+    setError(null)
+    try {
+      await embeddingsApi.backfill()
+      await refreshActivity()
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not start embedding'))
+    }
+  }
+
   return (
     <section className="card space-y-4 p-5">
       <header className="flex items-center gap-2">
@@ -344,6 +391,59 @@ function EmbeddingPanel() {
             model that produced them, and only ones that match are searched.
           </p>
         </div>
+      )}
+
+      {coverage && coverage.pending_assets > 0 && (
+        <div className="space-y-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            {coverage.pending_assets.toLocaleString()} of{' '}
+            {coverage.total_assets.toLocaleString()} assets have no embeddings for this
+            model
+            {coverage.pending_segments > 0 &&
+              `, covering ${coverage.pending_segments.toLocaleString()} transcript segments`}
+            . Until they do, only the ones added since you configured a provider can be
+            found by meaning.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {isOpenAI
+              ? 'That text is sent to OpenAI. GAM does not track spend — check your provider dashboard.'
+              : 'Nothing leaves this machine.'}
+          </p>
+
+          {backfillRunning && backfillJob ? (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-gray-600 dark:text-gray-400">
+                {backfillJob.stalled
+                  ? 'Not responding'
+                  : backfillJob.detail || backfillJob.stage || 'Working'}
+                {backfillJob.progress > 0 && ` · ${backfillJob.progress}%`}
+              </p>
+              <button
+                type="button"
+                className="btn btn-ghost text-xs"
+                onClick={() => void cancelJob(backfillJob)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void startBackfill()}
+            >
+              Embed {coverage.pending_assets.toLocaleString()}{' '}
+              {coverage.pending_assets === 1 ? 'asset' : 'assets'}
+            </button>
+          )}
+        </div>
+      )}
+
+      {coverage && coverage.pending_assets === 0 && coverage.total_assets > 0 && (
+        <p className="flex items-center gap-1.5 border-t border-gray-100 pt-3 text-xs text-green-700 dark:border-gray-800 dark:text-green-400">
+          <Check className="h-3.5 w-3.5" />
+          Everything is embedded.
+        </p>
       )}
 
       {saved && (

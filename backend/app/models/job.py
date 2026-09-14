@@ -7,21 +7,28 @@ from sqlmodel import Field, SQLModel
 
 from app.clock import utcnow
 
-# The enrichment actions a job can perform. One table rather than one per action:
-# they share a lifecycle, a progress shape and a cancel button, and the activity API
-# would otherwise become a union over five near-identical tables.
+# The actions a job can perform. One table rather than one per action: they share a
+# lifecycle, a progress shape and a cancel button, and the activity API would otherwise
+# become a union over near-identical tables.
 #
-# describe/summarize/autotag are declared ahead of M6 because they are in the set below
-# and cost nothing to name. A "backfill_embeddings" kind used to sit here too and was
-# removed: it was in no set, referenced by nothing, and named a feature that does not
-# exist, which makes the gap between the two harder to see rather than easier. Embedding
-# a whole library at once is bulk enrichment, and belongs with the rest of it in M6.
+# describe/summarize/autotag are declared ahead of M6 because they are in the per-asset
+# set below and cost nothing to name.
+#
+# `backfill_embeddings` was removed in #11 as dead code, with a note saying library-wide
+# embedding was bulk enrichment and belonged in M6. Removing an unreferenced constant was
+# right; that stated reason was wrong on the facts, and is corrected here rather than
+# quietly reversed. docs/plan-of-attack.md lists M5's contents as "embedding provider +
+# embed job + backfill", and embeddings/ollama.py justifies its choice of endpoint as
+# "the difference between one request and ten thousand on a backfill". Both embedders
+# were written expecting this. It returns with a caller.
 KIND_TRANSCRIBE = "transcribe"
 KIND_DESCRIBE = "describe"
 KIND_SUMMARIZE = "summarize"
 KIND_AUTOTAG = "autotag"
 KIND_EMBED = "embed"
+KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
 
+# Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(
     {
         KIND_TRANSCRIBE,
@@ -31,6 +38,11 @@ ENRICHMENT_KINDS = frozenset(
         KIND_EMBED,
     }
 )
+
+# Whole-library actions. These have no single asset, which is the reason `asset_id` is
+# nullable — the worker branches on this set rather than on a hardcoded kind, so adding
+# another library-wide action later needs no change to the dispatch.
+LIBRARY_KINDS = frozenset({KIND_BACKFILL_EMBEDDINGS})
 
 
 class EnrichmentJob(SQLModel, table=True):
@@ -46,7 +58,10 @@ class EnrichmentJob(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
-    asset_id: str = Field(index=True)
+    # Null for a whole-library job (see LIBRARY_KINDS). `ActivityJobRead.asset_id` was
+    # already Optional and the frontend type already `string | null`, so the read path
+    # anticipated this shape before the column allowed it.
+    asset_id: Optional[str] = Field(default=None, index=True)
 
     kind: str = Field(index=True)
     status: str = Field(default="queued", index=True)  # queued|processing|done|error|cancelled

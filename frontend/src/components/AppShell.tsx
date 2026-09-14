@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Moon, Search, Settings, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import ActivityIndicator from '@/components/ActivityIndicator'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
@@ -48,6 +49,7 @@ export default function AppShell({ children }: Props) {
             <Link to="/search" className="btn btn-ghost p-2" aria-label="Search">
               <Search className="h-4 w-4" />
             </Link>
+            <ActivityIndicator />
             <Link to="/settings" className="btn btn-ghost p-2" aria-label="Settings">
               <Settings className="h-4 w-4" />
             </Link>
