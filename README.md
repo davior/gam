@@ -81,6 +81,7 @@ your system Python stops mattering.
 cd backend
 uv venv && source .venv/bin/activate      # honours .python-version
 uv pip install -r requirements-dev.txt
+alembic upgrade head                      # and again after every `git pull`
 uvicorn app.main:app --reload --port 8001
 
 # Without uv, name the interpreter explicitly — a bare `python3` is what breaks:
@@ -92,6 +93,14 @@ cd frontend
 npm install
 npm run dev
 ```
+
+**Migrations are not automatic here.** `alembic upgrade head` runs from
+`backend/entrypoint.sh`, which is the *Docker* entrypoint — the app itself never
+migrates on startup, deliberately, so a failed migration stops the container instead of
+leaving a running app serving a schema it does not match. Start `uvicorn` directly and
+nothing runs it for you, which is fine until a pull brings a new table: then every
+request touching it dies with `sqlite3.OperationalError: no such table: …` and several
+hundred lines of traceback. Run it after any pull that adds a migration.
 
 Or run the whole stack:
 

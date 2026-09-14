@@ -21,7 +21,7 @@ from app.media_tools import ffmpeg_available, ffmpeg_version
 from fastapi import Depends
 from sqlmodel import Session
 
-from app.database import get_session
+from app.database import engine, get_session
 from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import media as media_router
@@ -46,6 +46,13 @@ async def lifespan(_app: FastAPI):
             "ffmpeg/ffprobe not found on PATH. Media probing, thumbnails and clip "
             "extraction will be unavailable."
         )
+    # Before the job runner, which queries tables of its own: if the schema is behind,
+    # one line here beats the same fact arriving as a three-hundred-line traceback on
+    # whichever request first touches a table that does not exist yet.
+    from app.schema_check import log_if_behind
+
+    log_if_behind(engine)
+
     # Picks up anything a restart interrupted, and starts the worker threads.
     from app.jobs import enrichment
 

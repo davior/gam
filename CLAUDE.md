@@ -73,9 +73,17 @@ wheels no further than 3.13, and on a newer interpreter pip silently compiles th
 source and fails there. Build the venv with `uv venv` (which reads `.python-version`)
 or `python3.13 -m venv`, never a bare `python3`.
 
+Migrations do not run here. `alembic upgrade head` lives in `backend/entrypoint.sh`,
+the Docker entrypoint; the app deliberately never migrates on startup, so a failed
+migration stops the container rather than leaving it serving a schema it does not match.
+Nothing runs it for a bare `uvicorn`, so a pull that adds a table turns every request
+touching it into `no such table: …`. Run it after any pull that adds a migration.
+
 ```bash
 # Backend — http://localhost:8001 (auto-reloads on save)
-cd backend && uvicorn app.main:app --reload --port 8001
+cd backend
+alembic upgrade head                      # not automatic outside Docker
+uvicorn app.main:app --reload --port 8001
 
 # Frontend — http://localhost:5174 (Vite HMR; proxies /api and /media to :8001)
 cd frontend && npm run dev

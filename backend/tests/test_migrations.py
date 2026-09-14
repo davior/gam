@@ -34,6 +34,10 @@ def alembic_config_fixture(tmp_path, monkeypatch):
 
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
+    # Running a migration must not reconfigure this process's logging — see the comment
+    # in alembic/env.py. Left on, it removes pytest's capture handler for every test
+    # that runs after this one.
+    config.attributes["configure_logger"] = False
     return config, db_path
 
 

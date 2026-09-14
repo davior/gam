@@ -27,7 +27,13 @@ from app.search.fts import include_object  # noqa: E402
 
 config = context.config
 
-if config.config_file_name is not None:
+# Guarded so a programmatic `command.upgrade()` cannot tear down the host process's
+# logging. fileConfig() replaces the root logger's handlers and, by default, disables
+# every logger that already existed — under pytest that removes the capture handler and
+# silences the app, so any later assertion about log output passes for the wrong reason.
+# This is alembic's own documented idiom: the CLI leaves the attribute unset and still
+# gets alembic.ini's logging, while an embedded caller can opt out.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 target_metadata = SQLModel.metadata
