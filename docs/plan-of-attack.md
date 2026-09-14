@@ -321,8 +321,37 @@ it was written in does not survive the session.
 | M1 Ingest & library | Merged — [#2](https://github.com/davior/gam/pull/2) |
 | M4 Transcription | Merged — [#3](https://github.com/davior/gam/pull/3) |
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
-| M5 Search | In review — [#5](https://github.com/davior/gam/pull/5) |
-| M3, M6–M9 | Not started |
+| M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5) — **acceptance not yet run, see below** |
+| M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
+| **M6–M9** | **Not started.** M7 is the only one with no external dependency. |
+
+Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
+[#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
+[#8](https://github.com/davior/gam/pull/8) added the startup warning for an unmigrated
+database and the docs that go with it;
+[#9](https://github.com/davior/gam/pull/9) documented `.env` for local dev and made the
+CSP's Notes origin follow `NOTES_BASE_URL`.
+
+### Carried by the user, not by code
+
+These survive no session and are not blocked on anything in this repository. Each one is
+a thing a future session will otherwise assume is done.
+
+1. **M5's acceptance criterion has never actually been run.** The SRS's Giordano and
+   Schwab queries returning the right asset at the right second needs a real embedding
+   key. The keyword half is verified end to end; the semantic half is exercised only by
+   tests with stubbed retrievers, which prove the *fusion* is correct and say nothing
+   about retrieval quality. Until it is run, treat M5 as structurally complete and
+   qualitatively unmeasured.
+2. **GN-7 and GN-8 are specified and unapplied** (python-jose on five CVEs; the Python
+   version). They are changes to `davior/gecko-notes`, not here — see
+   `docs/gecko-notes-integration.md`.
+3. **GAM does not yet consume GN-2.** The browser-side
+   `GET {notes}/api/auth/session` that fetches the bearer token is not implemented in
+   `frontend/src/api/`; authentication currently arrives on the `gecko_session` cookie
+   alone. The frontend container's CSP already allows the call (`connect-src`, from
+   `NOTES_BASE_URL`), so the CSP entry looks unused and is not — deleting it would pass
+   every test today and silently break that fetch the day it is written.
 
 M4 was brought forward past M2 and M3 because it is what M5 needs: there is nothing to
 search until there are transcripts. M2 was deferred because it only decides *where* GAM

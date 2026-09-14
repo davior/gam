@@ -1,8 +1,32 @@
 # Change spec: Gecko Notes → Gecko Suite SSO & GAM integration
 
 **Target repository:** `davior/gecko-notes`
-**Status:** specification only — nothing here has been applied.
 **Written against:** `main` @ `ff3799f`.
+
+**Status — partially applied.** This said "nothing here has been applied" long after that
+stopped being true, which is the kind of stale line that makes a whole document
+untrustworthy, so it is now itemised:
+
+| | Applied in gecko-notes? |
+|---|---|
+| GN-1 parent-domain cookie | Reported landed as `95ed2ca`. Not verified from here — see the caveat below. |
+| GN-2 `GET /api/auth/session` | Reported landed, same commit. **GAM does not call it yet** — see below. |
+| GN-3 CORS/CSP headroom | Reported landed, same commit. |
+| GN-4 asset-reference convention | Not applied. It is an M9 concern. |
+| GN-5 | Nothing to do — the explicit not-in-this-phase list. |
+| GN-6 unrelated findings | Offered, not required. Unapplied. |
+| **GN-7 python-jose CVEs** | **Not applied.** Security, independent of GAM. |
+| **GN-8 Python version** | **Not applied.** Housekeeping, do it with GN-7. |
+
+**Caveat on the first three rows.** They are secondhand: recorded in
+`docs/plan-of-attack.md` when M2 was built, and an attempt to confirm `95ed2ca` against
+the GitHub API from this repository returned 403. GAM cannot see gecko-notes' working
+tree, so check there before relying on them. The indirect evidence is decent — GAM's M2
+is merged and its cookie path works — but that exercises GN-1, not GN-2 or GN-3.
+
+**GN-2 is applied but unused.** GAM's frontend obtains no bearer token; authentication
+rides the `gecko_session` cookie alone. `frontend/nginx.conf`'s CSP already permits the
+call, so that `connect-src` entry looks dead and is not.
 
 This document is self-contained. A session working in `gecko-notes` should be able to
 execute it without any other context.
