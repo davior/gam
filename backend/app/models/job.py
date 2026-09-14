@@ -10,12 +10,17 @@ from app.clock import utcnow
 # The enrichment actions a job can perform. One table rather than one per action:
 # they share a lifecycle, a progress shape and a cancel button, and the activity API
 # would otherwise become a union over five near-identical tables.
+#
+# describe/summarize/autotag are declared ahead of M6 because they are in the set below
+# and cost nothing to name. A "backfill_embeddings" kind used to sit here too and was
+# removed: it was in no set, referenced by nothing, and named a feature that does not
+# exist, which makes the gap between the two harder to see rather than easier. Embedding
+# a whole library at once is bulk enrichment, and belongs with the rest of it in M6.
 KIND_TRANSCRIBE = "transcribe"
 KIND_DESCRIBE = "describe"
 KIND_SUMMARIZE = "summarize"
 KIND_AUTOTAG = "autotag"
 KIND_EMBED = "embed"
-KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
 
 ENRICHMENT_KINDS = frozenset(
     {
