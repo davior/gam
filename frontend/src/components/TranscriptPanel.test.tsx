@@ -125,6 +125,38 @@ describe('TranscriptPanel', () => {
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
   })
 
+  it('ignores the embed job that transcription queues behind itself', async () => {
+    // Regression: `activityApi.list` returns active jobs of every action for the asset,
+    // newest first, and a successful transcription immediately queues an embed job. The
+    // panel used to take jobs[0], so it showed the embed job's progress under the
+    // transcription heading and its Cancel button stopped the embedding instead.
+    vi.spyOn(transcriptsApi, 'get').mockResolvedValue(makeTranscript({ status: 'done' }))
+    vi.spyOn(activityApi, 'list').mockResolvedValue([
+      {
+        id: 'j2',
+        kind: 'enrichment',
+        action: 'embed',
+        status: 'processing',
+        stalled: false,
+        stage: 'Embedding transcript',
+        progress: 40,
+        detail: '',
+        asset_id: 'a1',
+        asset_name: 'Interview',
+        model: 'text-embedding-3-small',
+        error_message: null,
+        created_at: '2026-09-13T08:00:00Z',
+        updated_at: '2026-09-13T08:00:00Z',
+      },
+    ])
+
+    render(<TranscriptPanel assetId="a1" onSeek={vi.fn()} currentTime={0} />)
+
+    expect(await screen.findByText(/deploying nano weapons/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Embedding transcript/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument()
+  })
+
   it('says so when a job stopped responding rather than claiming it is running', async () => {
     // The sweeper will fail it within the minute; until then the UI must not lie.
     vi.spyOn(transcriptsApi, 'get').mockResolvedValue(makeTranscript({ segments: [] }))

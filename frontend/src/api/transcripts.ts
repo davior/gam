@@ -82,7 +82,9 @@ export const transcriptsApi = {
 }
 
 export const activityApi = {
-  list(params: { active?: boolean; asset_id?: string } = {}): Promise<ActivityJob[]> {
+  list(
+    params: { active?: boolean; asset_id?: string; limit?: number } = {}
+  ): Promise<ActivityJob[]> {
     return client
       .get<ListResponse<ActivityJob>>('/activity', { params })
       .then((r) => r.data.data)

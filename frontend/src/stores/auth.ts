@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { authApi, redirectToLogin, type User } from '@/api/auth'
-import { apiErrorCode, clearToken } from '@/api/client'
+import { apiErrorCode, apiErrorMessage, clearToken } from '@/api/client'
+import { useActivityStore } from '@/stores/activity'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 
@@ -12,7 +13,12 @@ import { useTagStore } from '@/stores/tags'
  * Notes".
  */
 
-type Status = 'idle' | 'loading' | 'authenticated' | 'anonymous'
+/**
+ * `rejected` is not a flavour of `anonymous`. It means Notes says you are signed in and
+ * this app could not verify that session — the one state where offering a sign-in
+ * button sends the user around a loop that cannot terminate.
+ */
+type Status = 'idle' | 'loading' | 'authenticated' | 'anonymous' | 'rejected'
 
 interface AuthState {
   user: User | null
@@ -38,7 +44,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const user = await authApi.me()
       set({ user, status: 'authenticated', error: null })
     } catch (error) {
-      if (apiErrorCode(error) === 'unauthorized') {
+      const code = apiErrorCode(error)
+      if (code === 'session_not_accepted') {
+        set({ user: null, status: 'rejected', error: apiErrorMessage(error, '') || null })
+        return
+      }
+      if (code === 'unauthorized') {
         set({ user: null, status: 'anonymous', error: null })
         return
       }
@@ -61,6 +72,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // would otherwise sit in the next person's autocomplete.
     useLibraryStore.getState().reset()
     useTagStore.getState().reset()
+    // Also stops the poll. One person's running jobs must not sit in the next
+    // person's header, and a timer left armed would keep asking as them.
+    useActivityStore.getState().reset()
     void redirectToLogin()
   },
 

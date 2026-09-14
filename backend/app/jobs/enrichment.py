@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import engine
 from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
+from app.enrichment.backfill import run as run_backfill
 from app.enrichment.embed import run as run_embed
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
@@ -28,7 +29,13 @@ from app.jobs.runner import (
     set_fields,
 )
 from app.models.asset import Asset
-from app.models.job import EnrichmentJob, KIND_EMBED, KIND_TRANSCRIBE
+from app.models.job import (
+    EnrichmentJob,
+    KIND_BACKFILL_EMBEDDINGS,
+    KIND_EMBED,
+    KIND_TRANSCRIBE,
+    LIBRARY_KINDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +81,47 @@ def active_job(session: Session, asset_id: str, kind: str) -> Optional[Enrichmen
             col(EnrichmentJob.status).in_(ACTIVE_STATUSES),
         )
     ).first()
+
+
+def active_library_job(session: Session, user_id: str, kind: str) -> Optional[EnrichmentJob]:
+    """A queued or running whole-library job of this kind, if there is one.
+
+    Keyed on the user rather than an asset, because that is what a library-wide job is
+    scoped to. Two concurrent backfills would embed the same assets twice and bill for
+    it.
+    """
+    return session.exec(
+        select(EnrichmentJob).where(
+            EnrichmentJob.user_id == user_id,
+            EnrichmentJob.kind == kind,
+            col(EnrichmentJob.status).in_(ACTIVE_STATUSES),
+        )
+    ).first()
+
+
+def submit_library(session: Session, user_id: str, kind: str, *, model: str = "") -> EnrichmentJob:
+    """Queue a job that is about the whole library rather than one asset.
+
+    `asset_id` stays null and `asset_name` empty; the activity row reads "Your whole
+    library" on the client side. `model` is recorded at submit time so the row says
+    which model it is filling, the same reason a transcript records the model that
+    produced it.
+    """
+    job = EnrichmentJob(
+        user_id=user_id,
+        asset_id=None,
+        kind=kind,
+        status="queued",
+        stage="Queued",
+        asset_name="",
+        model=model,
+    )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+
+    enqueue(job.id)
+    return job
 
 
 def submit(session: Session, asset: Asset, kind: str) -> EnrichmentJob:
@@ -123,16 +171,21 @@ def _run_job(job_id: str) -> None:
                 set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             return
 
-        asset = session.get(Asset, job.asset_id)
-        if not asset or asset.user_id != job.user_id:
-            set_fields(
-                session,
-                job,
-                status="error",
-                stage="",
-                error_message="The asset was deleted before this could run",
-            )
-            return
+        # A whole-library job has no asset to look up, and demanding one would make
+        # every backfill fail here. Branching on the set rather than a hardcoded kind
+        # means another library-wide action later needs no change to this block.
+        asset: Optional[Asset] = None
+        if job.kind not in LIBRARY_KINDS:
+            asset = session.get(Asset, job.asset_id) if job.asset_id else None
+            if not asset or asset.user_id != job.user_id:
+                set_fields(
+                    session,
+                    job,
+                    status="error",
+                    stage="",
+                    error_message="The asset was deleted before this could run",
+                )
+                return
 
         set_fields(session, job, status="processing", stage="Starting", progress=1, detail="")
 
@@ -148,6 +201,13 @@ def _run_job(job_id: str) -> None:
             elif job.kind == KIND_EMBED:
                 count = run_embed(session, asset, progress)
                 detail = f"{count} vector{'' if count == 1 else 's'}"
+            elif job.kind == KIND_BACKFILL_EMBEDDINGS:
+                result = run_backfill(session, job.user_id, progress)
+                detail = f"{result.embedded} embedded"
+                if result.failed:
+                    # Surfaced rather than swallowed: a run that quietly skipped three
+                    # assets looks identical to one that embedded everything.
+                    detail += f", {result.failed} failed"
             else:
                 raise TranscriptionError(f"Unknown enrichment kind: {job.kind}")
 
@@ -222,8 +282,11 @@ def _chain_embedding(session: Session, asset: Asset) -> None:
         logger.warning("Could not queue embedding for asset %s", asset.id, exc_info=True)
 
 
-def _mark_asset_failed(session, asset: Asset, job: EnrichmentJob, status: str | None = "error") -> None:
+def _mark_asset_failed(session, asset: Optional[Asset], job: EnrichmentJob, status: str | None = "error") -> None:
     """Clear the asset's "running" flag so the UI stops showing a spinner forever."""
+    # A whole-library job carries no asset, and the callers now pass None.
+    if asset is None:
+        return
     if job.kind != KIND_TRANSCRIBE:
         return
     if asset.transcript_status == "running":

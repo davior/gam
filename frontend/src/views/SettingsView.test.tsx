@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from '@/views/SettingsView'
+import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
+import { useActivityStore } from '@/stores/activity'
 import {
   embeddingSettingsApi,
   speechSettingsApi,
@@ -44,8 +46,24 @@ function renderView() {
   )
 }
 
+function coverage(overrides: Partial<EmbeddingCoverage> = {}): EmbeddingCoverage {
+  return {
+    model: 'text-embedding-3-small',
+    total_assets: 530,
+    embedded_assets: 442,
+    pending_assets: 88,
+    pending_segments: 12430,
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.spyOn(speechSettingsApi, 'get').mockResolvedValue(speech())
+  vi.spyOn(embeddingsApi, 'status').mockResolvedValue(coverage())
+})
+
+afterEach(() => {
+  useActivityStore.getState().reset()
 })
 
 afterEach(() => {
@@ -53,6 +71,79 @@ afterEach(() => {
 })
 
 describe('SettingsView', () => {
+  it('says how much of the library semantic search cannot see', async () => {
+    // The gap this whole feature exists to close: adding a key does nothing for the
+    // content that was already here, and nothing used to say so.
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ configured: true, openai_key_configured: true })
+    )
+    renderView()
+
+    expect(await screen.findByText(/88 of 530 assets/)).toBeInTheDocument()
+    expect(screen.getByText(/12,430 transcript segments/)).toBeInTheDocument()
+  })
+
+  it('never shows a price', async () => {
+    // There is no UsageEvent model and no pricing.py in this repo. An invented
+    // estimate would be worse than no estimate, so this asserts the absence.
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ configured: true, openai_key_configured: true })
+    )
+    renderView()
+
+    await screen.findByText(/88 of 530 assets/)
+    expect(screen.queryByText(/\$/)).toBeNull()
+  })
+
+  it('does not ask for coverage before a provider is configured', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ configured: false })
+    )
+    renderView()
+
+    await screen.findByText(/semantic search is off/i)
+    expect(embeddingsApi.status).not.toHaveBeenCalled()
+  })
+
+  it('starts a backfill', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ configured: true, openai_key_configured: true })
+    )
+    const backfill = vi.spyOn(embeddingsApi, 'backfill').mockResolvedValue({
+      id: 'j1',
+      kind: 'enrichment',
+      action: 'backfill_embeddings',
+      status: 'queued',
+      stalled: false,
+      stage: 'Queued',
+      progress: 0,
+      detail: '',
+      asset_id: null,
+      asset_name: '',
+      model: 'text-embedding-3-small',
+      error_message: null,
+      created_at: '2026-09-14T10:00:00Z',
+      updated_at: '2026-09-14T10:00:00Z',
+    })
+    renderView()
+
+    await userEvent.click(await screen.findByRole('button', { name: /embed 88 assets/i }))
+
+    expect(backfill).toHaveBeenCalled()
+  })
+
+  it('says so when there is nothing left to embed', async () => {
+    vi.spyOn(embeddingsApi, 'status').mockResolvedValue(
+      coverage({ pending_assets: 0, embedded_assets: 530, pending_segments: 0 })
+    )
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ configured: true, openai_key_configured: true })
+    )
+    renderView()
+
+    expect(await screen.findByText(/everything is embedded/i)).toBeInTheDocument()
+  })
+
   it('offers a control for the embedding provider the search view points at', async () => {
     // The reason this panel exists: SearchView tells people to "add an embedding
     // provider in Settings", and for five milestones there was nothing here to add.

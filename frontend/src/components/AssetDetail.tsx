@@ -7,6 +7,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
+import EmbedButton from '@/components/EmbedButton'
 import TagInput from '@/components/TagInput'
 import TranscriptPanel from '@/components/TranscriptPanel'
 
@@ -251,6 +252,8 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
                 </p>
               )}
             </div>
+
+            <EmbedButton assetId={asset.id} />
 
             <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
               <Fact label="Type" value={asset.asset_type} />
