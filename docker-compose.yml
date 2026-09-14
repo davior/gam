@@ -39,6 +39,9 @@ services:
     environment:
       # Larger than gecko-notes' 1g default: this app exists to hold long video.
       - UPLOAD_MAX_SIZE=${UPLOAD_MAX_SIZE:-4g}
+      # Same value the backend gets: it is the CSP's connect-src here, so the two must
+      # agree or the browser-side call to Notes is blocked by a policy nobody edited.
+      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
     depends_on:
       - backend
     networks:
