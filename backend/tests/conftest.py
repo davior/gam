@@ -19,6 +19,7 @@ os.environ.setdefault("ENVIRONMENT", "test")
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlmodel import Session, SQLModel, create_engine  # noqa: E402
+from sqlalchemy import event  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.auth import current_user  # noqa: E402
@@ -69,6 +70,18 @@ def engine_fixture():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # The production engine turns this on for every connection (app/database.py), and
+    # a test engine that does not is a test engine that cannot fail the way production
+    # fails. It let a foreign-key violation ship green: deleting a tagged asset raises
+    # "FOREIGN KEY constraint failed" against the real database and merely orphaned the
+    # join row here, so the delete tests passed while the endpoint returned a 500.
+    @event.listens_for(engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
     SQLModel.metadata.create_all(engine)
 
     # FTS5 tables are virtual, so SQLModel's metadata knows nothing about them and

@@ -12,7 +12,7 @@ import logging
 import mimetypes
 from typing import AsyncIterator, Iterable, Optional
 
-from sqlmodel import Session
+from sqlmodel import Session, col, delete
 
 from app.auth import sign_media_key
 from app.clock import utcnow
@@ -28,8 +28,9 @@ from app.ingest.filetypes import (
 )
 from app.ingest.probe import probe
 from app.models.asset import Asset
+from app.models.transcript import TranscriptSegment
 from app.schemas_assets import AssetRead, AssetTagRead
-from app.search import fts
+from app.search import fts, vectors
 from app.services import tags
 from app.storage import LocalStorage, StorageError, new_key, thumb_key_for
 
@@ -166,17 +167,40 @@ def reindex_ids(session: Session, asset_ids: Iterable[str]) -> None:
 
 
 def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
-    """Remove the row and the bytes it owns.
+    """Remove the row, everything that hangs off it, and the bytes it owns.
 
     The row goes first. If the unlink fails the asset is still gone from the user's
     view, and an orphaned file is recoverable by a sweep; the reverse — a row pointing
     at nothing — is what produces broken images.
+
+    The dependent rows have to go before it, for two different reasons. Tag
+    attachments are a hard constraint: `AssetTag.asset_id` is a foreign key with no
+    `ON DELETE`, so with `PRAGMA foreign_keys=ON` SQLite refuses the delete outright
+    and a tagged asset cannot be removed at all. Transcript segments and embeddings
+    are not — they are plain indexed columns, so they would simply be orphaned, which
+    is quieter and worse: a stale vector keeps matching a search, and the hit is then
+    dropped when its asset cannot be loaded, so the library silently returns fewer
+    results than it should with nothing logged.
     """
     storage_key, thumb_key = asset.storage_key, asset.thumb_key
 
-    asset_id = asset.id
+    asset_id, user_id = asset.id, asset.user_id
+
+    tags.detach_all_from_asset(session, asset_id)
+    session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
     session.delete(asset)
     session.commit()
+
+    # Both of these run after the commit, and neither gets to fail the delete: the row
+    # is already gone, so raising here would abort the rest of the cleanup and leave
+    # more behind than it removed. A stale index entry is recoverable; a half-finished
+    # delete is the thing this function exists to avoid.
+    try:
+        # Drops its own transaction and invalidates the per-user vector cache, which
+        # must not happen while the asset could still come back.
+        vectors.remove_for_asset(session, user_id, asset_id)
+    except Exception:  # noqa: BLE001 - see above
+        logger.warning("Could not drop embeddings for asset %s", asset_id, exc_info=True)
 
     try:
         fts.remove_asset(session, asset_id)

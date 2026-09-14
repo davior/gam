@@ -2,9 +2,14 @@
 
 from pathlib import Path
 
+import numpy as np
 import pytest
+from sqlmodel import select
 
 from app.models.asset import Asset
+from app.models.embedding import OWNER_ASSET, Embedding
+from app.models.tag import AssetTag, Tag
+from app.models.transcript import TranscriptSegment
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -262,6 +267,72 @@ def test_delete_someone_elses_asset_is_a_404(library, session):
 
     assert library.delete(f"/api/assets/{other.id}").status_code == 404
     assert session.get(Asset, other.id) is not None
+
+
+def test_delete_a_tagged_asset(library, session):
+    """`AssetTag.asset_id` is a foreign key with no `ON DELETE`, and the engine turns
+    `PRAGMA foreign_keys=ON` on for every connection. Deleting the asset without
+    detaching its tags first makes SQLite refuse the delete outright, so this path
+    returned a 500 for any asset a user had actually bothered to tag.
+
+    The two delete tests above both use untagged assets, which is exactly why the
+    whole of M3 shipped over the top of it without anything going red.
+    """
+    created = _upload(library, "sample_image.jpg").json()["created"][0]
+    library.post(f"/api/assets/{created['id']}/tags", json={"names": ["giordano"]})
+    assert session.exec(
+        select(AssetTag).where(AssetTag.asset_id == created["id"])
+    ).all()
+
+    assert library.delete(f"/api/assets/{created['id']}").status_code == 204
+
+    assert not session.exec(
+        select(AssetTag).where(AssetTag.asset_id == created["id"])
+    ).all()
+    # The tag itself survives — it belongs to the library, not to the asset.
+    assert session.exec(select(Tag).where(Tag.name == "giordano")).first() is not None
+
+
+def test_delete_takes_the_transcript_and_the_vectors_with_it(library, session):
+    """Neither has a foreign key, so both would be orphaned silently rather than
+    raising. A stale vector keeps matching a search and its hit is then dropped when
+    the asset behind it cannot be loaded, so the symptom is a library that quietly
+    returns fewer results than it should, with nothing logged.
+    """
+    created = _upload(library, "sample_image.jpg").json()["created"][0]
+    asset_id = created["id"]
+
+    session.add(
+        TranscriptSegment(
+            asset_id=asset_id,
+            user_id="user-under-test",
+            idx=0,
+            text="deploying nano weapons",
+            start_time=0.0,
+            end_time=2.0,
+        )
+    )
+    session.add(
+        Embedding(
+            owner_kind=OWNER_ASSET,
+            owner_id=asset_id,
+            asset_id=asset_id,
+            user_id="user-under-test",
+            model="text-embedding-3-small",
+            dim=2,
+            vector=np.asarray([0.6, 0.8], dtype=np.float32).tobytes(),
+        )
+    )
+    session.commit()
+
+    assert library.delete(f"/api/assets/{asset_id}").status_code == 204
+
+    assert not session.exec(
+        select(TranscriptSegment).where(TranscriptSegment.asset_id == asset_id)
+    ).all()
+    assert not session.exec(
+        select(Embedding).where(Embedding.asset_id == asset_id)
+    ).all()
 
 
 def test_image_has_no_duration_or_codec(library):
