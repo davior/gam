@@ -13,6 +13,7 @@ import LibraryView from '@/views/LibraryView'
 import { assetsApi, type Asset, type AssetPage } from '@/api/assets'
 import { tagsApi, type Tag } from '@/api/tags'
 import { activityApi, transcriptsApi } from '@/api/transcripts'
+import { enrichmentApi } from '@/api/enrichment'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 
@@ -72,6 +73,8 @@ beforeEach(() => {
     segments: [],
   })
   vi.spyOn(activityApi, 'list').mockResolvedValue([])
+  // The detail panel also mounts the suggestion panel, which loads on mount.
+  vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([])
   useLibraryStore.getState().reset()
   useTagStore.getState().reset()
 })

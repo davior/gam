@@ -9,6 +9,7 @@ import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/uti
 import AssetThumb from '@/components/AssetThumb'
 import EmbedButton from '@/components/EmbedButton'
 import SummarizeButton from '@/components/SummarizeButton'
+import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import TranscriptPanel from '@/components/TranscriptPanel'
 
@@ -278,6 +279,7 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
               )}
             </div>
 
+            <SuggestionPanel assetId={asset.id} />
             <SummarizeButton assetId={asset.id} />
             <EmbedButton assetId={asset.id} />
 

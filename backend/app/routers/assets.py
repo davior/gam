@@ -242,7 +242,12 @@ def get_asset(
     storage: LocalStorage = Depends(get_storage),
 ) -> DataResponse[AssetRead]:
     asset = _owned(asset_id, user.id, session)
-    return DataResponse(data=service.to_read_model(asset, storage))
+    # Tags loaded explicitly, like the list endpoint does. `to_read_model` defaults them
+    # to empty, so omitting this does not fail — it silently returns an untagged asset,
+    # and the store believes it.
+    return DataResponse(
+        data=service.to_read_model(asset, storage, tag_service.tags_for(session, asset.id))
+    )
 
 
 # ─── editing ─────────────────────────────────────────────────────────────────
@@ -263,7 +268,12 @@ def update_asset(
     """
     asset = _owned(asset_id, user.id, session)
     asset = service.apply_metadata(session, asset, payload.model_dump(exclude_unset=True))
-    return DataResponse(data=service.to_read_model(asset, storage))
+    # Same reason as the read above, and it bites harder here: the library store replaces
+    # its copy with whatever this returns, so a response with empty tags makes an
+    # asset's tags disappear from the grid after a rename until the page is reloaded.
+    return DataResponse(
+        data=service.to_read_model(asset, storage, tag_service.tags_for(session, asset.id))
+    )
 
 
 # response_model=None is required alongside the `-> None` annotation. FastAPI infers a

@@ -28,6 +28,7 @@ from app.ingest.filetypes import (
 )
 from app.ingest.probe import probe
 from app.models.asset import Asset
+from app.models.suggestion import Suggestion
 from app.models.transcript import TranscriptSegment
 from app.schemas_assets import AssetRead, AssetTagRead
 from app.search import fts, vectors
@@ -181,12 +182,17 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     is quieter and worse: a stale vector keeps matching a search, and the hit is then
     dropped when its asset cannot be loaded, so the library silently returns fewer
     results than it should with nothing logged.
+
+    Suggestions are in the first category — `Suggestion.asset_id` is a foreign key too,
+    so an asset with a pending suggestion would be undeletable exactly the way a tagged
+    one used to be.
     """
     storage_key, thumb_key = asset.storage_key, asset.thumb_key
 
     asset_id, user_id = asset.id, asset.user_id
 
     tags.detach_all_from_asset(session, asset_id)
+    session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
     session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
     session.delete(asset)
     session.commit()

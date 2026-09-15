@@ -1,10 +1,9 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1, 2 and 4 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
-carry-overs; the three protocol clients; then `summarize`, the first job that writes
-something a person reads). Step 4 was brought forward past step 3 because it is the
-cheapest end-to-end proof the provider chain works on real content. Steps 3 and 5-8 not
-started. Written after reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** steps 1, 2, 4 and 6 of 8 landed, plus most of 7. Step 3 (`UsageEvent` and
+cost) and step 5 (`describe`) are not started; step 8 (bulk enrichment) is not started.
+Steps 4 and 6 were taken before 3 because they are what proves the chain works on real
+content. Written after reading `davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -295,12 +294,29 @@ backend/app/
 5. `describe` — needs `supports_images`; the vision path. For a **transcribed** video the
    transcript is the primary source and the poster frame is the fallback, not the
    reverse.
-6. `autotag` — suggestions, never applied silently. Same source material as the two
-   above; a generated **title** rides this same suggestion path.
-7. `field_provenance` enforcement — the column is written on manual edits
-   (`services/assets.py::apply_metadata`) and **read by nothing**. M6 is where an AI write
-   path must consult it before overwriting a human edit (FR 8.1.3). No new provenance
-   value is needed; an absent entry already means "no person has touched this".
+6. ~~`autotag` — suggestions, never applied silently.~~ **Done.** `models/suggestion.py`,
+   `services/suggestions.py`, `enrichment/autotag.py`, four endpoints on
+   `routers/enrichment.py`, and `SuggestionPanel.tsx`. The generated **title** rides the
+   same path, as specified above.
+
+   The obvious implementation — a `status` column on `AssetTag` — was rejected, and the
+   reason is the whole design: every existing tag query (`tags_for`, `usage_counts`, the
+   tag filter, and above all `tags_text_for`, which feeds the keyword index) would then
+   have had to remember to exclude suggested rows, and the first one that forgot would
+   put an unapproved tag into search. A suggestion lives in its own table and becomes a
+   `Tag` only on accept, so nothing else in the app needs to know it exists.
+
+   Rejections are kept rather than deleted, so a re-run does not propose a tag the user
+   already declined. Accepting a title goes through `apply_metadata` — the *human* path —
+   because the user read it and chose it, which also stops a later run replacing it.
+7. `field_provenance` enforcement — **mostly done**, arriving with step 4 because
+   `summarize` was the first AI write path and shipping it without this would have meant
+   shipping the bug the rule exists to prevent. `services/assets.py::apply_ai_metadata`
+   reads the column, writes fields with no entry, skips ones marked `"human"`, and
+   returns what it actually wrote. No new provenance value was needed; an absent entry
+   already means "no person has touched this". What remains: applying it to `describe`'s
+   write path when that lands, and surfacing provenance in the UI so a user can see which
+   fields the AI wrote.
 8. Bulk enrichment over a selection — including the `SelectionBar` embed deferred from M5.
 
 ### While here, two M5 carry-overs
