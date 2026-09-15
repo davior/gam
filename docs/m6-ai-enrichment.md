@@ -1,8 +1,8 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** step 1 of 8 landed (`AIProvider` + migration + CRUD + settings UI, plus both
-M5 carry-overs). Steps 2-8 not started. Written after reading `davior/gecko-notes` at
-`95ed2ca`.
+**Status:** steps 1-2 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
+carry-overs; then the three protocol clients). Steps 3-8 not started. Written after
+reading `davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -164,7 +164,24 @@ backend/app/
    The guard itself is new — `backend/app/safe_url.py`, GAM's first — and additionally
    resolves the hostname, because checking literal IPs alone lets a name that the caller
    controls point at 127.0.0.1.
-2. `providers/` client with the three protocols, non-streaming, server-initiated.
+2. ~~`providers/` client with the three protocols, non-streaming, server-initiated.~~
+   **Done.** `base.py` (the `LLMProvider` protocol, `Completion`, `Usage`, `Image`),
+   `anthropic.py`, `openai.py`, `ollama.py`, `params.py`, and `_upstream.py` — the
+   retry/backoff this repo had nowhere, so a 429 mid-backfill is now a pause rather than
+   a hard failure. `build_provider(session, user_id)` in `providers/__init__.py` mirrors
+   `build_embedder`, returning None for an unconfigured library rather than raising.
+
+   Two deviations from the sketch above, both deliberate. `complete()` takes **one
+   prompt, not a `messages` list**: gecko-notes needs a message list because it is
+   backing a chat in a browser, and GAM's three callers each ask one question and read
+   one answer. And `Usage` is **returned, not recorded** — persisting it is step 3, and
+   it belongs at the job boundary where the user and asset are in scope, not inside an
+   HTTP client.
+
+   The connection probe in `routers/providers.py` was deliberately left alone: it
+   answers "is this address reachable and this credential accepted", which is a
+   different question from "can this model complete", and folding the two together
+   would make both worse.
 3. `UsageEvent` + `pricing.py` + a cost readout.
 4. `summarize` — simplest job, text in / text out, proves the pipeline.
 5. `describe` — needs `supports_images`; the vision path.

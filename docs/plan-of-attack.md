@@ -323,7 +323,7 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| M6 AI enrichment | **Step 1 of 8 landed** — `AIProvider`, its migration, `/api/providers` CRUD and the settings panel, ported from gecko-notes. Steps 2–8 (provider clients, `UsageEvent`, describe/summarize/autotag, `field_provenance` enforcement, bulk enrichment) are specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and not started. |
+| M6 AI enrichment | **Steps 1–2 of 8 landed** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer. Steps 3–8 (`UsageEvent`, describe/summarize/autotag, `field_provenance` enforcement, bulk enrichment) are specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and not started. |
 | **M7–M9** | **Not started.** M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
