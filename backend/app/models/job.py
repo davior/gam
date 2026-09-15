@@ -27,6 +27,9 @@ KIND_SUMMARIZE = "summarize"
 KIND_AUTOTAG = "autotag"
 KIND_EMBED = "embed"
 KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
+# One action applied across a chosen set of assets. Which action, and which assets,
+# live in `EnrichmentJob.payload` — see there for why it is one job and not N.
+KIND_BULK_ENRICH = "bulk_enrich"
 
 # Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(
@@ -39,10 +42,11 @@ ENRICHMENT_KINDS = frozenset(
     }
 )
 
-# Whole-library actions. These have no single asset, which is the reason `asset_id` is
-# nullable — the worker branches on this set rather than on a hardcoded kind, so adding
-# another library-wide action later needs no change to the dispatch.
-LIBRARY_KINDS = frozenset({KIND_BACKFILL_EMBEDDINGS})
+# Actions with no single asset, which is the reason `asset_id` is nullable — the worker
+# branches on this set rather than on a hardcoded kind, so adding another one needs no
+# change to the dispatch. A bulk run over a selection is here too: it has many assets,
+# which for the purposes of `asset_id` is the same as having none.
+LIBRARY_KINDS = frozenset({KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH})
 
 
 class EnrichmentJob(SQLModel, table=True):
@@ -80,6 +84,17 @@ class EnrichmentJob(SQLModel, table=True):
     model: str = Field(default="")
 
     error_message: Optional[str] = None
+
+    # What a job needs that does not fit a column, JSON-as-TEXT. Only bulk runs use it
+    # today: {"action": "summarize", "asset_ids": [...]}.
+    #
+    # The selection is stored on the job rather than turned into one job per asset, for
+    # the reason `enrichment/backfill.py` already gives: cancellation is per row, so
+    # forty per-asset jobs mean forty Cancel clicks and forty near-identical lines in the
+    # activity feed. It also puts the consecutive-failure cutoff in one place — a
+    # rejected API key fails identically on every asset, and N separate jobs have nowhere
+    # to notice that.
+    payload: Optional[str] = None
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)

@@ -1,8 +1,12 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1-7 of 8 landed. Only step 8 (bulk enrichment over a selection)
-remains. Steps 4-6 were taken before 3 because they are what proves the chain works on
-real content. Written after reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** all 8 steps landed; M6 is complete. Steps 4-6 were taken before 3
+because they are what proves the chain works on real content. Written after reading
+`davior/gecko-notes` at `95ed2ca`.
+
+Two gaps are recorded below and are *not* part of M6: `extract_text` does not exist, so
+enrichment over documents is still blocked, and attribution (where an asset came from —
+a URL, a film, a broadcast) has no model yet.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -356,7 +360,19 @@ backend/app/
    already means "no person has touched this". What remains: applying it to `describe`'s
    write path when that lands, and surfacing provenance in the UI so a user can see which
    fields the AI wrote.
-8. Bulk enrichment over a selection — including the `SelectionBar` embed deferred from M5.
+8. ~~Bulk enrichment over a selection — including the `SelectionBar` embed deferred from
+   M5.~~ **Done.** One `bulk_enrich` job over the whole selection rather than one job per
+   asset: cancellation is per row, so N jobs would mean N Cancel clicks and N
+   near-identical activity lines, and the consecutive-failure cutoff would have nowhere
+   to live. The selection rides on a new nullable `EnrichmentJob.payload`
+   (`{"action", "asset_ids"}`, JSON-as-TEXT), which is why `LIBRARY_KINDS` now holds two
+   kinds: many assets is the same as none as far as `asset_id` is concerned.
+
+   Ownership is re-checked per asset, because a selection arrives from the browser and is
+   not evidence of anything. A run stops after `CONSECUTIVE_FAILURE_LIMIT` (3) assets
+   fail in a row — a rejected API key fails identically on every asset, and burning 200
+   of them to discover that is the failure mode this exists to prevent. Selections are
+   capped at `MAX_SELECTION` (200) and a second concurrent bulk run is refused with 409.
 
 ### While here, two M5 carry-overs
 

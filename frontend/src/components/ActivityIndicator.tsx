@@ -14,6 +14,7 @@ const LABELS: Record<string, string> = {
   transcribe: 'Transcribing',
   embed: 'Embedding',
   backfill_embeddings: 'Embedding the library',
+  bulk_enrich: 'Enriching a selection',
   describe: 'Describing',
   summarize: 'Summarizing',
   autotag: 'Suggesting tags',
