@@ -296,7 +296,7 @@ Each is demoable on its own and ends in a draft PR on `claude/loving-mendel-x3xh
 | # | Milestone | Contents |
 |---|---|---|
 | **M0** | **Genesis** | Repo skeleton mirroring gecko-notes; `Settings`; Alembic; `current_user` dependency; `/api/health`; Dockerfiles (backend needs **ffmpeg**), compose, nginx, CI (pytest + vitest + tsc, ffmpeg installed); ESLint/Prettier; `conftest.py` fixtures; React shell with the copied Tailwind/glass CSS layer. First commit. |
-| **M1** | **Ingest & library** | `Storage` protocol + `LocalStorage`; streaming upload + drag-drop + bulk + paste + URL import; ffprobe metadata; thumbnails — images (Pillow, copied), **video posters and PDF first-page previews (new)**; library grid + detail view; manual metadata editing; signed media URLs + Range/206. |
+| **M1** | **Ingest & library** | `Storage` protocol + `LocalStorage`; streaming upload + drag-drop + bulk + paste (**URL import was specified here and never built** — see Outstanding below); ffprobe metadata; thumbnails — images (Pillow, copied), **video posters and PDF first-page previews (new)**; library grid + detail view; manual metadata editing; signed media URLs + Range/206. |
 | **M2** | **SSO & first deploy** | GN-1/2/3 applied to gecko-notes; GAM verifies the JWT, shadow-user upsert, redirect-to-Notes login; `gam.geckopico.com` on the shared `web` network behind Caddy; restic backup sidecar. GAM is now genuinely usable. |
 | **M3** | **Tagging** | Freeform tags, nested categories (recursive CTE), bulk apply/remove, filter chips, type/date/source/duration filters. |
 | **M4** | **Transcription** | Deepgram prerecorded client; ffmpeg audio extraction; `EnrichmentJob` wired into the copied job runner; transcript viewer with click-to-seek; transcript editing (FR 7.1.3). |
@@ -323,7 +323,7 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| **M6–M9** | **Not started.** M7 is the only one with no external dependency. |
+| **M6–M9** | **Not started.** M6 is specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) — most of its provider model already works in gecko-notes and should be ported, not designed. M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
 [#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
@@ -331,6 +331,44 @@ Non-milestone PRs, so a `git log` that does not match the table above still make
 database and the docs that go with it;
 [#9](https://github.com/davior/gam/pull/9) documented `.env` for local dev and made the
 CSP's Notes origin follow `NOTES_BASE_URL`.
+
+### Outstanding, unscheduled
+
+Found by auditing the code against this document rather than trusting it. None belongs to a
+numbered milestone, and none is deliberate — they are here so a later session can tell a gap
+from a decision, which is the distinction PR bodies do not preserve.
+
+- **URL import (M1) was specified and never built.** No endpoint, and no
+  `_require_safe_external_url` SSRF guard was ported. The tell is `SOURCE_URL` in
+  `ingest/filetypes.py`, declared with no writer — as are `SOURCE_AI` and `SOURCE_GVC`, which
+  are legitimately waiting on M8 and M9. `FilterBar` offers an "AI generated" source filter,
+  wired end to end and tested, over a value nothing can currently set.
+- **No tag-management screen.** `tagsApi.create`/`recategorise`/`updateCategory` exist, and
+  `rename`/`remove`/`createCategory`/`removeCategory` are wired into `stores/tags.ts` — all
+  reachable from no component. A user can create a tag by typing it and can then never
+  rename, delete or categorise it. The recursive-CTE category tree M3 built is, from the UI,
+  read-only.
+- **Search ignores `asset_type` and `limit`.** The backend accepts both
+  (`routers/search.py:51-53`) and `api/search.ts` types them; `SearchView.tsx` passes
+  neither. Results cap at the server default of 30 with no way to page or filter by type.
+- **No `/a/{id}` deep link.** `assetsApi.get(id)` exists and is called by nothing, and there
+  is no route. This is not cosmetic: **GN-4 specifies a Notes→GAM asset reference as a plain
+  link to `/a/{assetId}`**, so that integration cannot work as designed until the route
+  exists. The decision to use a link rather than a shortcode was taken partly *because* it
+  needed no work in Notes — that reasoning assumed this end existed.
+- **A 401 mid-session is a dead end.** There is no axios response interceptor; only
+  `bootstrap()` handles 401, so an expiry during an upload or a search surfaces as an inline
+  error string and nothing re-authenticates. Relatedly, `signOut()` exists in `stores/auth.ts`
+  and no component calls it — there is no sign-out control anywhere in the UI.
+- **The SRS is not in this repository.** M6–M8 are specified against FR numbers (8.1.3,
+  9.1.4, 10.1.4, 11.1.1/2) that appear in this document and in code comments, in a source no
+  session can read. Either commit it beside these docs or stop citing it; a requirement
+  nobody can look up is not a requirement.
+- **GN-7 and GN-8 are unapplied** in `davior/gecko-notes` — python-jose on five CVEs, and the
+  Python version. Specified in `gecko-notes-integration.md`. Not changes to make from here.
+
+Phase 2 items (cloud storage, checksum dedup, versioning, shared libraries, scene detection)
+are listed above and are deliberate deferrals, not this.
 
 ### Carried by the user, not by code
 

@@ -23,6 +23,14 @@ Changes GAM needs *from* gecko-notes are specified in
 [`docs/gecko-notes-integration.md`](docs/gecko-notes-integration.md). Do not apply them
 from here; that is a separate repository.
 
+Things GAM should *take* from gecko-notes are a different list. The largest is its
+`AIProvider` model — which already covers Anthropic, OpenAI, DeepSeek and Ollama, with a
+`supports_images` capability flag and per-provider base URLs — together with `UsageEvent`
+and `pricing.py`. All of it is read and written up in
+[`docs/m6-ai-enrichment.md`](docs/m6-ai-enrichment.md), including the parts that must
+**not** be copied verbatim. Read that before writing provider code, or you will design
+from scratch something that already works two repositories over.
+
 ## Code conventions
 
 These are followed in gecko-notes but written down nowhere, so they are written down
