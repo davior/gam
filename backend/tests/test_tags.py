@@ -302,3 +302,34 @@ def test_attaching_the_same_tag_twice_is_not_an_error(library, session):
     add_tags(library, asset.id, "archive")
     body = add_tags(library, asset.id, "archive").json()
     assert [t["name"] for t in body["data"]] == ["archive"]
+
+
+# ─── tags on the single-asset responses ──────────────────────────────────────
+#
+# Both of these shipped returning an empty tag list. `to_read_model` defaults the
+# argument, so omitting it does not fail — it quietly answers "this asset has no tags",
+# and the frontend store believes the answer. Nothing caught it because `assetsApi.get`
+# had no caller at all until enrichment needed one, and the PATCH case only shows up as
+# tags vanishing from the grid after a rename, until the next reload.
+
+
+def test_reading_one_asset_carries_its_tags(library, session):
+    asset = make_asset(session)
+    add_tags(library, asset.id, "NATO")
+
+    body = library.get(f"/api/assets/{asset.id}").json()["data"]
+
+    assert [t["name"] for t in body["tags"]] == ["NATO"]
+
+
+def test_editing_an_asset_does_not_drop_its_tags(library, session):
+    """The store replaces its copy with this response, so an empty list here is an
+    asset whose tags disappear from the grid."""
+    asset = make_asset(session)
+    add_tags(library, asset.id, "NATO")
+
+    body = library.patch(
+        f"/api/assets/{asset.id}", json={"description": "renamed something"}
+    ).json()["data"]
+
+    assert [t["name"] for t in body["tags"]] == ["NATO"]
