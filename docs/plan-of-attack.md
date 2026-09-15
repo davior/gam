@@ -323,7 +323,7 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| M6 AI enrichment | **Steps 1–2 of 8 landed** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer. Steps 3–8 (`UsageEvent`, describe/summarize/autotag, `field_provenance` enforcement, bulk enrichment) are specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and not started. |
+| M6 AI enrichment | **Steps 1, 2 and 4 of 8 landed** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`, the first job that writes something a person reads. Steps 3 and 5–8 (`UsageEvent` and cost, describe/autotag, the rest of `field_provenance` enforcement, bulk enrichment) are specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and not started. |
 | **M7–M9** | **Not started.** M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
@@ -345,6 +345,16 @@ from a decision, which is the distinction PR bodies do not preserve.
   `ingest/filetypes.py`, declared with no writer — as are `SOURCE_AI` and `SOURCE_GVC`, which
   are legitimately waiting on M8 and M9. `FilterBar` offers an "AI generated" source filter,
   wired end to end and tested, over a value nothing can currently set.
+- **Attribution is not modelled.** Raised by the user, recorded here so it is not
+  mistaken for a decision: an asset needs to carry where its content *came from* — a
+  website URL, the film or programme a clip is taken from, the news outlet and date of a
+  report — so it can be credited when it is used downstream in GVC. `Asset.source`
+  (`local_upload | url | ai_generated | gvc_export`) is **not** this: it records how the
+  file entered the library, not whose work it is. There is no field for a citation, no
+  UI for one, and nothing in M6-M9 that adds one. Deliberately undesigned so far; the
+  open questions are whether it is one free-text credit or structured fields, whether AI
+  enrichment may propose it from the content, and whether it belongs on the asset or on
+  each clip taken from it.
 - **No tag-management screen.** `tagsApi.create`/`recategorise`/`updateCategory` exist, and
   `rename`/`remove`/`createCategory`/`removeCategory` are wired into `stores/tags.ts` — all
   reachable from no component. A user can create a tag by typing it and can then never

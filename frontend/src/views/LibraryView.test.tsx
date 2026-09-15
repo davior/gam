@@ -103,6 +103,39 @@ describe('LibraryView selection', () => {
     expect(await screen.findByRole('dialog')).toHaveAccessibleName('First')
   })
 
+  it('shows the summary, which was typed since M1 and rendered nowhere', async () => {
+    const user = userEvent.setup()
+    // Re-mocked rather than seeded through the store: the view loads on mount, so a
+    // setState here is replaced by the list response a moment later.
+    const withSummary = { ...makeAsset('a1', 'First'), summary: 'A long interview.' }
+    vi.spyOn(assetsApi, 'list').mockResolvedValue({
+      data: [withSummary],
+      total: 1,
+      limit: 60,
+      offset: 0,
+    })
+    render(<LibraryView />)
+
+    await user.click(await card('First'))
+
+    expect(await screen.findByLabelText(/^summary$/i)).toHaveValue('A long interview.')
+  })
+
+  it('saves an edited summary alongside the other fields', async () => {
+    const user = userEvent.setup()
+    const update = vi
+      .spyOn(assetsApi, 'update')
+      .mockResolvedValue({ ...makeAsset('a1', 'First'), summary: 'Mine.' })
+    render(<LibraryView />)
+
+    await user.click(await card('First'))
+    await user.type(await screen.findByLabelText(/^summary$/i), 'Mine.')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    expect(update.mock.calls[0][1]).toMatchObject({ summary: 'Mine.' })
+  })
+
   it('selects instead of opening when Ctrl is held', async () => {
     const user = userEvent.setup()
     render(<LibraryView />)

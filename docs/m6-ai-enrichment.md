@@ -1,8 +1,10 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1-2 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
-carry-overs; then the three protocol clients). Steps 3-8 not started. Written after
-reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** steps 1, 2 and 4 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
+carry-overs; the three protocol clients; then `summarize`, the first job that writes
+something a person reads). Step 4 was brought forward past step 3 because it is the
+cheapest end-to-end proof the provider chain works on real content. Steps 3 and 5-8 not
+started. Written after reading `davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -128,6 +130,93 @@ GAM-only and stays where M5 put it.
 
 ---
 
+## What each job reads — and the title nobody specified
+
+Added after the provider work landed, because a question about video enrichment found
+that this was never decided.
+
+The milestone above organises jobs by **what they produce** — describe, summarize,
+autotag. The axis that actually varies is **what they read**: pixels for an image, a
+transcript for video and audio, extracted text for a document. That mismatch is why the
+transcript path is only half-specified today. `plan-of-attack.md` says `summarize` is an
+"LLM over transcript / extracted document text" and that `describe` is a "Vision LLM",
+and says nothing at all about what `autotag` reads.
+
+### Source material, by asset type
+
+One function, consulted by all three jobs, rather than three jobs each deciding for
+themselves:
+
+| Asset | Source material | Notes |
+|---|---|---|
+| Image | the image bytes | Needs `supports_images`; refused before sending otherwise |
+| Video or audio **with** a transcript | the transcript text | The case this section exists for |
+| Video **without** a transcript | the poster frame | `ingest/thumbnails.py::_from_video` already produces one |
+| Document | extracted text | **Nothing produces this yet** — see below |
+| Anything else | nothing | The job refuses rather than inventing from a filename |
+
+Two things this table makes visible that were previously implicit:
+
+- **A video's description should come from its transcript, not its poster frame,** when
+  it has one. A single frame of a two-hour interview describes a person sitting down. The
+  transcript describes what was said, which is what anyone searching is actually looking
+  for. The frame is the fallback for silent or untranscribed video, not the primary.
+- **`extract_text` does not exist.** `plan-of-attack.md` lists it as a job
+  (`pypdf`/`python-docx`/plain read) but there is no `KIND_EXTRACT_TEXT` in
+  `models/job.py` and no module for it. So a PDF currently has no text for `summarize` or
+  `autotag` to read, and enrichment over documents is blocked on building it. That is a
+  gap, not a decision.
+
+### One pass, not three
+
+For a transcribed asset, `describe`, `summarize` and `autotag` should be able to run as a
+single call that returns all of its outputs at once, rather than three calls each
+re-reading the same transcript.
+
+The reason is cost, and it is not marginal: a two-hour interview transcript is tens of
+thousands of input tokens, so three passes is roughly three times the spend for outputs
+that would also be more coherent written together. The three job kinds stay as the
+user-facing verbs — they are already in `models/job.py` and in
+`ActivityIndicator.tsx`'s labels, and a user wants to re-run just the tags sometimes —
+but the shared path underneath them should be able to satisfy several at once.
+
+### The title
+
+**Nothing in either document mentions generating one.** `Asset.name` is defaulted from
+the filename at ingest and changes only when someone edits it by hand, so a video stays
+`IMG_4821.mp4` for as long as it is in the library.
+
+That is worth fixing here rather than later, because `name` is a **search field**:
+`asset_fts` indexes `(name, description, summary, tags_text)`, so a library of
+filename-named videos is feeding noise into a quarter of the keyword index. M5's own
+acceptance query — "the video where James Giordano was talking about deploying nano
+weapons" — is exactly the kind of thing a real title helps land.
+
+Two decisions that go with it:
+
+- **Reuse `name`. Do not add a `title` column.** Two fields means answering "which one do
+  I show here" at every call site, forever.
+- **A generated title is a suggestion, never a direct write** — unlike a description or a
+  summary. Those fields are empty until something fills them, so writing one is additive.
+  `name` is never empty, so writing it is always a *replacement*, and replacing what a
+  user sees in their library without asking is a different act from filling a blank. It
+  goes through the same accept/reject path as `autotag` (FR 9.1.4).
+
+### What protects a human edit
+
+`field_provenance` is written in exactly one place — `services/assets.py::apply_metadata`,
+which stamps `"human"` — and read nowhere. A freshly ingested asset therefore has `{}`.
+
+That absence is already the signal step 7 needs, so **no new provenance value is
+required**: a field with no entry has never been touched by a person and an AI run may
+write it; a field marked `"human"` may not be overwritten without asking. An AI write
+stamps `"ai"`, which a later AI run is free to replace.
+
+`name` is the exception, and not because of provenance: it is never blank, so the
+suggestion rule above applies to it whether or not a person has edited it.
+
+---
+
 ## Shape for GAM
 
 ```
@@ -183,12 +272,35 @@ backend/app/
    different question from "can this model complete", and folding the two together
    would make both worse.
 3. `UsageEvent` + `pricing.py` + a cost readout.
-4. `summarize` — simplest job, text in / text out, proves the pipeline.
-5. `describe` — needs `supports_images`; the vision path.
-6. `autotag` — suggestions, never applied silently.
+4. ~~`summarize` — simplest job, text in / text out, proves the pipeline.~~ **Done, and
+   brought forward past step 3.** `enrichment/source.py` is the shared source-material
+   step the section above specifies — `describe` and `autotag` inherit it rather than
+   re-deriving it. `enrichment/summarize.py` is the job, `routers/enrichment.py` the
+   endpoint (`POST /api/assets/{id}/summarize`), and `KIND_SUMMARIZE` finally has a
+   branch in `jobs/enrichment.py` after being declared since M4.
+
+   Step 7 came partly with it, unavoidably: this is the first AI write path, so shipping
+   it without reading `field_provenance` would have meant shipping a job that silently
+   overwrites a summary somebody typed. `services/assets.py::apply_ai_metadata` is the
+   counterpart to `apply_metadata` and the first thing in the app to *read* that column.
+   What remains for step 7 is enforcing it on the write paths still to come, and
+   surfacing provenance in the UI.
+
+   On the frontend, `Asset.summary` had been typed since M1 and rendered by nothing; it
+   now has a field in `AssetDetail`. `SummarizeButton` mirrors `EmbedButton`, and
+   `library.refreshAsset` exists because this is the first job that changes a field the
+   open panel is displaying — without it the summary appears only after a reload. It is
+   also the first caller of `assetsApi.get`, which `plan-of-attack.md` recorded as
+   existing and being called by nothing.
+5. `describe` — needs `supports_images`; the vision path. For a **transcribed** video the
+   transcript is the primary source and the poster frame is the fallback, not the
+   reverse.
+6. `autotag` — suggestions, never applied silently. Same source material as the two
+   above; a generated **title** rides this same suggestion path.
 7. `field_provenance` enforcement — the column is written on manual edits
    (`services/assets.py::apply_metadata`) and **read by nothing**. M6 is where an AI write
-   path must consult it before overwriting a human edit (FR 8.1.3).
+   path must consult it before overwriting a human edit (FR 8.1.3). No new provenance
+   value is needed; an absent entry already means "no person has touched this".
 8. Bulk enrichment over a selection — including the `SelectionBar` embed deferred from M5.
 
 ### While here, two M5 carry-overs

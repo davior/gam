@@ -314,3 +314,31 @@ describe('applyTags', () => {
     expect(useLibraryStore.getState().error).toBeTruthy()
   })
 })
+
+describe('refreshAsset', () => {
+  it('replaces one asset with the freshly read version', async () => {
+    const store = useLibraryStore.getState()
+    useLibraryStore.setState({ assets: [makeAsset('a1'), makeAsset('a2')] })
+    const fresh = { ...makeAsset('a1'), summary: 'Written by the AI.' }
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(fresh)
+
+    await store.refreshAsset('a1')
+
+    const assets = useLibraryStore.getState().assets
+    expect(assets.find((a) => a.id === 'a1')?.summary).toBe('Written by the AI.')
+    expect(assets.find((a) => a.id === 'a2')?.summary).toBeNull()
+  })
+
+  it('leaves the panel alone when the re-read fails', async () => {
+    // This runs after a background job, not after something the user did — a failure
+    // here should not interrupt them with a message about a request they never made.
+    const store = useLibraryStore.getState()
+    useLibraryStore.setState({ assets: [makeAsset('a1')] })
+    vi.spyOn(assetsApi, 'get').mockRejectedValue(new Error('offline'))
+
+    await store.refreshAsset('a1')
+
+    expect(useLibraryStore.getState().assets).toHaveLength(1)
+    expect(useLibraryStore.getState().error).toBeNull()
+  })
+})
