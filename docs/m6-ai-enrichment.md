@@ -1,8 +1,10 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1-2 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
-carry-overs; then the three protocol clients). Steps 3-8 not started. Written after
-reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** steps 1, 2 and 4 of 8 landed (`AIProvider` + CRUD + settings UI and both M5
+carry-overs; the three protocol clients; then `summarize`, the first job that writes
+something a person reads). Step 4 was brought forward past step 3 because it is the
+cheapest end-to-end proof the provider chain works on real content. Steps 3 and 5-8 not
+started. Written after reading `davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -270,9 +272,26 @@ backend/app/
    different question from "can this model complete", and folding the two together
    would make both worse.
 3. `UsageEvent` + `pricing.py` + a cost readout.
-4. `summarize` — simplest job, text in / text out, proves the pipeline. Reads the
-   transcript for A/V; see "What each job reads" above for the full table and for the
-   shared source-material step all three of these need.
+4. ~~`summarize` — simplest job, text in / text out, proves the pipeline.~~ **Done, and
+   brought forward past step 3.** `enrichment/source.py` is the shared source-material
+   step the section above specifies — `describe` and `autotag` inherit it rather than
+   re-deriving it. `enrichment/summarize.py` is the job, `routers/enrichment.py` the
+   endpoint (`POST /api/assets/{id}/summarize`), and `KIND_SUMMARIZE` finally has a
+   branch in `jobs/enrichment.py` after being declared since M4.
+
+   Step 7 came partly with it, unavoidably: this is the first AI write path, so shipping
+   it without reading `field_provenance` would have meant shipping a job that silently
+   overwrites a summary somebody typed. `services/assets.py::apply_ai_metadata` is the
+   counterpart to `apply_metadata` and the first thing in the app to *read* that column.
+   What remains for step 7 is enforcing it on the write paths still to come, and
+   surfacing provenance in the UI.
+
+   On the frontend, `Asset.summary` had been typed since M1 and rendered by nothing; it
+   now has a field in `AssetDetail`. `SummarizeButton` mirrors `EmbedButton`, and
+   `library.refreshAsset` exists because this is the first job that changes a field the
+   open panel is displaying — without it the summary appears only after a reload. It is
+   also the first caller of `assetsApi.get`, which `plan-of-attack.md` recorded as
+   existing and being called by nothing.
 5. `describe` — needs `supports_images`; the vision path. For a **transcribed** video the
    transcript is the primary source and the poster frame is the fallback, not the
    reverse.

@@ -242,6 +242,50 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
     return asset
 
 
+def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str]:
+    """Write fields an enrichment job produced, without overwriting a person's work.
+
+    The counterpart to `apply_metadata`, and the first thing to actually *read*
+    `field_provenance` — FR 8.1.3 requires that a later AI run never silently replaces
+    something someone typed, and until now the column was written and consulted by
+    nothing.
+
+    A field with no provenance entry has never been touched by a person, so it is free
+    to write: absence is the signal, and no third provenance value is needed for it. A
+    field marked "human" is skipped and named in the return value, so the caller can say
+    what it left alone rather than reporting a clean run that quietly did less.
+
+    Returns the fields actually written.
+    """
+    if not changes:
+        return []
+
+    try:
+        provenance = json.loads(asset.field_provenance or "{}")
+    except ValueError:
+        provenance = {}
+
+    written: list[str] = []
+    for field_name, value in changes.items():
+        if provenance.get(field_name) == "human":
+            continue
+        setattr(asset, field_name, value)
+        provenance[field_name] = "ai"
+        written.append(field_name)
+
+    if not written:
+        return []
+
+    asset.field_provenance = json.dumps(provenance, sort_keys=True)
+    asset.metadata_modified_date = utcnow()
+
+    session.add(asset)
+    session.commit()
+    session.refresh(asset)
+    _reindex(session, asset)
+    return written
+
+
 # ─── serialisation ───────────────────────────────────────────────────────────
 
 

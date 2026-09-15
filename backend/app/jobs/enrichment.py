@@ -19,8 +19,11 @@ from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
 from app.enrichment.backfill import run as run_backfill
 from app.enrichment.embed import run as run_embed
+from app.enrichment.source import NoSourceMaterial
+from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
+from app.providers.base import ProviderError
 from app.jobs.runner import (
     ACTIVE_STATUSES,
     JobCancelled,
@@ -33,6 +36,7 @@ from app.models.job import (
     EnrichmentJob,
     KIND_BACKFILL_EMBEDDINGS,
     KIND_EMBED,
+    KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
     LIBRARY_KINDS,
 )
@@ -201,6 +205,8 @@ def _run_job(job_id: str) -> None:
             elif job.kind == KIND_EMBED:
                 count = run_embed(session, asset, progress)
                 detail = f"{count} vector{'' if count == 1 else 's'}"
+            elif job.kind == KIND_SUMMARIZE:
+                detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_BACKFILL_EMBEDDINGS:
                 result = run_backfill(session, job.user_id, progress)
                 detail = f"{result.embedded} embedded"
@@ -234,6 +240,12 @@ def _run_job(job_id: str) -> None:
             if job.status in ACTIVE_STATUSES:
                 set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             logger.info("Enrichment job %s cancelled", job_id)
+
+        except (ProviderError, NoSourceMaterial) as exc:
+            message = str(exc)
+            _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
 
         except (EmbeddingUnavailable, EmbeddingError) as exc:
             message = str(exc)

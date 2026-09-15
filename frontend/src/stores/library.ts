@@ -67,6 +67,9 @@ interface LibraryState {
   remove: (id: string) => Promise<void>
   /** Replace one asset's tags with the authoritative set the server just returned. */
   setAssetTags: (assetId: string, tags: Tag[]) => void
+  /** Re-read one asset from the server, for when something other than the user
+   *  changed it — an enrichment job writing a summary, for instance. */
+  refreshAsset: (id: string) => Promise<void>
   applyTags: (assetIds: string[], add: string[], remove: string[]) => Promise<void>
   dismissRejections: () => void
   reset: () => void
@@ -275,6 +278,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       set({ assets: previous, total: previous.length })
       set({ error: apiErrorMessage(error, 'Could not delete that asset') })
       throw error
+    }
+  },
+
+  async refreshAsset(id) {
+    // No optimistic step and no error surfaced: this runs after a background job, not
+    // after something the user did, so a failure here should leave the panel showing
+    // what it already had rather than interrupting them with a message about a
+    // request they never made.
+    try {
+      const fresh = await assetsApi.get(id)
+      set((state) => ({
+        assets: state.assets.map((a) => (a.id === id ? fresh : a)),
+      }))
+    } catch {
+      /* the next load will pick it up */
     }
   },
 

@@ -8,6 +8,7 @@ import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
 import EmbedButton from '@/components/EmbedButton'
+import SummarizeButton from '@/components/SummarizeButton'
 import TagInput from '@/components/TagInput'
 import TranscriptPanel from '@/components/TranscriptPanel'
 
@@ -42,6 +43,7 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
 
   const [name, setName] = useState(asset.name)
   const [description, setDescription] = useState(asset.description ?? '')
+  const [summary, setSummary] = useState(asset.summary ?? '')
   const [saving, setSaving] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -88,10 +90,13 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
   useEffect(() => {
     setName(asset.name)
     setDescription(asset.description ?? '')
+    // Also what makes a finished summarise job appear without a reload: the store
+    // replaces the asset, the effect re-seeds, and the textarea shows the new text.
+    setSummary(asset.summary ?? '')
     setConfirmingDelete(false)
     setTagError(null)
     setCurrentTime(startAt ?? 0)
-  }, [asset.id, asset.name, asset.description, startAt])
+  }, [asset.id, asset.name, asset.description, asset.summary, startAt])
 
   // The panel can be reached from search, which never renders the filter bar, so it
   // asks for the catalogue itself rather than assuming somebody else did.
@@ -107,13 +112,20 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const dirty = name.trim() !== asset.name || description !== (asset.description ?? '')
+  const dirty =
+    name.trim() !== asset.name ||
+    description !== (asset.description ?? '') ||
+    summary !== (asset.summary ?? '')
 
   const save = async () => {
     if (!dirty || !name.trim()) return
     setSaving(true)
     try {
-      await update(asset.id, { name: name.trim(), description: description || null })
+      await update(asset.id, {
+        name: name.trim(),
+        description: description || null,
+        summary: summary || null,
+      })
     } catch {
       // The store restores the server's version and surfaces the message; the panel
       // stays open so the edit is not lost.
@@ -229,6 +241,19 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
               />
             </div>
 
+            <div>
+              <label className="label" htmlFor="asset-summary">
+                Summary
+              </label>
+              <textarea
+                id="asset-summary"
+                className="input min-h-[80px] resize-y"
+                placeholder="Written by AI, or by you. Searchable either way."
+                value={summary}
+                onChange={(e) => setSummary(e.target.value)}
+              />
+            </div>
+
             <button
               type="button"
               onClick={save}
@@ -253,6 +278,7 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
               )}
             </div>
 
+            <SummarizeButton assetId={asset.id} />
             <EmbedButton assetId={asset.id} />
 
             <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
