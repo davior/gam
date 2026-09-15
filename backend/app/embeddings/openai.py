@@ -17,7 +17,12 @@ from app.embeddings.base import EmbeddingError
 
 logger = logging.getLogger(__name__)
 
-API_URL = "https://api.openai.com/v1/embeddings"
+# A base rather than a full URL, so any OpenAI-compatible endpoint can serve this side
+# too — a gateway, a self-hosted inference server, or DeepSeek if it publishes one. The
+# generation providers have had a configurable base URL since they were ported from
+# gecko-notes; this is the embedding half catching up (docs/m6-ai-enrichment.md).
+DEFAULT_BASE_URL = "https://api.openai.com"
+EMBEDDINGS_PATH = "/v1/embeddings"
 
 DEFAULT_MODEL = "text-embedding-3-small"
 DEFAULT_DIMENSIONS = 512
@@ -32,10 +37,18 @@ MAX_BATCH = 128
 
 
 class OpenAIEmbedder:
-    def __init__(self, api_key: str, *, model: str = DEFAULT_MODEL, dimensions: int = DEFAULT_DIMENSIONS):
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str = DEFAULT_MODEL,
+        dimensions: int = DEFAULT_DIMENSIONS,
+        base_url: str | None = None,
+    ):
         self._api_key = api_key
         self._model = model
         self._dimensions = dimensions
+        self._url = (base_url or DEFAULT_BASE_URL).rstrip("/") + EMBEDDINGS_PATH
 
     @property
     def model(self) -> str:
@@ -62,7 +75,7 @@ class OpenAIEmbedder:
         }
         try:
             response = httpx.post(
-                API_URL,
+                self._url,
                 json=payload,
                 headers={"Authorization": f"Bearer {self._api_key}"},
                 timeout=REQUEST_TIMEOUT,

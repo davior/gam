@@ -323,7 +323,8 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| **M6–M9** | **Not started.** M6 is specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) — most of its provider model already works in gecko-notes and should be ported, not designed. M7 is the only one with no external dependency. |
+| M6 AI enrichment | **Step 1 of 8 landed** — `AIProvider`, its migration, `/api/providers` CRUD and the settings panel, ported from gecko-notes. Steps 2–8 (provider clients, `UsageEvent`, describe/summarize/autotag, `field_provenance` enforcement, bulk enrichment) are specified in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and not started. |
+| **M7–M9** | **Not started.** M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
 [#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
@@ -338,8 +339,9 @@ Found by auditing the code against this document rather than trusting it. None b
 numbered milestone, and none is deliberate — they are here so a later session can tell a gap
 from a decision, which is the distinction PR bodies do not preserve.
 
-- **URL import (M1) was specified and never built.** No endpoint, and no
-  `_require_safe_external_url` SSRF guard was ported. The tell is `SOURCE_URL` in
+- **URL import (M1) was specified and never built.** No endpoint — though the SSRF guard
+  it needs now exists as `backend/app/safe_url.py`, added for M6's provider base URLs and
+  written to be reusable from here. The tell is `SOURCE_URL` in
   `ingest/filetypes.py`, declared with no writer — as are `SOURCE_AI` and `SOURCE_GVC`, which
   are legitimately waiting on M8 and M9. `FilterBar` offers an "AI generated" source filter,
   wired end to end and tested, over a value nothing can currently set.

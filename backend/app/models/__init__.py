@@ -12,12 +12,14 @@ empty migration and a silent schema drift.
 from app.models.asset import Asset
 from app.models.embedding import Embedding
 from app.models.job import EnrichmentJob
+from app.models.provider import AIProvider
 from app.models.setting import UserSetting
 from app.models.tag import AssetTag, Tag, TagCategory
 from app.models.transcript import TranscriptSegment
 from app.models.user import User
 
 __all__ = [
+    "AIProvider",
     "Asset",
     "AssetTag",
     "Embedding",

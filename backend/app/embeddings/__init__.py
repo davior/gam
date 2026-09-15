@@ -47,6 +47,7 @@ def build_embedder(session: Session, user_id: str) -> Optional[Embedder]:
     an error worth raising.
     """
     from app.settings_store import (
+        EMBEDDING_BASE_URL,
         EMBEDDING_DIMENSIONS,
         EMBEDDING_MODEL,
         EMBEDDING_PROVIDER,
@@ -73,4 +74,5 @@ def build_embedder(session: Session, user_id: str) -> Optional[Embedder]:
         api_key,
         model=get_setting(session, user_id, EMBEDDING_MODEL, OPENAI_DEFAULT_MODEL),
         dimensions=int(get_setting(session, user_id, EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS)),
+        base_url=get_setting(session, user_id, EMBEDDING_BASE_URL) or None,
     )

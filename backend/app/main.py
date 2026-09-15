@@ -26,6 +26,7 @@ from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import embeddings as embeddings_router
 from app.routers import media as media_router
+from app.routers import providers as providers_router
 from app.routers import search as search_router
 from app.routers import settings as settings_router
 from app.routers import tags as tags_router
@@ -160,6 +161,7 @@ app.include_router(activity_router.router, prefix="/api/activity", tags=["activi
 app.include_router(search_router.router, prefix="/api/search", tags=["search"])
 app.include_router(embeddings_router.router, prefix="/api/embeddings", tags=["embeddings"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])
+app.include_router(providers_router.router, prefix="/api/providers", tags=["providers"])
 app.include_router(tags_router.router, prefix="/api/tags", tags=["tags"])
 # Not under /api: these URLs go straight into <img src> and <video src>, and the
 # signature in the query string is what authorises them.

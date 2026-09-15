@@ -1,6 +1,8 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** specified, not started. Written after reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** step 1 of 8 landed (`AIProvider` + migration + CRUD + settings UI, plus both
+M5 carry-overs). Steps 2-8 not started. Written after reading `davior/gecko-notes` at
+`95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -150,8 +152,18 @@ backend/app/
 
 ### Milestone order
 
-1. `AIProvider` + migration + CRUD + settings UI (free-text model, base URL, the
-   `supports_images` flag). **This alone answers the "I need DeepSeek and Claude" ask.**
+1. ~~`AIProvider` + migration + CRUD + settings UI (free-text model, base URL, the
+   `supports_images` flag).~~ **Done.** `backend/app/models/provider.py`,
+   `app/providers/` (constants + endpoint resolution), `app/routers/providers.py` at
+   `/api/providers`, `frontend/src/components/ProviderPanel.tsx`. Four things were fixed
+   on the way in rather than ported: the read schema reports `api_key_configured` instead
+   of gecko-notes' redact-to-`""` (which cannot distinguish "configured" from "not");
+   `api_key: ""` clears a stored key, which gecko-notes has no way to do; `provider_type`
+   is validated against an allowlist; and the connection probe SSRF-checks its
+   Anthropic-protocol branch, which gecko-notes checks only on the OpenAI-compatible one.
+   The guard itself is new — `backend/app/safe_url.py`, GAM's first — and additionally
+   resolves the hostname, because checking literal IPs alone lets a name that the caller
+   controls point at 127.0.0.1.
 2. `providers/` client with the three protocols, non-streaming, server-initiated.
 3. `UsageEvent` + `pricing.py` + a cost readout.
 4. `summarize` — simplest job, text in / text out, proves the pipeline.
@@ -164,9 +176,15 @@ backend/app/
 
 ### While here, two M5 carry-overs
 
-- Give the **embedding** provider a `base_url` and a free-text model, matching this shape.
-  That is what would let DeepSeek serve the embedding side too, if it exposes an endpoint.
-- The embedding settings' two-item model dropdown becomes suggestions, not a closed list.
+Both done alongside step 1.
+
+- ~~Give the **embedding** provider a `base_url` and a free-text model, matching this
+  shape.~~ `EMBEDDING_BASE_URL` in `settings_store`, `OpenAIEmbedder(base_url=…)`, and an
+  "OpenAI-compatible endpoint" field on the panel, SSRF-checked on save. That is what
+  would let DeepSeek serve the embedding side too, if it exposes an endpoint.
+- ~~The embedding settings' two-item model dropdown becomes suggestions, not a closed
+  list.~~ An `<input list>` over a `<datalist>`, committed on blur rather than per
+  keystroke. The server already accepted any string; only the UI was closed.
 
 ---
 

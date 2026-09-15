@@ -40,6 +40,11 @@ export interface EmbeddingSettings {
   model: string
   dimensions: number
   openai_key_configured: boolean
+  /**
+   * The OpenAI-compatible endpoint to embed against. Empty means OpenAI itself; set it
+   * to point at a gateway or a self-hosted server that speaks the same API.
+   */
+  base_url: string
   ollama_base_url: string
   /**
    * Whether the chosen provider has everything it needs to actually run. Not the same
@@ -47,6 +52,7 @@ export interface EmbeddingSettings {
    */
   configured: boolean
   available_providers: string[]
+  /** Completions for the model box, not a constraint — the server takes any string. */
   available_models: Array<{ id: string; label: string }>
 }
 
@@ -63,6 +69,8 @@ export const embeddingSettingsApi = {
     dimensions?: number
     /** '' clears the stored key; omit the field to leave it alone. */
     openai_api_key?: string
+    /** '' resets to OpenAI's own endpoint; omit the field to leave it alone. */
+    base_url?: string
     ollama_base_url?: string
   }): Promise<EmbeddingSettings> {
     return client
