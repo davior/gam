@@ -11,6 +11,7 @@ import {
   type EmbeddingSettings,
   type SpeechSettings,
 } from '@/api/settings'
+import { providersApi } from '@/api/providers'
 
 function embedding(overrides: Partial<EmbeddingSettings> = {}): EmbeddingSettings {
   return {
@@ -18,6 +19,7 @@ function embedding(overrides: Partial<EmbeddingSettings> = {}): EmbeddingSetting
     model: 'text-embedding-3-small',
     dimensions: 512,
     openai_key_configured: false,
+    base_url: '',
     ollama_base_url: 'http://localhost:11434',
     configured: false,
     available_providers: ['openai', 'ollama'],
@@ -60,6 +62,9 @@ function coverage(overrides: Partial<EmbeddingCoverage> = {}): EmbeddingCoverage
 beforeEach(() => {
   vi.spyOn(speechSettingsApi, 'get').mockResolvedValue(speech())
   vi.spyOn(embeddingsApi, 'status').mockResolvedValue(coverage())
+  // The view mounts the provider panel too, which loads on mount. Left unmocked it
+  // reaches the real axios client and every test here logs a network failure.
+  vi.spyOn(providersApi, 'list').mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -229,5 +234,77 @@ describe('SettingsView', () => {
     renderView()
 
     expect(await screen.findByText(/could not load settings/i)).toBeInTheDocument()
+  })
+
+  // ─── the M5 carry-overs ────────────────────────────────────────────────────
+
+  it('takes a model the suggestion list has never heard of', async () => {
+    // It was a two-item <select> until now, so the only embedding models reachable from
+    // this screen were the two someone typed into the backend months ago.
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ openai_key_configured: true, configured: true })
+    )
+    const update = vi.spyOn(embeddingSettingsApi, 'update').mockResolvedValue(embedding())
+    renderView()
+
+    const model = await screen.findByLabelText(/^embedding model$/i)
+    await userEvent.clear(model)
+    await userEvent.type(model, 'text-embedding-4-enormous')
+    await userEvent.tab()
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({ model: 'text-embedding-4-enormous' })
+    )
+  })
+
+  it('does not save the model on every keystroke', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ openai_key_configured: true, configured: true })
+    )
+    const update = vi.spyOn(embeddingSettingsApi, 'update').mockResolvedValue(embedding())
+    renderView()
+
+    const model = await screen.findByLabelText(/^embedding model$/i)
+    await userEvent.clear(model)
+    await userEvent.type(model, 'nomic')
+
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('can point the embedder at an OpenAI-compatible endpoint', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ openai_key_configured: true, configured: true })
+    )
+    const update = vi.spyOn(embeddingSettingsApi, 'update').mockResolvedValue(embedding())
+    renderView()
+
+    const field = await screen.findByLabelText(/openai-compatible endpoint/i)
+    await userEvent.type(field, 'https://gateway.example.com')
+    await userEvent.click(
+      screen.getByRole('button', { name: /save embedding endpoint/i })
+    )
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({ base_url: 'https://gateway.example.com' })
+    )
+  })
+
+  it('does not offer that endpoint for Ollama, which has its own address', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
+      embedding({ provider: 'ollama', configured: true, model: 'nomic-embed-text' })
+    )
+    renderView()
+
+    await screen.findByLabelText(/^ollama address$/i)
+    expect(screen.queryByLabelText(/openai-compatible endpoint/i)).toBeNull()
+  })
+
+  it('renders the AI provider panel alongside the others', async () => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(embedding())
+    renderView()
+
+    expect(
+      await screen.findByRole('button', { name: /add a provider/i })
+    ).toBeInTheDocument()
   })
 })

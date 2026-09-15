@@ -7,6 +7,7 @@ embedding half of it came to be missing: `settings_store` defined the keys,
 
 import json
 
+import httpx
 from sqlmodel import select
 
 from app.embeddings import PROVIDER_OLLAMA, PROVIDER_OPENAI
@@ -192,3 +193,90 @@ def test_speech_settings_round_trip(auth_client):
 def test_settings_require_authentication(client):
     assert client.get("/api/settings/embeddings").status_code == 401
     assert client.put("/api/settings/embeddings", json={}).status_code == 401
+
+
+# ─── the M5 carry-overs ──────────────────────────────────────────────────────
+#
+# The embedding provider gained what the generation providers were ported with: a
+# configurable endpoint, and a model box that is not a closed list.
+
+
+def _embed_target(monkeypatch, embedder) -> str:
+    """The URL the embedder actually posts to, rather than the field it stores."""
+    seen = {}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        return httpx.Response(200, json={"data": [{"embedding": [0.0, 1.0]}]})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    embedder.embed(["hello"])
+    return seen["url"]
+
+
+def test_the_embedding_endpoint_can_be_pointed_elsewhere(auth_client, session, monkeypatch):
+    """Any OpenAI-compatible endpoint can serve this side — a gateway, a self-hosted
+    inference server. Before this the URL was a module constant."""
+    from app.embeddings import build_embedder
+
+    auth_client.put(
+        "/api/settings/embeddings",
+        json={"openai_api_key": "sk-test", "base_url": "https://gateway.example.com"},
+    )
+
+    body = auth_client.get("/api/settings/embeddings").json()["data"]
+    assert body["base_url"] == "https://gateway.example.com"
+
+    target = _embed_target(monkeypatch, build_embedder(session, TEST_USER))
+    assert target == "https://gateway.example.com/v1/embeddings"
+
+
+def test_an_empty_base_url_goes_back_to_openai(auth_client, session, monkeypatch):
+    from app.embeddings import build_embedder
+
+    auth_client.put(
+        "/api/settings/embeddings",
+        json={"openai_api_key": "sk-test", "base_url": "https://gateway.example.com"},
+    )
+    auth_client.put("/api/settings/embeddings", json={"base_url": ""})
+
+    assert auth_client.get("/api/settings/embeddings").json()["data"]["base_url"] == ""
+    target = _embed_target(monkeypatch, build_embedder(session, TEST_USER))
+    assert target == "https://api.openai.com/v1/embeddings"
+
+
+def test_the_embedding_base_url_is_ssrf_checked(auth_client):
+    """This is the address the library's text gets POSTed to."""
+    response = auth_client.put(
+        "/api/settings/embeddings", json={"base_url": "https://169.254.169.254"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "ssrf_blocked"
+
+    response = auth_client.put(
+        "/api/settings/embeddings", json={"base_url": "http://api.example.com"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_url"
+
+
+def test_ollamas_address_is_still_allowed_to_be_local(auth_client):
+    """The deliberate exception: it is a local daemon, which is the point of choosing it."""
+    response = auth_client.put(
+        "/api/settings/embeddings", json={"ollama_base_url": "http://localhost:11434"}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["ollama_base_url"] == "http://localhost:11434"
+
+
+def test_a_model_outside_the_suggestions_is_accepted(auth_client):
+    """`available_models` is a completion list, not a constraint — the UI offers them and
+    the server takes anything. A dropdown is the part of a settings screen that dates
+    first, and embedding models ship faster than this app is redeployed."""
+    body = auth_client.put(
+        "/api/settings/embeddings", json={"model": "text-embedding-4-enormous"}
+    ).json()["data"]
+
+    assert body["model"] == "text-embedding-4-enormous"
+    # Still offered as completions, and still not a constraint.
+    assert body["available_models"]

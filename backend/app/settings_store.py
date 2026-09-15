@@ -30,6 +30,8 @@ EMBEDDING_PROVIDER = "embedding_provider"
 EMBEDDING_MODEL = "embedding_model"
 EMBEDDING_DIMENSIONS = "embedding_dimensions"
 OPENAI_API_KEY = "openai_api_key"
+# The OpenAI-compatible endpoint the embedder posts to. Empty means OpenAI itself.
+EMBEDDING_BASE_URL = "embedding_base_url"
 OLLAMA_BASE_URL = "ollama_base_url"
 
 # Keys whose value is encrypted at rest. Anything not in here is stored as plain JSON.

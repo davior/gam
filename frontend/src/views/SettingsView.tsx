@@ -10,18 +10,8 @@ import {
 import { apiErrorMessage } from '@/api/client'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { isActive, useActivityStore } from '@/stores/activity'
-
-/** A saved-tick that clears itself, shared by both panels. */
-function useSavedFlash(): [boolean, () => void] {
-  const [saved, setSaved] = useState(false)
-  return [
-    saved,
-    () => {
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    },
-  ]
-}
+import ProviderPanel from '@/components/ProviderPanel'
+import { useSavedFlash } from '@/utils/useSavedFlash'
 
 function SpeechPanel() {
   const [settings, setSettings] = useState<SpeechSettings | null>(null)
@@ -123,7 +113,7 @@ function SpeechPanel() {
       {settings && (
         <div>
           <label className="label" htmlFor="deepgram-model">
-            Model
+            Transcription model
           </label>
           <select
             id="deepgram-model"
@@ -162,6 +152,10 @@ function EmbeddingPanel() {
   const [settings, setSettings] = useState<EmbeddingSettings | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [urlInput, setUrlInput] = useState('')
+  const [baseUrlInput, setBaseUrlInput] = useState('')
+  // Free text now rather than a dropdown, so it needs its own state and a commit on
+  // blur — a PUT per keystroke would be one request per character.
+  const [modelInput, setModelInput] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, flashSaved] = useSavedFlash()
   const [error, setError] = useState<string | null>(null)
@@ -172,6 +166,8 @@ function EmbeddingPanel() {
       .then((next) => {
         setSettings(next)
         setUrlInput(next.ollama_base_url)
+        setBaseUrlInput(next.base_url)
+        setModelInput(next.model)
       })
       .catch((err) => setError(apiErrorMessage(err, 'Could not load settings')))
   }, [])
@@ -183,6 +179,8 @@ function EmbeddingPanel() {
       const next = await embeddingSettingsApi.update(changes)
       setSettings(next)
       setUrlInput(next.ollama_base_url)
+      setBaseUrlInput(next.base_url)
+      setModelInput(next.model)
       setKeyInput('')
       flashSaved()
     } catch (err) {
@@ -342,6 +340,37 @@ function EmbeddingPanel() {
         </div>
       )}
 
+      {settings && isOpenAI && (
+        <div>
+          <label className="label" htmlFor="embedding-base-url">
+            OpenAI-compatible endpoint
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="embedding-base-url"
+              type="url"
+              className="input flex-1"
+              placeholder="https://api.openai.com"
+              value={baseUrlInput}
+              onChange={(e) => setBaseUrlInput(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saving}
+              onClick={() => save({ base_url: baseUrlInput })}
+              aria-label="Save embedding endpoint"
+            >
+              Save
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+            Optional. Leave blank for OpenAI itself — set it to use a gateway or a
+            self-hosted server that speaks the same API.
+          </p>
+        </div>
+      )}
+
       {settings && !isOpenAI && (
         <div>
           <label className="label" htmlFor="ollama-url">
@@ -372,23 +401,31 @@ function EmbeddingPanel() {
       {settings && (
         <div>
           <label className="label" htmlFor="embedding-model">
-            Model
+            Embedding model
           </label>
-          <select
+          <input
             id="embedding-model"
             className="input"
-            value={settings.model}
-            onChange={(e) => save({ model: e.target.value })}
-          >
+            list="embedding-model-options"
+            value={modelInput}
+            onChange={(e) => setModelInput(e.target.value)}
+            onBlur={() => {
+              if (modelInput.trim() && modelInput !== settings.model) {
+                void save({ model: modelInput.trim() })
+              }
+            }}
+          />
+          <datalist id="embedding-model-options">
             {settings.available_models.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.label}
               </option>
             ))}
-          </select>
+          </datalist>
           <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-            Changing the model leaves existing vectors behind — they are stored with the
-            model that produced them, and only ones that match are searched.
+            Suggestions, not a closed list — any model the endpoint knows will do.
+            Changing it leaves existing vectors behind: they are stored with the model
+            that produced them, and only ones that match are searched.
           </p>
         </div>
       )}
@@ -467,6 +504,7 @@ export default function SettingsView() {
         Back to library
       </Link>
 
+      <ProviderPanel />
       <EmbeddingPanel />
       <SpeechPanel />
     </div>

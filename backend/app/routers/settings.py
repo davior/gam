@@ -18,10 +18,12 @@ from app.embeddings.ollama import DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
 from app.embeddings.openai import DEFAULT_DIMENSIONS
 from app.embeddings.openai import DEFAULT_MODEL as OPENAI_DEFAULT_MODEL
 from app.enrichment.deepgram import DEFAULT_MODEL
+from app.safe_url import require_safe_external_url
 from app.schemas import DataResponse
 from app.settings_store import (
     DEEPGRAM_API_KEY,
     DEEPGRAM_MODEL,
+    EMBEDDING_BASE_URL,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
     EMBEDDING_PROVIDER,
@@ -93,6 +95,11 @@ def write_speech_settings(
 # read by build_embedder, but nothing could write them. Search silently ran keyword-only
 # while the UI told the user to "add an embedding provider in Settings".
 
+# Suggestions, not a closed list: the server accepts any model string, and the UI offers
+# these as completions. A dropdown is the part of a settings screen that dates first —
+# models ship faster than this app is redeployed — and the generation providers ported in
+# M6 take free text for the same reason.
+#
 # The default model differs per provider, so "what should the model box say" cannot be a
 # constant. Dimensions are OpenAI-only: Ollama's model decides its own width.
 EMBEDDING_MODELS = {
@@ -117,6 +124,9 @@ class EmbeddingSettings(BaseModel):
     model: str
     dimensions: int
     openai_key_configured: bool
+    # Empty means OpenAI itself. Set to point the embedder at any OpenAI-compatible
+    # endpoint — a gateway, or a self-hosted inference server.
+    base_url: str
     ollama_base_url: str
     # True when the current provider has everything it needs. The UI uses this to say
     # whether semantic search is actually on, which "key configured" alone cannot
@@ -134,6 +144,7 @@ class EmbeddingSettingsUpdate(BaseModel):
     # Deepgram key above, and for the same reason: without the distinction a stored key
     # can never be cleared.
     openai_api_key: str | None = None
+    base_url: str | None = None
     ollama_base_url: str | None = None
 
 
@@ -149,6 +160,7 @@ def _embedding_settings(session: Session, user_id: str) -> EmbeddingSettings:
         model=get_setting(session, user_id, EMBEDDING_MODEL, DEFAULT_MODEL_FOR[provider]),
         dimensions=int(get_setting(session, user_id, EMBEDDING_DIMENSIONS, DEFAULT_DIMENSIONS)),
         openai_key_configured=key_configured,
+        base_url=get_setting(session, user_id, EMBEDDING_BASE_URL, ""),
         ollama_base_url=get_setting(session, user_id, OLLAMA_BASE_URL, DEFAULT_BASE_URL),
         configured=key_configured if provider == PROVIDER_OPENAI else True,
         available_models=EMBEDDING_MODELS[provider],
@@ -201,6 +213,16 @@ def write_embedding_settings(
             set_setting(session, user.id, OPENAI_API_KEY, payload.openai_api_key.strip())
         else:
             clear_setting(session, user.id, OPENAI_API_KEY)
+
+    if payload.base_url is not None:
+        if payload.base_url.strip():
+            # Checked before it is stored, because this is the address the embedder will
+            # POST the library's text to. Ollama's is deliberately exempt below: it is a
+            # local daemon, and a private address there is the point of it.
+            require_safe_external_url(payload.base_url.strip())
+            set_setting(session, user.id, EMBEDDING_BASE_URL, payload.base_url.strip())
+        else:
+            clear_setting(session, user.id, EMBEDDING_BASE_URL)
 
     if payload.ollama_base_url is not None:
         if payload.ollama_base_url.strip():
