@@ -1,9 +1,9 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1, 2, 4 and 6 of 8 landed, plus most of 7. Step 3 (`UsageEvent` and
-cost) and step 5 (`describe`) are not started; step 8 (bulk enrichment) is not started.
-Steps 4 and 6 were taken before 3 because they are what proves the chain works on real
-content. Written after reading `davior/gecko-notes` at `95ed2ca`.
+**Status:** steps 1, 2, 4, 5 and 6 of 8 landed, plus most of 7. Only step 3 (`UsageEvent`
+and cost) and step 8 (bulk enrichment) remain. Steps 4-6 were taken before 3 because
+they are what proves the chain works on real content. Written after reading
+`davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -149,7 +149,7 @@ themselves:
 | Asset | Source material | Notes |
 |---|---|---|
 | Image | the image bytes | Needs `supports_images`; refused before sending otherwise |
-| Video or audio **with** a transcript | the transcript text | The case this section exists for |
+| Video or audio **with** a transcript | the transcript text | The case this section exists for. `describe` also gets the poster frame — see step 5 |
 | Video **without** a transcript | the poster frame | `ingest/thumbnails.py::_from_video` already produces one |
 | Document | extracted text | **Nothing produces this yet** — see below |
 | Anything else | nothing | The job refuses rather than inventing from a filename |
@@ -291,9 +291,26 @@ backend/app/
    open panel is displaying — without it the summary appears only after a reload. It is
    also the first caller of `assetsApi.get`, which `plan-of-attack.md` recorded as
    existing and being called by nothing.
-5. `describe` — needs `supports_images`; the vision path. For a **transcribed** video the
-   transcript is the primary source and the poster frame is the fallback, not the
-   reverse.
+5. ~~`describe` — needs `supports_images`; the vision path.~~ **Done.**
+   `enrichment/describe.py`, `POST /api/assets/{id}/describe`, and a `KIND_DESCRIBE`
+   branch after it too had been declared since M4 with nothing behind it.
+
+   Building it surfaced something the source-material table above did not anticipate:
+   for a transcribed video, `describe` and `summarize` would have read *exactly the same
+   bytes* and written two versions of the same paragraph into different columns. The
+   material rule was right; what was missing is that the two jobs want different things
+   from it.
+
+   So `gather` gained `include_poster`, which attaches the still frame **alongside** the
+   transcript rather than instead of it. Only `describe` asks for it. This does not
+   reorder the precedence set out above — the transcript is still primary — it adds the
+   one source that can answer "what does this look like", which a transcript cannot. A
+   test asserts `summarize` is *not* given the frame, so a change to the default cannot
+   quietly make the two identical again.
+
+   The prompts carry the rest of the distinction: a description says what is *in* the
+   item, in the words someone would search for; a summary says what it is *about*. When a
+   summary already exists, `describe` is shown it and told not to repeat it.
 6. ~~`autotag` — suggestions, never applied silently.~~ **Done.** `models/suggestion.py`,
    `services/suggestions.py`, `enrichment/autotag.py`, four endpoints on
    `routers/enrichment.py`, and `SuggestionPanel.tsx`. The generated **title** rides the

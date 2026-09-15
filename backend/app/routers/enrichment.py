@@ -14,11 +14,12 @@ from sqlmodel import Session
 
 from app.auth import CurrentUser
 from app.database import get_session
+from app.enrichment.describe import describable
 from app.enrichment.summarize import summarisable
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_AUTOTAG, KIND_SUMMARIZE
+from app.models.job import KIND_AUTOTAG, KIND_DESCRIBE, KIND_SUMMARIZE
 from app.models.suggestion import Suggestion
 from app.providers import build_provider
 from app.schemas import DataResponse, ListResponse
@@ -133,6 +134,38 @@ def start_autotag(
         )
 
     job = enrichment_jobs.submit(session, asset, KIND_AUTOTAG)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.post("/{asset_id}/describe", response_model=DataResponse[ActivityJobRead], status_code=202)
+def start_describe(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue a description pass over one asset — what is in it, not what it is about."""
+    asset = _owned_asset(asset_id, user.id, session)
+    _require_provider(session, user.id)
+
+    if not describable(asset):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_summarisable",
+                "message": "This asset has no content to describe",
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_DESCRIBE) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "This asset is already being described",
+            },
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_DESCRIBE)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
 

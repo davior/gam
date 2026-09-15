@@ -20,6 +20,7 @@ from app.enrichment.embed import EmbeddingUnavailable
 from app.enrichment.backfill import run as run_backfill
 from app.enrichment.embed import run as run_embed
 from app.enrichment.autotag import run as run_autotag
+from app.enrichment.describe import run as run_describe
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
@@ -37,6 +38,7 @@ from app.models.job import (
     EnrichmentJob,
     KIND_AUTOTAG,
     KIND_BACKFILL_EMBEDDINGS,
+    KIND_DESCRIBE,
     KIND_EMBED,
     KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
@@ -211,6 +213,8 @@ def _run_job(job_id: str) -> None:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
                 detail = run_autotag(session, asset, progress)
+            elif job.kind == KIND_DESCRIBE:
+                detail = run_describe(session, asset, progress)
             elif job.kind == KIND_BACKFILL_EMBEDDINGS:
                 result = run_backfill(session, job.user_id, progress)
                 detail = f"{result.embedded} embedded"
