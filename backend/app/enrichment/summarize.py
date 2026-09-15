@@ -20,6 +20,7 @@ from app.models.asset import Asset
 from app.providers import build_provider
 from app.providers.base import ProviderError, ProviderUnavailable
 from app.services import assets as asset_service
+from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,17 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
         system=SYSTEM_PROMPT,
         images=material.images,
     )
+
+    # Recorded before this job decides what to do with the answer, so usage does not
+    # depend on the outcome: a reply that gets trimmed, or that provenance then refuses
+    # to write, cost the same tokens as one that lands.
+    #
+    # Not a complete guarantee, and the gap is worth knowing: a reply the *provider's*
+    # parser rejects — an empty completion, unusable JSON — raises before there is a
+    # Completion to record, so those tokens go unaccounted. Closing that means letting
+    # ProviderError carry usage, which is a change to the provider contract rather than
+    # to this job.
+    usage_events.record_completion(session, asset.id, asset.user_id, completion)
 
     text = completion.text.strip()
     if not text:

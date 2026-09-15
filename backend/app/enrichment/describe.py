@@ -27,6 +27,7 @@ from app.models.asset import Asset
 from app.providers import build_provider
 from app.providers.base import ProviderError, ProviderUnavailable
 from app.services import assets as asset_service
+from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,10 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
         system=SYSTEM_PROMPT,
         images=material.images,
     )
+
+    # Recorded before this job decides what to do with the answer, so usage does not
+    # depend on the outcome. See summarize.py for the one gap this does not cover.
+    usage_events.record_completion(session, asset.id, asset.user_id, completion)
 
     text = completion.text.strip()
     if not text:

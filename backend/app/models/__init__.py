@@ -17,6 +17,7 @@ from app.models.setting import UserSetting
 from app.models.suggestion import Suggestion
 from app.models.tag import AssetTag, Tag, TagCategory
 from app.models.transcript import TranscriptSegment
+from app.models.usage import UsageEvent
 from app.models.user import User
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "Tag",
     "TagCategory",
     "TranscriptSegment",
+    "UsageEvent",
     "User",
     "UserSetting",
 ]

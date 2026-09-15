@@ -14,6 +14,7 @@ import { assetsApi, type Asset, type AssetPage } from '@/api/assets'
 import { tagsApi, type Tag } from '@/api/tags'
 import { activityApi, transcriptsApi } from '@/api/transcripts'
 import { enrichmentApi } from '@/api/enrichment'
+import { usageApi } from '@/api/usage'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 
@@ -75,6 +76,15 @@ beforeEach(() => {
   vi.spyOn(activityApi, 'list').mockResolvedValue([])
   // The detail panel also mounts the suggestion panel, which loads on mount.
   vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([])
+  vi.spyOn(usageApi, 'forAsset').mockResolvedValue({
+    total_events: 0,
+    priced_events: 0,
+    cost: 0,
+    currency: 'USD',
+    estimated: true,
+    tokens: 0,
+    seconds: 0,
+  })
   useLibraryStore.getState().reset()
   useTagStore.getState().reset()
 })

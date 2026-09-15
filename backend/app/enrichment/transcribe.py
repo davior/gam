@@ -20,7 +20,9 @@ from app.enrichment.audio import AudioExtractionError, extract_audio
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.models.asset import Asset
 from app.models.transcript import TranscriptSegment
+from app.models.usage import KIND_STT, UNIT_SECONDS
 from app.search import fts
+from app.usage import events as usage_events
 from app.settings_store import DEEPGRAM_MODEL, load_deepgram_key, get_setting
 from app.storage import build_storage
 
@@ -75,6 +77,22 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
             transcript = deepgram.transcribe_file(audio_path, api_key, model=model)
         except deepgram.DeepgramError as exc:
             raise TranscriptionError(str(exc)) from exc
+
+    # Recorded with no cost: Deepgram bills per minute and its rate is not in
+    # `usage/pricing.py`, which covers LLM tokens only. Inventing a figure would be worse
+    # than none — but omitting the *event* would make a library total that silently
+    # excluded transcription read as complete spend, so the seconds are stored and the
+    # readout says they are not costed.
+    usage_events.record(
+        session,
+        user_id=asset.user_id,
+        asset_id=asset.id,
+        kind=KIND_STT,
+        units=int(asset.duration_seconds or 0),
+        unit_type=UNIT_SECONDS,
+        provider="deepgram",
+        model=transcript.model or model,
+    )
 
     # Checkpoint before writing: a cancel pressed during a long upstream call should
     # not still land a transcript afterwards.

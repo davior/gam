@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -12,6 +12,7 @@ import {
   type SpeechSettings,
 } from '@/api/settings'
 import { providersApi } from '@/api/providers'
+import { usageApi } from '@/api/usage'
 
 function embedding(overrides: Partial<EmbeddingSettings> = {}): EmbeddingSettings {
   return {
@@ -65,6 +66,19 @@ beforeEach(() => {
   // The view mounts the provider panel too, which loads on mount. Left unmocked it
   // reaches the real axios client and every test here logs a network failure.
   vi.spyOn(providersApi, 'list').mockResolvedValue([])
+  // The view mounts the usage panel too, which loads on mount.
+  vi.spyOn(usageApi, 'summary').mockResolvedValue({
+    totals: {
+      total_events: 0,
+      priced_events: 0,
+      cost: 0,
+      currency: 'USD',
+      estimated: true,
+      tokens: 0,
+      seconds: 0,
+    },
+    by_provider: [],
+  })
 })
 
 afterEach(() => {
@@ -88,16 +102,21 @@ describe('SettingsView', () => {
     expect(screen.getByText(/12,430 transcript segments/)).toBeInTheDocument()
   })
 
-  it('never shows a price', async () => {
-    // There is no UsageEvent model and no pricing.py in this repo. An invented
-    // estimate would be worse than no estimate, so this asserts the absence.
+  it('shows no price in the semantic search panel', async () => {
+    // This used to assert no price anywhere, because there was no pricing table to be
+    // honest with. There is one now, but it covers generation — embedding spend is a
+    // different axis and is not costed here, so this panel still shows counts only.
+    // Scoped to the panel rather than the view: the usage panel below does show a
+    // figure, and deliberately.
     vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(
       embedding({ configured: true, openai_key_configured: true })
     )
     renderView()
 
-    await screen.findByText(/88 of 530 assets/)
-    expect(screen.queryByText(/\$/)).toBeNull()
+    const heading = await screen.findByText(/^semantic search$/i)
+    const panel = heading.closest('section')
+    expect(panel).not.toBeNull()
+    expect(within(panel as HTMLElement).queryByText(/\$/)).toBeNull()
   })
 
   it('does not ask for coverage before a provider is configured', async () => {
