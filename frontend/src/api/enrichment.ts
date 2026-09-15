@@ -34,6 +34,12 @@ export const enrichmentApi = {
       .then((r) => r.data.data)
   },
 
+  describe(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/describe`)
+      .then((r) => r.data.data)
+  },
+
   autotag(assetId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/autotag`)

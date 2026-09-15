@@ -109,20 +109,36 @@ def _own_image(asset: Asset) -> Optional[Image]:
     return Image(data=data, media_type=asset.mime_type or "image/jpeg") if data else None
 
 
-def gather(session: Session, asset: Asset, *, supports_images: bool) -> SourceMaterial:
+def gather(
+    session: Session,
+    asset: Asset,
+    *,
+    supports_images: bool,
+    include_poster: bool = False,
+) -> SourceMaterial:
     """Pick the best material this asset has, for the provider it will be sent to.
 
     `supports_images` is the caller's provider capability, not the asset's: an image is
     only source material if something can actually look at it, and a text-only provider
     handed one would fail inside its own deserializer rather than saying why.
+
+    `include_poster` attaches a video's still frame *alongside* its transcript rather
+    than instead of it. Only `describe` asks for this, and the reason is that without it
+    `describe` and `summarize` read exactly the same bytes for a transcribed video and
+    write two paragraphs of the same paragraph into different columns. A description is
+    supposed to say what is *in* the thing — the frame is the only source for that — and
+    a summary what it is *about*. The transcript stays primary either way; this adds to
+    it, and does not reorder the precedence the milestone doc sets out.
     """
     text = transcript_text(session, asset)
     if text:
         truncated = len(text) > MAX_TRANSCRIPT_CHARS
+        poster = _poster_image(asset) if (include_poster and supports_images) else None
         return SourceMaterial(
             kind=FROM_TRANSCRIPT,
             text=text[:MAX_TRANSCRIPT_CHARS] if truncated else text,
             truncated=truncated,
+            images=[poster] if poster else [],
         )
 
     if asset.asset_type == TYPE_IMAGE and supports_images:
@@ -144,7 +160,7 @@ def gather(session: Session, asset: Asset, *, supports_images: bool) -> SourceMa
         # enriched.
         raise NoSourceMaterial(
             "Reading text out of documents is not built yet, so there is nothing to "
-            "summarise for this file."
+            "read for this file."
         )
 
     raise NoSourceMaterial(

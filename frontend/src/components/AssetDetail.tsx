@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Trash2, X } from 'lucide-react'
+import { Eye, FileText, Trash2, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
+import { enrichmentApi } from '@/api/enrichment'
 import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
 import EmbedButton from '@/components/EmbedButton'
-import SummarizeButton from '@/components/SummarizeButton'
+import EnrichmentButton from '@/components/EnrichmentButton'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import TranscriptPanel from '@/components/TranscriptPanel'
@@ -280,7 +281,24 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
             </div>
 
             <SuggestionPanel assetId={asset.id} />
-            <SummarizeButton assetId={asset.id} />
+            <EnrichmentButton
+              assetId={asset.id}
+              action="describe"
+              icon={Eye}
+              label="Describe with AI"
+              runningLabel="Describing…"
+              start={enrichmentApi.describe}
+              failureMessage="Could not start describing"
+            />
+            <EnrichmentButton
+              assetId={asset.id}
+              action="summarize"
+              icon={FileText}
+              label="Summarise with AI"
+              runningLabel="Summarising…"
+              start={enrichmentApi.summarize}
+              failureMessage="Could not start summarising"
+            />
             <EmbedButton assetId={asset.id} />
 
             <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
