@@ -20,6 +20,7 @@ from app.enrichment.embed import EmbeddingUnavailable
 from app.enrichment.backfill import run as run_backfill
 from app.enrichment.embed import run as run_embed
 from app.enrichment.autotag import run as run_autotag
+from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.summarize import run as run_summarize
@@ -38,6 +39,7 @@ from app.models.job import (
     EnrichmentJob,
     KIND_AUTOTAG,
     KIND_BACKFILL_EMBEDDINGS,
+    KIND_BULK_ENRICH,
     KIND_DESCRIBE,
     KIND_EMBED,
     KIND_SUMMARIZE,
@@ -107,7 +109,14 @@ def active_library_job(session: Session, user_id: str, kind: str) -> Optional[En
     ).first()
 
 
-def submit_library(session: Session, user_id: str, kind: str, *, model: str = "") -> EnrichmentJob:
+def submit_library(
+    session: Session,
+    user_id: str,
+    kind: str,
+    *,
+    model: str = "",
+    payload: Optional[str] = None,
+) -> EnrichmentJob:
     """Queue a job that is about the whole library rather than one asset.
 
     `asset_id` stays null and `asset_name` empty; the activity row reads "Your whole
@@ -123,6 +132,7 @@ def submit_library(session: Session, user_id: str, kind: str, *, model: str = ""
         stage="Queued",
         asset_name="",
         model=model,
+        payload=payload,
     )
     session.add(job)
     session.commit()
@@ -215,6 +225,15 @@ def _run_job(job_id: str) -> None:
                 detail = run_autotag(session, asset, progress)
             elif job.kind == KIND_DESCRIBE:
                 detail = run_describe(session, asset, progress)
+            elif job.kind == KIND_BULK_ENRICH:
+                bulk = run_bulk(session, job.user_id, job.payload, progress)
+                detail = f"{bulk.done} done"
+                if bulk.failed:
+                    # Surfaced rather than swallowed: a run that quietly skipped three
+                    # assets looks identical to one that finished them all.
+                    detail += f", {bulk.failed} failed"
+                if bulk.skipped:
+                    detail += f", {bulk.skipped} no longer there"
             elif job.kind == KIND_BACKFILL_EMBEDDINGS:
                 result = run_backfill(session, job.user_id, progress)
                 detail = f"{result.embedded} embedded"
@@ -248,6 +267,12 @@ def _run_job(job_id: str) -> None:
             if job.status in ACTIVE_STATUSES:
                 set_fields(session, job, status="cancelled", stage="", detail="Cancelled")
             logger.info("Enrichment job %s cancelled", job_id)
+
+        except ValueError as exc:
+            message = str(exc)
+            _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s could not run: %s", job_id, message)
 
         except (ProviderError, NoSourceMaterial) as exc:
             message = str(exc)
