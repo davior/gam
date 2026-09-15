@@ -1,9 +1,8 @@
 # M6 — AI enrichment: the provider model
 
-**Status:** steps 1, 2, 4, 5 and 6 of 8 landed, plus most of 7. Only step 3 (`UsageEvent`
-and cost) and step 8 (bulk enrichment) remain. Steps 4-6 were taken before 3 because
-they are what proves the chain works on real content. Written after reading
-`davior/gecko-notes` at `95ed2ca`.
+**Status:** steps 1-7 of 8 landed. Only step 8 (bulk enrichment over a selection)
+remains. Steps 4-6 were taken before 3 because they are what proves the chain works on
+real content. Written after reading `davior/gecko-notes` at `95ed2ca`.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -99,8 +98,11 @@ docstring is explicit that its figures are best-effort and not authoritative —
 change prices and offer discounts it does not model. Ollama is free; fal bills exactly from
 response headers.
 
-**Do not let GAM invent a cost figure without this flag.** M5's settings panel deliberately
-shows counts and no currency for exactly this reason, and a test asserts no price renders.
+**Do not let GAM invent a cost figure without this flag.** Step 3 honours this: every
+figure the usage panel shows is labelled an estimate, and the two tests that used to
+assert *no* price renders were rewritten rather than deleted — the embedding panel still
+shows counts only (embedding spend is a different axis and is not costed), and the
+provider panel still shows none because it is configuration, not accounting.
 
 ---
 
@@ -270,7 +272,27 @@ backend/app/
    answers "is this address reachable and this credential accepted", which is a
    different question from "can this model complete", and folding the two together
    would make both worse.
-3. `UsageEvent` + `pricing.py` + a cost readout.
+3. ~~`UsageEvent` + `pricing.py` + a cost readout.~~ **Done.** `models/usage.py`,
+   `usage/pricing.py`, `usage/events.py`, `routers/usage.py`, and `UsagePanel.tsx` plus a
+   per-asset line in `AssetDetail`.
+
+   Two changes to the ported model. `asset_id` is new — FR 8.1.4 wants cost per asset and
+   gecko-notes has nothing to attribute spend to — and it is deliberately **not** a
+   foreign key, because deleting an asset must not delete the record of what was spent on
+   it. A spend history that shrinks when you tidy your library is not a spend history.
+
+   `priced_events` is reported alongside `total_events` so the UI can say when a total is
+   a floor rather than the whole story: a `custom` endpoint and a model family the table
+   does not know both return `None` rather than `0.0`, since a stored zero reads as "this
+   was free". Transcription is recorded in seconds with no cost at all — Deepgram bills
+   per minute and its rate is not in the table, but omitting the *event* would let a
+   library total that excluded transcription read as complete spend.
+
+   **The one gap, asserted rather than left to be found:** a reply the *provider's* parser
+   rejects — an empty completion, unusable JSON — raises before the job holds a
+   `Completion` to record, so those tokens go unaccounted. Closing it means letting
+   `ProviderError` carry usage, which is a change to the step-2 provider contract rather
+   than to accounting.
 4. ~~`summarize` — simplest job, text in / text out, proves the pipeline.~~ **Done, and
    brought forward past step 3.** `enrichment/source.py` is the shared source-material
    step the section above specifies — `describe` and `autotag` inherit it rather than

@@ -229,9 +229,10 @@ describe('ProviderPanel', () => {
     await waitFor(() => expect(activate).toHaveBeenCalledWith('p2'))
   })
 
-  it('shows no price anywhere', async () => {
-    // Same discipline as the embedding panel: there is no UsageEvent model and no
-    // pricing table in this repo yet, and an invented figure is worse than none.
+  it('shows no price, because this panel is configuration', async () => {
+    // Not because GAM refuses to show costs — it has a pricing table now and its own
+    // panel for spend. This one is about which model to use, and a figure here would be
+    // answering a question nobody asked while configuring a provider.
     vi.spyOn(providersApi, 'list').mockResolvedValue([provider()])
     render(<ProviderPanel />)
 

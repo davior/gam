@@ -3,6 +3,7 @@ import { Eye, FileText, Trash2, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
+import { formatCost, usageApi, type UsageTotals } from '@/api/usage'
 import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
@@ -113,6 +114,26 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // What enrichment has cost on this asset. Re-read whenever the asset changes, which
+  // includes after a job finishes — EnrichmentButton refreshes it, and that bumps
+  // `metadata_modified_date`, so this picks up the new spend without its own poll.
+  const [usage, setUsage] = useState<UsageTotals | null>(null)
+  useEffect(() => {
+    let current = true
+    usageApi
+      .forAsset(asset.id)
+      .then((totals) => {
+        if (current) setUsage(totals)
+      })
+      .catch(() => {
+        // A cost line is not worth an error banner over.
+        if (current) setUsage(null)
+      })
+    return () => {
+      current = false
+    }
+  }, [asset.id, asset.metadata_modified_date])
 
   const dirty =
     name.trim() !== asset.name ||
@@ -313,6 +334,16 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
               <Fact label="Codec" value={asset.codec ?? ''} />
               <Fact label="Original name" value={asset.original_name ?? ''} />
               <Fact label="Added" value={formatDate(asset.upload_date)} />
+              {usage && usage.total_events > 0 && (
+                <Fact
+                  label="AI cost (est.)"
+                  value={
+                    usage.priced_events > 0
+                      ? formatCost(usage.cost, usage.currency)
+                      : 'not priced'
+                  }
+                />
+              )}
             </dl>
 
             {confirmingDelete ? (

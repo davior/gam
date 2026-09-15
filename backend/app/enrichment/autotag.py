@@ -25,6 +25,7 @@ from app.models.tag import Tag
 from app.providers import build_provider
 from app.providers.base import ProviderError, ProviderUnavailable
 from app.services import suggestions as suggestion_service
+from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +150,11 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
         system=SYSTEM_PROMPT,
         images=material.images,
     )
+
+    # Recorded before the reply is parsed, so a run that comes back as unusable JSON is
+    # still accounted for — the tokens were spent either way. (A reply the *provider's*
+    # parser rejects never reaches here at all; see summarize.py.)
+    usage_events.record_completion(session, asset.id, asset.user_id, completion)
 
     title, tags = parse_reply(completion.text)
 
