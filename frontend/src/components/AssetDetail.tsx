@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Eye, FileText, Trash2, X } from 'lucide-react'
+import { Eye, FileText, Link2, ScanText, Trash2, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
@@ -9,6 +9,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import AssetThumb from '@/components/AssetThumb'
+import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import SuggestionPanel from '@/components/SuggestionPanel'
@@ -17,6 +18,9 @@ import TranscriptPanel from '@/components/TranscriptPanel'
 
 /** Audio and video can be transcribed; nothing else has speech in it. */
 const SPEECH_TYPES = new Set(['audio', 'video'])
+
+/** Documents have text read out of them instead — the same idea, a different source. */
+const TEXT_TYPE = 'document'
 
 interface Props {
   asset: Asset
@@ -50,6 +54,7 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
   const [saving, setSaving] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const panelRef = useRef<HTMLDivElement>(null)
   // The detail view owns the player element so the transcript can drive it. Passing a
@@ -118,6 +123,23 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
   // What enrichment has cost on this asset. Re-read whenever the asset changes, which
   // includes after a job finishes — EnrichmentButton refreshes it, and that bumps
   // `metadata_modified_date`, so this picks up the new spend without its own poll.
+  // The /a/{id} URL, which is what GN-4 says a Notes document should link to. Built from
+  // `window.location.origin` rather than a configured base: whichever host the user is
+  // looking at is the one their colleague can reach too.
+  const copyLink = useCallback(async () => {
+    const url = `${window.location.origin}/a/${asset.id}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard access needs a secure context and a user gesture, and is refused
+      // outright in some browsers. Prompting with the URL beats a button that silently
+      // does nothing.
+      window.prompt('Copy this link', url)
+    }
+  }, [asset.id])
+
   const [usage, setUsage] = useState<UsageTotals | null>(null)
   useEffect(() => {
     let current = true
@@ -207,14 +229,27 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
           <h2 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
             {asset.name}
           </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="btn btn-ghost p-1.5"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => void copyLink()}
+              className="btn btn-ghost p-1.5"
+              aria-label="Copy link to this asset"
+              title={copied ? 'Link copied' : 'Copy link to this asset'}
+            >
+              <Link2
+                className={`h-4 w-4 ${copied ? 'text-green-600 dark:text-green-400' : ''}`}
+              />
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn btn-ghost p-1.5"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </header>
 
         <div className="flex min-h-0 flex-1 flex-col overflow-auto md:flex-row">
@@ -234,6 +269,12 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
                   onSeek={seekTo}
                   currentTime={currentTime}
                 />
+              </div>
+            )}
+
+            {asset.asset_type === TEXT_TYPE && (
+              <div className="flex max-h-[38vh] min-h-0 flex-col border-t border-gray-200 dark:border-gray-700">
+                <DocumentTextPanel assetId={asset.id} />
               </div>
             )}
           </div>
@@ -302,6 +343,18 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
             </div>
 
             <SuggestionPanel assetId={asset.id} />
+            {asset.asset_type === TEXT_TYPE && (
+              <EnrichmentButton
+                assetId={asset.id}
+                action="extract_text"
+                icon={ScanText}
+                label="Extract text"
+                runningLabel="Reading…"
+                start={enrichmentApi.extractText}
+                failureMessage="Could not start reading this document"
+                refreshOnFinish={false}
+              />
+            )}
             <EnrichmentButton
               assetId={asset.id}
               action="describe"

@@ -70,6 +70,7 @@ interface LibraryState {
   /** Re-read one asset from the server, for when something other than the user
    *  changed it — an enrichment job writing a summary, for instance. */
   refreshAsset: (id: string) => Promise<void>
+  openById: (id: string) => Promise<Asset>
   applyTags: (assetIds: string[], add: string[], remove: string[]) => Promise<void>
   dismissRejections: () => void
   reset: () => void
@@ -279,6 +280,23 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       set({ error: apiErrorMessage(error, 'Could not delete that asset') })
       throw error
     }
+  },
+
+  async openById(id) {
+    // Fetches one asset *and puts it in `assets`*, which is the whole point. `update`,
+    // `remove`, `setAssetTags` and `refreshAsset` all work by mapping over that list, so
+    // a detail view rendered for an asset that is not in it would show working controls
+    // whose every write silently landed nowhere.
+    //
+    // No staleness token: this is keyed to a route parameter, so a second call means the
+    // user navigated to a different asset and its result is the one that should win.
+    const fresh = await assetsApi.get(id)
+    set((state) => ({
+      assets: state.assets.some((a) => a.id === id)
+        ? state.assets.map((a) => (a.id === id ? fresh : a))
+        : [fresh, ...state.assets],
+    }))
+    return fresh
   },
 
   async refreshAsset(id) {

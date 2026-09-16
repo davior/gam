@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Eye, FileText, Sparkles, Tags, X } from 'lucide-react'
+import { Eye, FileText, ScanText, Sparkles, Tags, X } from 'lucide-react'
 import { apiErrorCode, apiErrorMessage } from '@/api/client'
 import { enrichmentApi, type BulkAction } from '@/api/enrichment'
 import { isActive, useActivityStore } from '@/stores/activity'
@@ -27,6 +27,7 @@ const ENRICHMENTS: Array<{
   label: string
   icon: typeof Eye
 }> = [
+  { action: 'extract_text', label: 'Extract text', icon: ScanText },
   { action: 'describe', label: 'Describe', icon: Eye },
   { action: 'summarize', label: 'Summarise', icon: FileText },
   { action: 'autotag', label: 'Suggest tags', icon: Tags },

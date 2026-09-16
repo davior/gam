@@ -18,6 +18,7 @@ const LABELS: Record<string, string> = {
   describe: 'Describing',
   summarize: 'Summarizing',
   autotag: 'Suggesting tags',
+  extract_text: 'Reading text',
 }
 
 function subject(job: ActivityJob): string {

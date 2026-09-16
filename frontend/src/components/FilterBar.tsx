@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Search, SlidersHorizontal, X } from 'lucide-react'
-import type { AssetType } from '@/api/assets'
 import { buildCategoryTree, type CategoryNode } from '@/api/tags'
+import TypeFilterChips, { Chip } from '@/components/TypeFilterChips'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatDuration } from '@/utils/format'
@@ -14,14 +14,6 @@ import { formatDuration } from '@/utils/format'
  * be the reason the grid looks empty.
  */
 
-const TYPE_FILTERS: Array<{ value: AssetType | null; label: string }> = [
-  { value: null, label: 'All' },
-  { value: 'video', label: 'Video' },
-  { value: 'image', label: 'Images' },
-  { value: 'audio', label: 'Audio' },
-  { value: 'document', label: 'Documents' },
-]
-
 /** Mirrors `backend/app/ingest/filetypes.py`; a source the server never writes is noise. */
 const SOURCES: Array<{ value: string; label: string }> = [
   { value: 'local_upload', label: 'Uploaded' },
@@ -29,30 +21,6 @@ const SOURCES: Array<{ value: string; label: string }> = [
   { value: 'ai_generated', label: 'AI generated' },
   { value: 'gvc_export', label: 'Video Creator' },
 ]
-
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-        active
-          ? 'bg-blue-600 text-white'
-          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-      }`}
-    >
-      {children}
-    </button>
-  )
-}
 
 /** An active filter, with the ✕ that clears just it. */
 function ActiveChip({ label, onClear }: { label: string; onClear: () => void }) {
@@ -192,17 +160,7 @@ export default function FilterBar() {
           />
         </div>
 
-        <div className="flex flex-wrap gap-1">
-          {TYPE_FILTERS.map((filter) => (
-            <Chip
-              key={filter.label}
-              active={typeFilter === filter.value}
-              onClick={() => setTypeFilter(filter.value)}
-            >
-              {filter.label}
-            </Chip>
-          ))}
-        </div>
+        <TypeFilterChips value={typeFilter} onChange={setTypeFilter} />
 
         <button
           type="button"

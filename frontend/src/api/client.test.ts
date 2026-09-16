@@ -1,6 +1,10 @@
 import { AxiosError } from 'axios'
-import { describe, expect, it } from 'vitest'
-import client, { apiErrorCode, apiErrorMessage } from '@/api/client'
+import { afterEach, describe, expect, it } from 'vitest'
+import client, {
+  apiErrorCode,
+  apiErrorMessage,
+  setUnauthorizedHandler,
+} from '@/api/client'
 
 function axiosErrorWith(data: unknown, code?: string): AxiosError {
   const error = new AxiosError('Request failed', code)
@@ -79,5 +83,105 @@ describe('query parameter serialisation', () => {
     expect(serialize({ tag: ['a'], limit: 60, min_duration: 0 })).toBe(
       'tag=a&limit=60&min_duration=0'
     )
+  })
+})
+
+describe('the unauthorized interceptor', () => {
+  /** Push a failure through the real response interceptor chain. */
+  async function reject(error: AxiosError) {
+    const handlers = (
+      client.interceptors.response as unknown as {
+        handlers: Array<{ rejected: (e: unknown) => Promise<unknown> }>
+      }
+    ).handlers
+    for (const handler of handlers) {
+      if (handler?.rejected) {
+        await handler.rejected(error).catch(() => undefined)
+      }
+    }
+  }
+
+  function status(code: number, detailCode?: string): AxiosError {
+    const error = new AxiosError('Request failed')
+    error.response = {
+      data: detailCode ? { detail: { code: detailCode, message: 'nope' } } : {},
+      status: code,
+      statusText: '',
+      headers: {},
+      config: {} as never,
+    }
+    return error
+  }
+
+  afterEach(() => {
+    setUnauthorizedHandler(null)
+  })
+
+  it('calls the handler on a 401', async () => {
+    let called = 0
+    setUnauthorizedHandler(() => {
+      called += 1
+      return true
+    })
+
+    await reject(status(401, 'unauthorized'))
+
+    expect(called).toBe(1)
+  })
+
+  it('fires once, so a polling store cannot trigger a redirect per tick', async () => {
+    let called = 0
+    setUnauthorizedHandler(() => {
+      called += 1
+      return true
+    })
+
+    await reject(status(401, 'unauthorized'))
+    await reject(status(401, 'unauthorized'))
+    await reject(status(401, 'unauthorized'))
+
+    expect(called).toBe(1)
+  })
+
+  it('keeps its one shot when the handler declines', async () => {
+    // A 401 during bootstrap for a visitor who was never signed in is the anonymous
+    // path, not an expiry. Spending the shot on it would leave a real expiry later in
+    // the session unhandled.
+    let called = 0
+    let acting = false
+    setUnauthorizedHandler(() => {
+      called += 1
+      return acting
+    })
+
+    await reject(status(401, 'unauthorized'))
+    acting = true
+    await reject(status(401, 'unauthorized'))
+
+    expect(called).toBe(2)
+  })
+
+  it('ignores a CSRF rejection, which says nothing about the session', async () => {
+    let called = 0
+    setUnauthorizedHandler(() => {
+      called += 1
+      return true
+    })
+
+    await reject(status(403, 'forbidden_origin'))
+
+    expect(called).toBe(0)
+  })
+
+  it('ignores an ordinary 400', async () => {
+    let called = 0
+    setUnauthorizedHandler(() => {
+      called += 1
+      return true
+    })
+
+    await reject(status(400, 'not_extractable'))
+
+    expect(called).toBe(0)
   })
 })

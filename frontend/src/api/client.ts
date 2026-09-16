@@ -77,6 +77,54 @@ client.interceptors.request.use((config) => {
 })
 
 /**
+ * What to do when the session turns out to be over.
+ *
+ * A callback rather than an import, because importing the auth store here would close a
+ * cycle: the store imports `api/auth.ts`, which imports this module. `App.tsx` already
+ * depends on both and sets it on mount.
+ */
+type UnauthorizedHandler = () => boolean
+
+let onUnauthorized: UnauthorizedHandler | null = null
+let handled = false
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorized = handler
+  handled = false
+}
+
+/**
+ * Codes that mean "this session is over".
+ *
+ * The handler returns whether it acted, and only then is this treated as spent. A 401
+ * during `bootstrap()` for a visitor who was never signed in is the ordinary anonymous
+ * case, not an expiry — burning the one shot on it would leave a real expiry later in
+ * the session with nothing to handle it.
+ */
+const SESSION_ENDED = new Set(['unauthorized', 'session_not_accepted'])
+
+client.interceptors.response.use(
+  (response) => response,
+  (error: unknown) => {
+    // Fires once. The activity store polls every two to ten seconds, so a session that
+    // expires mid-upload produces a stream of 401s — and `signOut` navigates away, so
+    // reacting to each one would fight the redirect it already started.
+    //
+    // Deliberately not 403 `forbidden_origin`: that is the CSRF guard refusing a
+    // cross-origin write, which says nothing about whether the session is still good.
+    // Signing someone out over it would turn a rejected request into a lost session.
+    if (!handled && onUnauthorized && axios.isAxiosError(error)) {
+      const status = error.response?.status
+      const code = apiErrorCode(error)
+      if (status === 401 && (code === null || SESSION_ENDED.has(code))) {
+        handled = onUnauthorized()
+      }
+    }
+    return Promise.reject(error)
+  }
+)
+
+/**
  * Pull a readable sentence out of a failure.
  *
  * The backend normalises every error to `{detail: {code, message}}`, but a request can

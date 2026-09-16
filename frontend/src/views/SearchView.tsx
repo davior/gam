@@ -5,16 +5,29 @@ import { searchApi, splitHighlights, type SearchHit } from '@/api/search'
 import { apiErrorMessage } from '@/api/client'
 import AssetDetail from '@/components/AssetDetail'
 import AssetThumb from '@/components/AssetThumb'
+import TypeFilterChips from '@/components/TypeFilterChips'
 import { formatDuration } from '@/utils/format'
-import type { Asset } from '@/api/assets'
+import type { Asset, AssetType } from '@/api/assets'
 
 /** Long enough that typing does not fire a request per keystroke, short enough that
  *  results feel like they are keeping up. */
 const DEBOUNCE_MS = 250
 
+/** The server's default, and its cap (`le=100` in routers/search.py). There is no
+ *  `offset` on that endpoint and `total` is the size of the page rather than of the
+ *  corpus, so "show more" asks for a bigger page — it is not a pager, and cannot be one
+ *  without a backend change. */
+const PAGE_SIZE = 30
+const MAX_LIMIT = 100
+
 export default function SearchView() {
   const [params, setParams] = useSearchParams()
   const query = params.get('q') ?? ''
+  const typeParam = params.get('type')
+  const assetType = (
+    typeParam && typeParam !== 'all' ? typeParam : null
+  ) as AssetType | null
+  const limit = clampLimit(params.get('limit'))
 
   const [draft, setDraft] = useState(query)
   const [hits, setHits] = useState<SearchHit[]>([])
@@ -31,44 +44,62 @@ export default function SearchView() {
   // the results the user is reading.
   const token = useRef(0)
 
-  const run = useCallback(async (q: string) => {
-    const mine = ++token.current
-    if (!q.trim()) {
-      setHits([])
-      setSearched(false)
-      return
-    }
+  const run = useCallback(
+    async (q: string, options: { assetType: AssetType | null; limit: number }) => {
+      const mine = ++token.current
+      if (!q.trim()) {
+        setHits([])
+        setSearched(false)
+        return
+      }
 
-    setLoading(true)
-    try {
-      const response = await searchApi.run(q)
-      if (mine !== token.current) return
-      setHits(response.data)
-      setSemantic(response.semantic)
-      setSemanticError(response.semantic_error)
-      setError(null)
-      setSearched(true)
-    } catch (err) {
-      if (mine !== token.current) return
-      setError(apiErrorMessage(err, 'Search failed'))
-    } finally {
-      if (mine === token.current) setLoading(false)
-    }
-  }, [])
+      setLoading(true)
+      try {
+        const response = await searchApi.run(q, {
+          ...(options.assetType ? { asset_type: options.assetType } : {}),
+          limit: options.limit,
+        })
+        if (mine !== token.current) return
+        setHits(response.data)
+        setSemantic(response.semantic)
+        setSemanticError(response.semantic_error)
+        setError(null)
+        setSearched(true)
+      } catch (err) {
+        if (mine !== token.current) return
+        setError(apiErrorMessage(err, 'Search failed'))
+      } finally {
+        if (mine === token.current) setLoading(false)
+      }
+    },
+    []
+  )
 
-  // Keep the URL in step so a search can be linked to or reloaded.
+  // Keep the URL in step so a search can be linked to or reloaded — including the type
+  // filter and how many results are being shown, so a reload does not silently shrink
+  // the list somebody had expanded.
   useEffect(() => {
     const timer = setTimeout(() => {
       if (draft !== query) {
-        setParams(draft.trim() ? { q: draft } : {}, { replace: true })
+        setParams(nextParams(draft, assetType, limit), { replace: true })
       }
-      void run(draft)
+      void run(draft, { assetType, limit })
     }, DEBOUNCE_MS)
     return () => clearTimeout(timer)
     // `query` deliberately omitted: including it would re-run on the URL update this
     // effect itself causes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, run, setParams])
+  }, [draft, run, setParams, assetType, limit])
+
+  // Changing the filter or asking for more resets the page size question rather than
+  // waiting out the debounce: neither is a keystroke, so there is nothing to debounce.
+  const applyType = (value: AssetType | null) => {
+    setParams(nextParams(draft, value, PAGE_SIZE))
+  }
+
+  const showMore = () => {
+    setParams(nextParams(draft, assetType, Math.min(limit + PAGE_SIZE, MAX_LIMIT)))
+  }
 
   return (
     <div className="mx-auto max-w-4xl space-y-4 px-4 py-4">
@@ -82,6 +113,8 @@ export default function SearchView() {
           autoFocus
         />
       </div>
+
+      <TypeFilterChips value={assetType} onChange={applyType} />
 
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Searches names, descriptions and every spoken word.{' '}
@@ -145,6 +178,14 @@ export default function SearchView() {
         </ol>
       )}
 
+      {hits.length >= limit && limit < MAX_LIMIT && (
+        <div className="pt-1 text-center">
+          <button type="button" className="btn btn-secondary text-xs" onClick={showMore}>
+            Show more
+          </button>
+        </div>
+      )}
+
       {open && (
         <AssetDetail
           asset={open.asset}
@@ -154,6 +195,29 @@ export default function SearchView() {
       )}
     </div>
   )
+}
+
+function clampLimit(raw: string | null): number {
+  // The presence check has to come first: `Number(null)` is 0, not NaN, so a missing
+  // param would otherwise clamp to a one-result page rather than the default.
+  if (raw === null || raw.trim() === '') return PAGE_SIZE
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return PAGE_SIZE
+  return Math.min(Math.max(Math.trunc(value), 1), MAX_LIMIT)
+}
+
+/** The whole query string, rebuilt. Written out rather than mutated so a param that is
+ *  back at its default is dropped instead of lingering as `?type=all`. */
+function nextParams(
+  q: string,
+  assetType: AssetType | null,
+  limit: number
+): Record<string, string> {
+  const next: Record<string, string> = {}
+  if (q.trim()) next.q = q
+  if (assetType) next.type = assetType
+  if (limit !== PAGE_SIZE) next.limit = String(limit)
+  return next
 }
 
 function ResultRow({ hit, onOpen }: { hit: SearchHit; onOpen: () => void }) {

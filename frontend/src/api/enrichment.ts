@@ -29,8 +29,18 @@ export interface Suggestion {
 
 /** What a whole selection can be put through. Transcription is deliberately absent —
  *  it is billed per minute of audio, and a mis-click over two hundred videos is an
- *  expensive way to discover it was on the menu. */
-export type BulkAction = 'describe' | 'summarize' | 'autotag' | 'embed'
+ *  expensive way to discover it was on the menu. Extracting text is here for the
+ *  opposite reason: it calls nothing, and documents arrive by the folder. */
+export type BulkAction = 'describe' | 'summarize' | 'autotag' | 'embed' | 'extract_text'
+
+/** One readable chunk of a document, in the unit that document naturally has. */
+export interface DocumentPage {
+  id: string
+  idx: number
+  page_number: number | null
+  label: string | null
+  text: string
+}
 
 export const enrichmentApi = {
   summarize(assetId: string): Promise<ActivityJob> {
@@ -48,6 +58,18 @@ export const enrichmentApi = {
   autotag(assetId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/autotag`)
+      .then((r) => r.data.data)
+  },
+
+  extractText(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/extract-text`)
+      .then((r) => r.data.data)
+  },
+
+  text(assetId: string): Promise<DocumentPage[]> {
+    return client
+      .get<ListResponse<DocumentPage>>(`/assets/${assetId}/text`)
       .then((r) => r.data.data)
   },
 
