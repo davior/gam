@@ -209,7 +209,7 @@ cancellation, heartbeats and restart recovery come nearly free.
 | `describe` | Vision LLM (Anthropic/OpenAI via the `AIProvider` pattern). The SRS says fal.ai for descriptions; fal is a generation platform and its captioning models are weaker than a vision LLM at the "what is in this image, in retrieval-useful words" task. Recommend the LLM; fal stays for *creating* media. |
 | `summarize` | LLM over transcript / extracted document text |
 | `autotag` | LLM proposing tags, stored `status="suggested"` until accepted (FR 9.1.4 — never applied silently) |
-| `extract_text` | pypdf / python-docx / plain read. **Not built** — see Outstanding below |
+| `extract_text` | pypdfium2 (PDF), python-docx / python-pptx / openpyxl (Office), stdlib decode (txt/md/csv). One `DocumentPage` row per page, slide, sheet or chunk. Calls no provider and bills nothing, which is why it is in bulk where transcription is not. |
 | `embed` | Runs after any of the above that produce text |
 
 Cost visibility (FR 8.1.4) reuses `UsageEvent` + `pricing.py` + `compute_fal_cost`
@@ -323,7 +323,7 @@ it was written in does not survive the session.
 | M2 SSO & first deploy | Merged — [#4](https://github.com/davior/gam/pull/4) |
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
-| M6 AI enrichment | **Complete, all 8 steps** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`; [#17](https://github.com/davior/gam/pull/17) `autotag`, the suggestion model, and generated titles; [#18](https://github.com/davior/gam/pull/18) `describe`; [#19](https://github.com/davior/gam/pull/19) `UsageEvent`, the pricing table and the cost readout; [#20](https://github.com/davior/gam/pull/20) bulk enrichment over a selection, which also picked up the `SelectionBar` embed deferred from M5. Two gaps M6 did **not** close are recorded in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and below: `extract_text` and attribution. |
+| M6 AI enrichment | **Complete, all 8 steps** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`; [#17](https://github.com/davior/gam/pull/17) `autotag`, the suggestion model, and generated titles; [#18](https://github.com/davior/gam/pull/18) `describe`; [#19](https://github.com/davior/gam/pull/19) `UsageEvent`, the pricing table and the cost readout; [#20](https://github.com/davior/gam/pull/20) bulk enrichment over a selection, which also picked up the `SelectionBar` embed deferred from M5. Two gaps M6 did **not** close are recorded in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and below: `extract_text`, since built, and attribution, still undesigned. |
 | **M7–M9** | **Not started.** M7 is the only one with no external dependency. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
@@ -345,13 +345,24 @@ from a decision, which is the distinction PR bodies do not preserve.
   `ingest/filetypes.py`, declared with no writer — as are `SOURCE_AI` and `SOURCE_GVC`, which
   are legitimately waiting on M8 and M9. `FilterBar` offers an "AI generated" source filter,
   wired end to end and tested, over a value nothing can currently set.
-- **`extract_text` was specified and never built.** There is no `KIND_EXTRACT_TEXT` in
-  `models/job.py` and no module for it, so a PDF or a Word document has no text for
-  `summarize` or `autotag` to read and enrichment over documents is blocked outright.
-  M6's source-material table (`m6-ai-enrichment.md`) names it as the source for documents
-  and records the same gap. The job table above lists it as though it exists; it does not.
-  It is a gap, not a decision — M6 shipped around it by refusing rather than by inventing
-  a description from a filename.
+- **~~`extract_text` was specified and never built.~~** Built. PDF, `.docx`, `.pptx`,
+  `.xlsx`, `.txt`/`.md`/`.csv`, one `DocumentPage` row per natural unit, and a
+  `FROM_DOCUMENT` branch in `enrichment/source.py` placed **above** the poster branch —
+  every PDF has a first-page thumbnail, so a document branch any lower would leave a PDF
+  summarised from a picture of its cover.
+
+  Two parts of it remain, and neither is a decision:
+  - **Document text is not searchable.** The rows exist and are in neither `segment_fts`
+    nor the vector index, so a phrase on page 74 cannot be found. A document *is*
+    findable by the summary enrichment writes, because `apply_ai_metadata` reindexes —
+    which is easy to mistake for the body being indexed. Closing this means indexing page
+    bodies, embedding them, and teaching `search/hybrid.py` to resolve a hit id to either
+    a transcript segment or a page. `jobs/enrichment.py` carries the one-line
+    `_chain_embedding` change that goes with it, commented.
+  - **Legacy and OpenDocument formats refuse by name.** `.doc`, `.xls`, `.ppt`, `.rtf`,
+    `.odt`, `.ods`, `.odp` are in `DOCUMENT_EXTENSIONS` and nothing reads them. The
+    refusal says which format and what to do about it, rather than failing vaguely.
+  - A scan is refused too, and always will be without OCR, which is its own project.
 - **Attribution is not modelled.** Raised by the user, recorded here so it is not
   mistaken for a decision: an asset needs to carry where its content *came from* — a
   website URL, the film or programme a clip is taken from, the news outlet and date of a

@@ -27,6 +27,10 @@ KIND_SUMMARIZE = "summarize"
 KIND_AUTOTAG = "autotag"
 KIND_EMBED = "embed"
 KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
+# Pulling readable text out of a document so the LLM jobs have something to read. It is
+# the odd one out of the per-asset set: it calls no provider, costs nothing, and its
+# output is an input to the other three rather than something a user reads directly.
+KIND_EXTRACT_TEXT = "extract_text"
 # One action applied across a chosen set of assets. Which action, and which assets,
 # live in `EnrichmentJob.payload` — see there for why it is one job and not N.
 KIND_BULK_ENRICH = "bulk_enrich"
@@ -39,6 +43,7 @@ ENRICHMENT_KINDS = frozenset(
         KIND_SUMMARIZE,
         KIND_AUTOTAG,
         KIND_EMBED,
+        KIND_EXTRACT_TEXT,
     }
 )
 

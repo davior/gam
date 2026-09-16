@@ -22,6 +22,8 @@ from app.enrichment.embed import run as run_embed
 from app.enrichment.autotag import run as run_autotag
 from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
+from app.enrichment.extract_text import TextExtractionError
+from app.enrichment.extract_text import run as run_extract_text
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
@@ -42,6 +44,7 @@ from app.models.job import (
     KIND_BULK_ENRICH,
     KIND_DESCRIBE,
     KIND_EMBED,
+    KIND_EXTRACT_TEXT,
     KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
     LIBRARY_KINDS,
@@ -219,6 +222,8 @@ def _run_job(job_id: str) -> None:
             elif job.kind == KIND_EMBED:
                 count = run_embed(session, asset, progress)
                 detail = f"{count} vector{'' if count == 1 else 's'}"
+            elif job.kind == KIND_EXTRACT_TEXT:
+                detail = run_extract_text(session, asset, progress)
             elif job.kind == KIND_SUMMARIZE:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
@@ -255,6 +260,11 @@ def _run_job(job_id: str) -> None:
             )
 
             if job.kind == KIND_TRANSCRIBE:
+                # Not KIND_EXTRACT_TEXT: `embed` vectorises an asset's name, description
+                # and summary plus its transcript segments, and document pages are in
+                # none of those. Chaining it here would queue a job that does no new
+                # work and put a row in the activity feed saying so. It belongs here the
+                # day page bodies are embedded — see the search gap in plan-of-attack.
                 _chain_embedding(session, asset)
 
         except JobCancelled:
@@ -281,6 +291,12 @@ def _run_job(job_id: str) -> None:
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
         except (EmbeddingUnavailable, EmbeddingError) as exc:
+            message = str(exc)
+            _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
+
+        except TextExtractionError as exc:
             message = str(exc)
             _mark_asset_failed(session, asset, job)
             set_fields(session, job, status="error", stage="", error_message=message)

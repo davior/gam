@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Moon, Search, Settings, Sun } from 'lucide-react'
+import { LogOut, Moon, Search, Settings, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import ActivityIndicator from '@/components/ActivityIndicator'
 import { useAuthStore } from '@/stores/auth'
@@ -17,6 +17,7 @@ interface Props {
  */
 export default function AppShell({ children }: Props) {
   const user = useAuthStore((s) => s.user)
+  const signOut = useAuthStore((s) => s.signOut)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
 
@@ -54,9 +55,23 @@ export default function AppShell({ children }: Props) {
               <Settings className="h-4 w-4" />
             </Link>
             {user && (
-              <span className="text-sm text-gray-600 dark:text-gray-400">
-                {user.username}
-              </span>
+              <>
+                <span className="text-sm text-gray-600 dark:text-gray-400">
+                  {user.username}
+                </span>
+                {/* `signOut` has existed since M2 and was called by nothing, so the only
+                    way out of a session was to clear localStorage by hand. It already
+                    does the whole fan-out — token, four stores, redirect to Notes. */}
+                <button
+                  type="button"
+                  onClick={signOut}
+                  className="btn btn-ghost p-2"
+                  aria-label="Sign out"
+                  title="Sign out"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </>
             )}
           </div>
         </div>

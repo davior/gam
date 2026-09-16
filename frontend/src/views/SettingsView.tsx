@@ -11,6 +11,7 @@ import { apiErrorMessage } from '@/api/client'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { isActive, useActivityStore } from '@/stores/activity'
 import ProviderPanel from '@/components/ProviderPanel'
+import TagPanel from '@/components/TagPanel'
 import UsagePanel from '@/components/UsagePanel'
 import { useSavedFlash } from '@/utils/useSavedFlash'
 
@@ -509,6 +510,7 @@ export default function SettingsView() {
       <UsagePanel />
       <EmbeddingPanel />
       <SpeechPanel />
+      <TagPanel />
     </div>
   )
 }

@@ -41,9 +41,10 @@ user row. The changes that makes possible are specified in
   in audio and video come back with a timestamp you can jump straight to.
 - **Clips and sub-videos** — mark a range non-destructively (no new file, always in step
   with its parent), or physically extract it as a standalone asset.
-- **Opt-in AI enrichment** — transcription, image description, summaries and tag
-  suggestions. Suggestions are reviewed, never applied silently, and a field you edited
-  by hand is not overwritten by a later AI run.
+- **Opt-in AI enrichment** — transcription, text extraction from PDFs and Office
+  documents, image description, summaries and tag suggestions. Suggestions are reviewed,
+  never applied silently, and a field you edited by hand is not overwritten by a later AI
+  run.
 - **AI asset creation** — generate images from images, and video from one or more
   images, with the prompt and base assets recorded so a result stays reproducible.
 - **Cost visibility** — an estimate before anything paid runs, and the real cost tracked

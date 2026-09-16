@@ -31,9 +31,16 @@ interface TagState {
   ensureLoaded: () => void
   /** Fold a tag the server just returned into the catalogue, without a refetch. */
   remember: (tags: Tag[]) => void
+  create: (name: string, categoryId?: string | null) => Promise<void>
   rename: (id: string, name: string) => Promise<void>
+  /** Move a tag into a category, or out of every category with null. */
+  recategorise: (id: string, categoryId: string | null) => Promise<void>
   remove: (id: string) => Promise<void>
   createCategory: (name: string, parentId?: string | null) => Promise<void>
+  updateCategory: (
+    id: string,
+    changes: { name?: string; parent_category_id?: string | null }
+  ) => Promise<void>
   removeCategory: (id: string) => Promise<void>
   reset: () => void
 }
@@ -84,46 +91,115 @@ export const useTagStore = create<TagState>((set, get) => ({
     })
   },
 
+  async create(name, categoryId) {
+    const token = requestToken
+    try {
+      const created = await tagsApi.create(name, categoryId)
+      if (token !== requestToken) return
+      // `POST /tags` is get-or-create, so this can return a tag that already exists.
+      // `remember` merges by id rather than appending, which is exactly right for that.
+      get().remember([created])
+    } catch (error) {
+      if (token !== requestToken) return
+      set({ error: apiErrorMessage(error, 'Could not create that tag') })
+      throw error
+    }
+  },
+
   async rename(id, name) {
+    const token = requestToken
     const previous = get().tags
     set((state) => ({
       tags: state.tags.map((t) => (t.id === id ? { ...t, name } : t)),
     }))
     try {
       const saved = await tagsApi.rename(id, name)
+      if (token !== requestToken) return
       set((state) => ({
         tags: state.tags.map((t) => (t.id === id ? { ...t, ...saved } : t)),
       }))
     } catch (error) {
       // A rename can be refused — the name may already be taken, case-insensitively —
-      // so the optimistic edit has to come back out.
+      // so the optimistic edit has to come back out. Guarded: a rejection landing after
+      // `reset()` would otherwise put the previous user's vocabulary back into a store
+      // that was emptied on sign-out.
+      if (token !== requestToken) return
       set({ tags: previous, error: apiErrorMessage(error, 'Could not rename that tag') })
       throw error
     }
   },
 
+  async recategorise(id, categoryId) {
+    const token = requestToken
+    const previous = get().tags
+    set((state) => ({
+      tags: state.tags.map((t) => (t.id === id ? { ...t, category_id: categoryId } : t)),
+    }))
+    try {
+      const saved = await tagsApi.recategorise(id, categoryId)
+      if (token !== requestToken) return
+      set((state) => ({
+        tags: state.tags.map((t) => (t.id === id ? { ...t, ...saved } : t)),
+      }))
+    } catch (error) {
+      if (token !== requestToken) return
+      set({ tags: previous, error: apiErrorMessage(error, 'Could not move that tag') })
+      throw error
+    }
+  },
+
   async remove(id) {
+    const token = requestToken
     const previous = get().tags
     set((state) => ({ tags: state.tags.filter((t) => t.id !== id) }))
     try {
       await tagsApi.remove(id)
     } catch (error) {
+      if (token !== requestToken) return
       set({ tags: previous, error: apiErrorMessage(error, 'Could not delete that tag') })
       throw error
     }
   },
 
   async createCategory(name, parentId) {
+    const token = requestToken
     try {
       const created = await tagsApi.createCategory(name, parentId)
+      if (token !== requestToken) return
       set((state) => ({ categories: [...state.categories, created] }))
     } catch (error) {
+      if (token !== requestToken) return
       set({ error: apiErrorMessage(error, 'Could not create that category') })
       throw error
     }
   },
 
+  async updateCategory(id, changes) {
+    const token = requestToken
+    const previous = get().categories
+    set((state) => ({
+      categories: state.categories.map((c) => (c.id === id ? { ...c, ...changes } : c)),
+    }))
+    try {
+      const saved = await tagsApi.updateCategory(id, changes)
+      if (token !== requestToken) return
+      set((state) => ({
+        categories: state.categories.map((c) => (c.id === id ? { ...c, ...saved } : c)),
+      }))
+    } catch (error) {
+      // The server refuses a move that would put a category inside itself. The
+      // optimistic edit has to come out, or the tree renders a cycle the API rejected.
+      if (token !== requestToken) return
+      set({
+        categories: previous,
+        error: apiErrorMessage(error, 'Could not update that category'),
+      })
+      throw error
+    }
+  },
+
   async removeCategory(id) {
+    const token = requestToken
     const previous = get().categories
     set((state) => ({ categories: state.categories.filter((c) => c.id !== id) }))
     try {
@@ -132,6 +208,7 @@ export const useTagStore = create<TagState>((set, get) => ({
       // cascading, so both lists are now stale in a way this store cannot derive.
       void get().load()
     } catch (error) {
+      if (token !== requestToken) return
       set({
         categories: previous,
         error: apiErrorMessage(error, 'Could not delete that category'),

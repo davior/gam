@@ -167,3 +167,57 @@ describe('SearchView', () => {
     expect(run.mock.calls.length).toBeLessThan(4)
   })
 })
+
+describe('SearchView filters and paging', () => {
+  /** The params the last search was actually run with — the gap these tests exist for
+   *  is that `searchApi.run` typed both of these and the view passed neither. */
+  function lastParams(spy: { mock: { calls: unknown[][] } }) {
+    const calls = spy.mock.calls
+    return calls[calls.length - 1]?.[1]
+  }
+
+  it('sends the server default limit with an unfiltered search', async () => {
+    const spy = vi.spyOn(searchApi, 'run').mockResolvedValue(response())
+    renderView()
+
+    await userEvent.type(screen.getByPlaceholderText(/what are you looking for/i), 'nano')
+    await screen.findByText('6:52')
+
+    expect(lastParams(spy)).toMatchObject({ limit: 30 })
+    expect(lastParams(spy)).not.toHaveProperty('asset_type')
+  })
+
+  it('sends the chosen asset type', async () => {
+    const spy = vi.spyOn(searchApi, 'run').mockResolvedValue(response())
+    renderView()
+
+    await userEvent.type(screen.getByPlaceholderText(/what are you looking for/i), 'nano')
+    await screen.findByText('6:52')
+    await userEvent.click(screen.getByRole('button', { name: 'Documents' }))
+
+    await waitFor(() => expect(lastParams(spy)).toMatchObject({ asset_type: 'document' }))
+  })
+
+  it('asks for a bigger page rather than an offset, because there is no offset', async () => {
+    const spy = vi
+      .spyOn(searchApi, 'run')
+      .mockResolvedValue(response({ data: Array.from({ length: 30 }, () => hit()) }))
+    renderView()
+
+    await userEvent.type(screen.getByPlaceholderText(/what are you looking for/i), 'nano')
+    await screen.findByRole('button', { name: /show more/i })
+    await userEvent.click(screen.getByRole('button', { name: /show more/i }))
+
+    await waitFor(() => expect(lastParams(spy)).toMatchObject({ limit: 60 }))
+  })
+
+  it('offers no "show more" when the page is not full', async () => {
+    vi.spyOn(searchApi, 'run').mockResolvedValue(response())
+    renderView()
+
+    await userEvent.type(screen.getByPlaceholderText(/what are you looking for/i), 'nano')
+    await screen.findByText('6:52')
+
+    expect(screen.queryByRole('button', { name: /show more/i })).not.toBeInTheDocument()
+  })
+})

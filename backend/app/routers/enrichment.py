@@ -8,15 +8,18 @@ will land beside `summarize` here as the milestone continues. Mounted under
 
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.auth import CurrentUser
 from app.database import get_session
 from app.embeddings import build_embedder
 from app.enrichment import bulk
 from app.enrichment.describe import describable
+from app.enrichment.extract_text import extractable
 from app.enrichment.summarize import summarisable
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
@@ -26,8 +29,10 @@ from app.models.job import (
     KIND_BULK_ENRICH,
     KIND_DESCRIBE,
     KIND_EMBED,
+    KIND_EXTRACT_TEXT,
     KIND_SUMMARIZE,
 )
+from app.models.document import DocumentPage
 from app.models.suggestion import Suggestion
 from app.providers import build_provider
 from app.schemas import DataResponse, ListResponse
@@ -175,6 +180,84 @@ def start_describe(
 
     job = enrichment_jobs.submit(session, asset, KIND_DESCRIBE)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+class DocumentPageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    idx: int
+    page_number: Optional[int] = None
+    label: Optional[str] = None
+    text: str
+
+
+@router.post(
+    "/{asset_id}/extract-text", response_model=DataResponse[ActivityJobRead], status_code=202
+)
+def start_extract_text(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue a text extraction over one document.
+
+    No `_require_provider`: this is the one enrichment action that calls nothing and
+    costs nothing. Requiring a provider here would make configuring an LLM a
+    precondition for reading a PDF, which it is not — and the whole point of this job is
+    to be the step that runs *before* one is any use.
+    """
+    asset = _owned_asset(asset_id, user.id, session)
+
+    if not extractable(asset):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_extractable",
+                "message": (
+                    "Text can only be read out of PDF, Word, PowerPoint, Excel and "
+                    "plain-text files."
+                ),
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_EXTRACT_TEXT) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "This document's text is already being read",
+            },
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_EXTRACT_TEXT)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.get("/{asset_id}/text", response_model=ListResponse[DocumentPageRead])
+def list_document_text(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> ListResponse[DocumentPageRead]:
+    """What extraction read out of this document, in order.
+
+    Exists so extracted text is visible rather than merely stored. Text the user cannot
+    see is indistinguishable from text that was never extracted, and this repository has
+    enough of that already.
+    """
+    _owned_asset(asset_id, user.id, session)
+    rows = session.exec(
+        select(DocumentPage)
+        .where(DocumentPage.asset_id == asset_id)
+        .order_by(col(DocumentPage.idx))
+    ).all()
+    return ListResponse(
+        data=[DocumentPageRead.model_validate(r) for r in rows],
+        total=len(rows),
+        limit=len(rows),
+        offset=0,
+    )
 
 
 @router.get("/{asset_id}/suggestions", response_model=ListResponse[SuggestionRead])

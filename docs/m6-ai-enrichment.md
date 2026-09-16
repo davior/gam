@@ -4,9 +4,10 @@
 because they are what proves the chain works on real content. Written after reading
 `davior/gecko-notes` at `95ed2ca`.
 
-Two gaps are recorded below and are *not* part of M6: `extract_text` does not exist, so
-enrichment over documents is still blocked, and attribution (where an asset came from —
-a URL, a film, a broadcast) has no model yet.
+Two gaps were recorded below and were *not* part of M6. `extract_text` has since been
+built, so enrichment over documents works; what is left of it is that the extracted text
+is not itself searchable. Attribution — where an asset came from, a URL, a film, a
+broadcast — still has no model.
 
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
@@ -157,7 +158,7 @@ themselves:
 | Image | the image bytes | Needs `supports_images`; refused before sending otherwise |
 | Video or audio **with** a transcript | the transcript text | The case this section exists for. `describe` also gets the poster frame — see step 5 |
 | Video **without** a transcript | the poster frame | `ingest/thumbnails.py::_from_video` already produces one |
-| Document | extracted text | **Nothing produces this yet** — see below |
+| Document | extracted text | `extract_text` produces it. Above the poster row in precedence: a PDF has a cover thumbnail, and its words beat a picture of them |
 | Anything else | nothing | The job refuses rather than inventing from a filename |
 
 Two things this table makes visible that were previously implicit:
@@ -166,11 +167,13 @@ Two things this table makes visible that were previously implicit:
   it has one. A single frame of a two-hour interview describes a person sitting down. The
   transcript describes what was said, which is what anyone searching is actually looking
   for. The frame is the fallback for silent or untranscribed video, not the primary.
-- **`extract_text` does not exist.** `plan-of-attack.md` lists it as a job
-  (`pypdf`/`python-docx`/plain read) but there is no `KIND_EXTRACT_TEXT` in
-  `models/job.py` and no module for it. So a PDF currently has no text for `summarize` or
-  `autotag` to read, and enrichment over documents is blocked on building it. That is a
-  gap, not a decision.
+- **~~`extract_text` does not exist.~~** It does now — `enrichment/extract_text.py`,
+  writing `DocumentPage` rows. PDF text comes from pypdfium2 rather than the pypdf the
+  plan named, because pypdfium2 is already a dependency for first-page thumbnails and
+  `ingest/thumbnails.py` records why it was chosen over the AGPL and poppler-dependent
+  alternatives; a second PDF library would reopen a settled argument. What is still open
+  is that those rows are indexed nowhere, so a document is findable by the summary
+  enrichment writes and not by its own body — see `plan-of-attack.md`'s outstanding list.
 
 ### One pass, not three
 
