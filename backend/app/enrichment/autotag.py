@@ -78,6 +78,11 @@ def _prompt(session: Session, asset: Asset, material: source.SourceMaterial) -> 
         if material.truncated:
             header += " (the opening portion only)"
         parts.append(f"{header}:\n\n{material.text}")
+    elif material.kind == source.FROM_DOCUMENT:
+        header = "Document text"
+        if material.truncated:
+            header += " (the opening portion only)"
+        parts.append(f"{header}:\n\n{material.text}")
     elif material.kind == source.FROM_POSTER:
         parts.append("No transcript is available; a single frame from the video is attached.")
     else:

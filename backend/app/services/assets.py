@@ -29,6 +29,7 @@ from app.ingest.filetypes import (
 from app.ingest.probe import probe
 from app.models.asset import Asset
 from app.models.suggestion import Suggestion
+from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
 from app.schemas_assets import AssetRead, AssetTagRead
 from app.search import fts, vectors
@@ -194,6 +195,7 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     tags.detach_all_from_asset(session, asset_id)
     session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
     session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
+    session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
     session.delete(asset)
     session.commit()
 

@@ -21,6 +21,7 @@ from sqlmodel import Session, col, select
 
 from app.ingest.filetypes import TYPE_DOCUMENT, TYPE_IMAGE
 from app.models.asset import Asset
+from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
 from app.providers.base import Image
 from app.storage.base import StorageError
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 FROM_TRANSCRIPT = "transcript"
 FROM_IMAGE = "image"
 FROM_POSTER = "poster"
+FROM_DOCUMENT = "document"
 
 # A transcript of a long interview is far more text than any model needs to summarise it,
 # and the input side is what a long job costs. Cut at a generous ceiling rather than
@@ -70,6 +72,21 @@ def transcript_text(session: Session, asset: Asset) -> str:
         .order_by(col(TranscriptSegment.idx))
     ).all()
     return "\n".join(s.text.strip() for s in segments if (s.text or "").strip()).strip()
+
+
+def document_text(session: Session, asset: Asset) -> str:
+    """The asset's extracted text as one block, in order.
+
+    Ordered by `idx` for the same reason `transcript_text` is: nothing in SQL promises
+    to read rows back the way they went in, and a summary built from shuffled pages is
+    wrong in a way that is hard to notice.
+    """
+    pages = session.exec(
+        select(DocumentPage)
+        .where(DocumentPage.asset_id == asset.id)
+        .order_by(col(DocumentPage.idx))
+    ).all()
+    return "\n\n".join(p.text.strip() for p in pages if (p.text or "").strip()).strip()
 
 
 def _poster_image(asset: Asset) -> Optional[Image]:
@@ -146,6 +163,22 @@ def gather(
         if image:
             return SourceMaterial(kind=FROM_IMAGE, images=[image])
 
+    # A document with extracted text. Deliberately **above** the poster branch, not down
+    # with the old refusal: every PDF gets a first-page thumbnail at ingest, so a PDF
+    # sent to a vision provider used to match the poster branch and be summarised from a
+    # picture of its cover. That is the same mistake the transcript rule at the top of
+    # this module exists to prevent, one format over — the words beat the one rendered
+    # page, and the fallback only applies when there are no words.
+    if asset.asset_type == TYPE_DOCUMENT:
+        body = document_text(session, asset)
+        if body:
+            truncated = len(body) > MAX_TRANSCRIPT_CHARS
+            return SourceMaterial(
+                kind=FROM_DOCUMENT,
+                text=body[:MAX_TRANSCRIPT_CHARS] if truncated else body,
+                truncated=truncated,
+            )
+
     # A video with no transcript: the poster frame is all there is. Deliberately after
     # the transcript branch, never instead of it.
     if supports_images:
@@ -154,13 +187,12 @@ def gather(
             return SourceMaterial(kind=FROM_POSTER, images=[poster])
 
     if asset.asset_type == TYPE_DOCUMENT:
-        # `extract_text` is specified in plan-of-attack and has no KIND_ constant and no
-        # module, so a document carries no readable text yet. Named explicitly so this
-        # reads as a known gap rather than as an asset that mysteriously cannot be
-        # enriched.
+        # Reached when extraction has not run, or ran and found nothing — a scan holds
+        # pictures of words rather than words. Says which, because the two have different
+        # answers: run it, versus this file needs OCR.
         raise NoSourceMaterial(
-            "Reading text out of documents is not built yet, so there is nothing to "
-            "read for this file."
+            "No text has been read out of this document yet. Run Extract text on it "
+            "first — and if that finds nothing, the file is a scan and needs OCR."
         )
 
     raise NoSourceMaterial(

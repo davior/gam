@@ -72,8 +72,62 @@ def main() -> None:
     import pypdfium2  # noqa: F401  - imported to fail early if it is missing
 
     _write_minimal_pdf(FIXTURES / "sample_document.pdf")
+    _write_office_documents()
 
     print("wrote:", ", ".join(sorted(p.name for p in FIXTURES.iterdir())))
+
+
+def _write_office_documents() -> None:
+    """The Office and plain-text fixtures `extract_text` reads.
+
+    All four carry the same "Gecko Asset Manager" phrase the PDF does, so one assertion
+    shape covers every format, plus something format-specific — a table, a speaker note,
+    a second sheet — so a reader that silently skips half a file is caught.
+    """
+    import docx
+    import openpyxl
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    document = docx.Document()
+    document.add_paragraph("Gecko Asset Manager")
+    document.add_paragraph("A library for video, images and documents.")
+    # A table, because a .docx that carries its content in one is the case a
+    # paragraphs-only reader gets wrong while looking like it worked.
+    table = document.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Format"
+    table.cell(0, 1).text = "Reader"
+    table.cell(1, 0).text = "docx"
+    table.cell(1, 1).text = "python-docx"
+    document.save(FIXTURES / "sample_document.docx")
+
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    slide.shapes.title.text = "Gecko Asset Manager"
+    box = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(4), Inches(1))
+    box.text_frame.text = "Slide one body text."
+    # Speaker notes, which is where a deck's actual argument usually lives.
+    slide.notes_slide.notes_text_frame.text = "Remember to mention the search demo."
+    second = presentation.slides.add_slide(presentation.slide_layouts[5])
+    second.shapes.title.text = "Second slide"
+    presentation.save(FIXTURES / "sample_document.pptx")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Overview"
+    sheet["A1"] = "Gecko Asset Manager"
+    sheet["A2"] = "Assets"
+    sheet["B2"] = 42
+    # A second sheet, so "one row per worksheet" has something to be wrong about.
+    other = workbook.create_sheet("Costs")
+    other["A1"] = "Enrichment spend"
+    other["B1"] = 12.5
+    workbook.save(FIXTURES / "sample_document.xlsx")
+
+    (FIXTURES / "sample_document.txt").write_text(
+        "Gecko Asset Manager\n\nA library for video, images and documents.\n",
+        encoding="utf-8",
+    )
 
 
 def _write_minimal_pdf(target: Path) -> None:

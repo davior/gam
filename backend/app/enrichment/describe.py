@@ -71,6 +71,11 @@ def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
                 "visual — who is on screen, the setting — which the transcript cannot "
                 "tell you."
             )
+    elif material.kind == source.FROM_DOCUMENT:
+        header = "Text of the document"
+        if material.truncated:
+            header += " (the opening portion only — it continues beyond this)"
+        parts.append(f"{header}:\n\n{material.text}")
     elif material.kind == source.FROM_POSTER:
         parts.append(
             "There is no transcript, so a single still frame from the video is "

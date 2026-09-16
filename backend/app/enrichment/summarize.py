@@ -56,6 +56,11 @@ def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
             # material it was never shown.
             header += " (the opening portion only — it continues beyond this)"
         parts.append(f"{header}:\n\n{material.text}")
+    elif material.kind == source.FROM_DOCUMENT:
+        header = "Text of the document"
+        if material.truncated:
+            header += " (the opening portion only — it continues beyond this)"
+        parts.append(f"{header}:\n\n{material.text}")
     elif material.kind == source.FROM_POSTER:
         parts.append(
             "No transcript is available, so a single still frame from the video is "

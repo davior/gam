@@ -1,0 +1,3 @@
+Gecko Asset Manager
+
+A library for video, images and documents.

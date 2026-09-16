@@ -16,6 +16,7 @@ from app.auth import encrypt_api_key
 from app.enrichment import source, summarize
 from app.jobs import enrichment as enrichment_jobs
 from app.models.asset import Asset
+from app.models.document import DocumentPage
 from app.models.job import EnrichmentJob, KIND_SUMMARIZE
 from app.models.provider import AIProvider
 from app.models.transcript import TranscriptSegment
@@ -66,6 +67,21 @@ def add_transcript(session, asset_id, lines):
                 text=text,
                 start_time=float(idx),
                 end_time=float(idx + 1),
+            )
+        )
+    session.commit()
+
+
+def add_document_text(session, asset_id, chunks):
+    for idx, text in enumerate(chunks):
+        session.add(
+            DocumentPage(
+                asset_id=asset_id,
+                user_id=TEST_USER,
+                idx=idx,
+                page_number=idx + 1,
+                label=f"Page {idx + 1}",
+                text=text,
             )
         )
     session.commit()
@@ -149,9 +165,10 @@ def test_an_image_asset_with_a_text_only_provider_has_nothing_to_read(library, s
         summarize.run(session, asset, lambda *a, **k: None)
 
 
-def test_a_document_says_the_gap_out_loud(library, session):
-    """`extract_text` is specified in plan-of-attack and does not exist, so this reads
-    as a known gap rather than a file that mysteriously cannot be enriched."""
+def test_a_document_with_no_extracted_text_says_which_step_is_missing(library, session):
+    """This used to assert that `extract_text` did not exist. It does now, so the
+    refusal has to distinguish the two reasons a document has nothing to read: nobody
+    has run extraction, or extraction ran and the file is a scan."""
     created = _upload_image(library)
     asset = session.get(Asset, created["id"])
     asset.asset_type = "document"
@@ -159,8 +176,27 @@ def test_a_document_says_the_gap_out_loud(library, session):
     session.commit()
     configure_provider(session, supports_images=False)
 
-    with pytest.raises(source.NoSourceMaterial, match="documents is not built yet"):
+    with pytest.raises(source.NoSourceMaterial, match="Run Extract text on it first"):
         summarize.run(session, asset, lambda *a, **k: None)
+
+
+def test_a_document_is_summarised_from_its_extracted_text(library, session, upstream):
+    """The point of the whole `extract_text` job: documents stop refusing."""
+    created = _upload_image(library)
+    asset = session.get(Asset, created["id"])
+    asset.asset_type = "document"
+    session.commit()
+    add_document_text(session, asset.id, ["The quarterly report on neuroweapons research."])
+    configure_provider(session, supports_images=False)
+
+    summarize.run(session, asset, lambda *a, **k: None)
+
+    prompt = sent_prompt(upstream)
+    assert "The quarterly report on neuroweapons research." in prompt
+    # Not "Transcript of the recording", which is what all three jobs said about
+    # everything that was not an image before this branch existed.
+    assert "Text of the document" in prompt
+    assert "Transcript" not in prompt
 
 
 def test_a_very_long_transcript_is_cut_and_says_so(library, session, upstream):

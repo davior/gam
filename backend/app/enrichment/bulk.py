@@ -19,9 +19,15 @@ from typing import Callable, Optional
 
 from sqlmodel import Session
 
-from app.enrichment import autotag, describe, embed, summarize
+from app.enrichment import autotag, describe, embed, extract_text, summarize
 from app.models.asset import Asset
-from app.models.job import KIND_AUTOTAG, KIND_DESCRIBE, KIND_EMBED, KIND_SUMMARIZE
+from app.models.job import (
+    KIND_AUTOTAG,
+    KIND_DESCRIBE,
+    KIND_EMBED,
+    KIND_EXTRACT_TEXT,
+    KIND_SUMMARIZE,
+)
 from app.providers.base import ProviderUnavailable
 
 logger = logging.getLogger(__name__)
@@ -40,6 +46,10 @@ ACTIONS = {
     KIND_SUMMARIZE: summarize.run,
     KIND_AUTOTAG: autotag.run,
     KIND_EMBED: embed.run,
+    # Safe to include where transcription is not: it calls nothing and bills nothing, so
+    # the mis-click that makes transcription too expensive to offer here costs only time.
+    # It is also the action most worth having in bulk — documents arrive by the folder.
+    KIND_EXTRACT_TEXT: extract_text.run,
 }
 
 # A selection has to be reviewable before it is run, and it is the thing standing between
@@ -140,4 +150,5 @@ _STAGES = {
     KIND_SUMMARIZE: "Summarising",
     KIND_AUTOTAG: "Suggesting tags",
     KIND_EMBED: "Embedding",
+    KIND_EXTRACT_TEXT: "Reading text",
 }

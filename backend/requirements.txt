@@ -24,3 +24,13 @@ Pillow==10.4.0
 # AGPL and would put obligations on anyone deploying this, and pdf2image needs a
 # poppler binary on the host.
 pypdfium2==4.30.0
+# Text extraction for `extract_text`, so enrichment can read documents and not just
+# media. PDFs and plain text need nothing new — pypdfium2 above already opens a PDF, and
+# reusing it keeps that licensing argument settled rather than reopening it for pypdf.
+# These three cover the Office formats, are pure-Python wheels, and pull one compiled
+# dependency between them (lxml, via docx and pptx), which ships cp313 wheels — the
+# thing to check before adding anything here, since a source build on the pinned 3.13 is
+# how Pillow and numpy break.
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
