@@ -21,7 +21,11 @@ export default function AssetCard({ asset, onActivate, selected = false }: Props
       // and read unpredictably; `aria-pressed` says the same thing about the one
       // control that is actually here.
       aria-pressed={selected}
-      className={`card group flex flex-col overflow-hidden p-0 text-left ${
+      // max-w is what actually caps a tile. The grid's auto-fill tracks stretch to
+      // roughly twice their minimum before a further column fits, which at the widest
+      // step would be ~440px; the grid's `justify-items-center` keeps a capped tile
+      // centred in its track rather than leaving the gutter all on one side.
+      className={`card group flex w-full max-w-[25rem] flex-col overflow-hidden p-0 text-left ${
         selected ? 'ring-2 ring-blue-600 dark:ring-blue-400' : ''
       }`}
     >

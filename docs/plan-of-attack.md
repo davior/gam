@@ -332,6 +332,9 @@ Non-milestone PRs, so a `git log` that does not match the table above still make
 database and the docs that go with it;
 [#9](https://github.com/davior/gam/pull/9) documented `.env` for local dev and made the
 CSP's Notes origin follow `NOTES_BASE_URL`.
+The library and asset-detail layout rework — full-bleed intrinsic grid, the resizable
+docked panel, `DetailDock`/`Tabs`, and `/a/{id}` as a page — is also non-milestone: M1
+built that UI for one screen size and M3–M6 accreted panels onto it without revisiting it.
 
 ### Outstanding, unscheduled
 
@@ -381,15 +384,22 @@ from a decision, which is the distinction PR bodies do not preserve.
 - **Search ignores `asset_type` and `limit`.** The backend accepts both
   (`routers/search.py:51-53`) and `api/search.ts` types them; `SearchView.tsx` passes
   neither. Results cap at the server default of 30 with no way to page or filter by type.
-- **No `/a/{id}` deep link.** `assetsApi.get(id)` exists and is called by nothing, and there
-  is no route. This is not cosmetic: **GN-4 specifies a Notes→GAM asset reference as a plain
-  link to `/a/{assetId}`**, so that integration cannot work as designed until the route
-  exists. The decision to use a link rather than a shortcode was taken partly *because* it
-  needed no work in Notes — that reasoning assumed this end existed.
-- **A 401 mid-session is a dead end.** There is no axios response interceptor; only
-  `bootstrap()` handles 401, so an expiry during an upload or a search surfaces as an inline
-  error string and nothing re-authenticates. Relatedly, `signOut()` exists in `stores/auth.ts`
-  and no component calls it — there is no sign-out control anywhere in the UI.
+- **~~No `/a/{id}` deep link.~~** Built in `cdcabbf`, so GN-4's Notes→GAM reference now
+  resolves. It rendered as a floating dialog over an empty shell until the panel chrome
+  moved into `DetailDock`; it is a full-width page now.
+- **~~A 401 mid-session is a dead end.~~** Closed in `cdcabbf`: `App.tsx` wires
+  `setUnauthorizedHandler`, and `AppShell` calls `signOut()`.
+- **Escape does too much in the asset panel.** `TagInput` (`TagInput.tsx:93`) and the
+  transcript segment editor (`TranscriptPanel.tsx:259`) both handle Escape without calling
+  `stopPropagation`, so it reaches `DetailDock`'s window listener as well. Dismissing a tag
+  suggestion menu, or abandoning a half-typed correction to a transcript line, therefore
+  closes the whole panel. Predates the panel — the old modal had the same listener — and was
+  left alone during the layout rework rather than widening that change.
+- **The full-screen sheet is not a trapped modal.** Below 1024px the panel covers the screen
+  and claims `aria-modal`, but nothing traps focus inside it, nothing returns focus to the
+  card that opened it, and the library behind is not `inert`. Tab walks out into a grid the
+  user cannot see. Docked, none of this applies, which is why it was not urgent enough to
+  fold into the layout work.
 - **The SRS is not in this repository.** M6–M8 are specified against FR numbers (8.1.3,
   9.1.4, 10.1.4, 11.1.1/2) that appear in this document and in code comments, in a source no
   session can read. Either commit it beside these docs or stop citing it; a requirement

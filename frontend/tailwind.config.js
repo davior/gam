@@ -1,3 +1,5 @@
+import containerQueries from '@tailwindcss/container-queries'
+
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
@@ -35,5 +37,8 @@ export default {
       },
     },
   },
-  plugins: [],
+  // The library grid and the asset panel size themselves off their *container*, not
+  // the viewport — the detail panel is drag-resizable, so once it is open the viewport
+  // no longer says how much room the grid beside it has.
+  plugins: [containerQueries],
 }

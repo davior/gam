@@ -63,7 +63,7 @@ export default function DocumentTextPanel({ assetId }: Props) {
   const running = job?.status === 'queued' || job?.status === 'processing'
 
   return (
-    <div className="flex min-h-0 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-3 py-2 dark:border-gray-700">
         <FileText className="h-3.5 w-3.5 text-gray-500 dark:text-gray-400" />
         <h3 className="text-xs font-semibold text-gray-700 dark:text-gray-200">

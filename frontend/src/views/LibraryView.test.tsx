@@ -116,6 +116,23 @@ describe('LibraryView selection', () => {
     expect(await screen.findByRole('dialog')).toHaveAccessibleName('First')
   })
 
+  it('swaps to another asset without closing the panel', async () => {
+    /**
+     * Docked, the panel sits beside the library rather than over it, so the grid is
+     * still there to click. Going through close-and-reopen for every asset would be a
+     * modal's workflow surviving into something that is not one.
+     */
+    const user = userEvent.setup()
+    render(<LibraryView />)
+
+    await user.click(await card('First'))
+    expect(await screen.findByRole('dialog')).toHaveAccessibleName('First')
+
+    await user.click(await card('Second'))
+
+    expect(await screen.findByRole('dialog')).toHaveAccessibleName('Second')
+  })
+
   it('shows the summary, which was typed since M1 and rendered nowhere', async () => {
     const user = userEvent.setup()
     // Re-mocked rather than seeded through the store: the view loads on mount, so a
