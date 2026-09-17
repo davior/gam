@@ -25,12 +25,14 @@ export default function AppShell({ children }: Props) {
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-900">
       <header className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-center gap-3">
-          <span className="text-xl" aria-hidden="true">
-            🦎
-          </span>
-          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-            Asset Manager
-          </h1>
+          <Link to="/library" className="flex items-center gap-3">
+            <span className="text-xl" aria-hidden="true">
+              🦎
+            </span>
+            <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Gecko Asset Manager
+            </h1>
+          </Link>
 
           <div className="ml-auto flex items-center gap-3">
             <button
