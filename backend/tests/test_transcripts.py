@@ -64,6 +64,75 @@ def stub_deepgram_fixture(monkeypatch):
     return calls
 
 
+def _upload_audio(client):
+    return client.post(
+        "/api/assets",
+        files=[("files", ("sample_audio.mp3", (FIXTURES / "sample_audio.mp3").read_bytes(), "audio/mpeg"))],
+    ).json()["created"][0]
+
+
+# ─── auto-transcription on upload ────────────────────────────────────────────
+
+
+def test_uploading_a_video_with_a_key_configured_queues_its_own_transcription(
+    library, session
+):
+    """Nothing else in the pipeline works on a video until it has a transcript, so
+    nobody should have to press Transcribe by hand first."""
+    from app.settings_store import DEEPGRAM_API_KEY, set_setting
+
+    set_setting(session, "user-under-test", DEEPGRAM_API_KEY, "dg-test-key")
+
+    created = _upload_video(library)
+
+    jobs = session.exec(
+        select(EnrichmentJob).where(EnrichmentJob.asset_id == created["id"])
+    ).all()
+    assert len(jobs) == 1
+    assert jobs[0].kind == KIND_TRANSCRIBE
+    assert jobs[0].status == "queued"
+
+
+def test_uploading_audio_with_a_key_configured_also_queues_it(library, session):
+    """`can_transcribe` already treats audio and video the same; the auto-chain does
+    too rather than re-deriving its own narrower rule."""
+    from app.settings_store import DEEPGRAM_API_KEY, set_setting
+
+    set_setting(session, "user-under-test", DEEPGRAM_API_KEY, "dg-test-key")
+
+    created = _upload_audio(library)
+
+    jobs = session.exec(
+        select(EnrichmentJob).where(EnrichmentJob.asset_id == created["id"])
+    ).all()
+    assert len(jobs) == 1
+    assert jobs[0].kind == KIND_TRANSCRIBE
+
+
+def test_uploading_a_video_without_a_key_queues_nothing(library, session):
+    """Queueing unconditionally would put a red "no Deepgram key" row in the activity
+    feed after every single upload, which trains people to ignore it."""
+    created = _upload_video(library)
+
+    jobs = session.exec(
+        select(EnrichmentJob).where(EnrichmentJob.asset_id == created["id"])
+    ).all()
+    assert jobs == []
+
+
+def test_uploading_an_image_never_auto_transcribes(library, session):
+    from app.settings_store import DEEPGRAM_API_KEY, set_setting
+
+    set_setting(session, "user-under-test", DEEPGRAM_API_KEY, "dg-test-key")
+
+    created = _upload_image(library)
+
+    jobs = session.exec(
+        select(EnrichmentJob).where(EnrichmentJob.asset_id == created["id"])
+    ).all()
+    assert jobs == []
+
+
 # ─── starting a job ──────────────────────────────────────────────────────────
 
 

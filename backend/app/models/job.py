@@ -31,6 +31,10 @@ KIND_BACKFILL_EMBEDDINGS = "backfill_embeddings"
 # the odd one out of the per-asset set: it calls no provider, costs nothing, and its
 # output is an input to the other three rather than something a user reads directly.
 KIND_EXTRACT_TEXT = "extract_text"
+# The "Generate all" button: summarize, describe and autotag run one after another as a
+# single job, rather than three activity rows the user has to watch separately. See
+# `enrichment/generate_all.py` for why that order and not the button order.
+KIND_GENERATE_ALL = "generate_all"
 # One action applied across a chosen set of assets. Which action, and which assets,
 # live in `EnrichmentJob.payload` — see there for why it is one job and not N.
 KIND_BULK_ENRICH = "bulk_enrich"
@@ -44,6 +48,7 @@ ENRICHMENT_KINDS = frozenset(
         KIND_AUTOTAG,
         KIND_EMBED,
         KIND_EXTRACT_TEXT,
+        KIND_GENERATE_ALL,
     }
 )
 

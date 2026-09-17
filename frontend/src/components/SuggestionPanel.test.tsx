@@ -71,17 +71,6 @@ afterEach(() => {
 })
 
 describe('SuggestionPanel', () => {
-  it('starts a run for this asset', async () => {
-    const autotag = vi.spyOn(enrichmentApi, 'autotag').mockResolvedValue(job())
-    renderPanel()
-
-    await userEvent.click(
-      screen.getByRole('button', { name: /suggest tags and a title/i })
-    )
-
-    await waitFor(() => expect(autotag).toHaveBeenCalledWith('a1'))
-  })
-
   it('shows nothing when there is nothing pending', async () => {
     renderPanel()
 
@@ -151,15 +140,7 @@ describe('SuggestionPanel', () => {
     expect(screen.getByText('DARPA')).toBeInTheDocument()
   })
 
-  it('shows progress from the store rather than polling', async () => {
-    useActivityStore.setState({ jobs: [job()] })
-    renderPanel()
-
-    const button = screen.getByRole('button', { name: /choosing tags/i })
-    expect(button).toBeDisabled()
-  })
-
-  it('reloads the suggestions when a run finishes', async () => {
+  it('reloads the suggestions when an autotag run finishes', async () => {
     useActivityStore.setState({ jobs: [job({ status: 'processing' })] })
     const { rerender } = renderPanel()
     await waitFor(() => expect(enrichmentApi.suggestions).toHaveBeenCalledTimes(1))
@@ -174,25 +155,56 @@ describe('SuggestionPanel', () => {
     await waitFor(() => expect(enrichmentApi.suggestions).toHaveBeenCalledTimes(2))
   })
 
-  it('points at Settings when no provider is configured', async () => {
-    vi.spyOn(enrichmentApi, 'autotag').mockRejectedValue(
-      codedError('provider_unavailable')
+  it('also reloads when a generate-all run finishes', async () => {
+    // Autotag can be run on its own or as part of "Generate all" — either one ending
+    // has to produce suggestions this panel has not seen yet.
+    useActivityStore.setState({
+      jobs: [job({ action: 'generate_all', status: 'processing' })],
+    })
+    const { rerender } = renderPanel()
+    await waitFor(() => expect(enrichmentApi.suggestions).toHaveBeenCalledTimes(1))
+
+    useActivityStore.setState({ jobs: [job({ action: 'generate_all', status: 'done' })] })
+    rerender(
+      <MemoryRouter>
+        <SuggestionPanel assetId="a1" />
+      </MemoryRouter>
     )
-    renderPanel()
 
-    await userEvent.click(screen.getByRole('button', { name: /suggest tags/i }))
-
-    expect(
-      await screen.findByRole('link', { name: /add one in settings/i })
-    ).toBeInTheDocument()
+    await waitFor(() => expect(enrichmentApi.suggestions).toHaveBeenCalledTimes(2))
   })
 
-  it('surfaces what a failed run said', async () => {
-    useActivityStore.setState({
-      jobs: [job({ status: 'error', error_message: 'The provider suggested nothing' })],
-    })
+  // ─── accept all ─────────────────────────────────────────────────────────
+
+  it('offers no "accept all" for a single suggestion', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([suggestion()])
     renderPanel()
 
-    expect(screen.getByText(/the provider suggested nothing/i)).toBeInTheDocument()
+    await screen.findByText('DARPA')
+    expect(screen.queryByRole('button', { name: /accept all/i })).toBeNull()
+  })
+
+  it('accepts every pending suggestion in one click', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([
+      suggestion({ id: 's1', kind: 'title', value: 'Giordano on Neuroweapons' }),
+      suggestion({ id: 's2', kind: 'tag', value: 'DARPA' }),
+      suggestion({ id: 's3', kind: 'tag', value: 'neuroweapons' }),
+    ])
+    const accept = vi
+      .spyOn(enrichmentApi, 'accept')
+      .mockImplementation((_assetId, id) =>
+        Promise.resolve(suggestion({ id, status: 'accepted' }))
+      )
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole('button', { name: /accept all/i }))
+
+    await waitFor(() => expect(accept).toHaveBeenCalledTimes(3))
+    expect(accept).toHaveBeenCalledWith('a1', 's1')
+    expect(accept).toHaveBeenCalledWith('a1', 's2')
+    expect(accept).toHaveBeenCalledWith('a1', 's3')
+    await waitFor(() =>
+      expect(screen.queryByText(/nothing is applied until you say so/i)).toBeNull()
+    )
   })
 })

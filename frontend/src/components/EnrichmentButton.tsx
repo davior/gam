@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { apiErrorCode, apiErrorMessage } from '@/api/client'
 import type { ActivityJob } from '@/api/transcripts'
@@ -26,6 +27,13 @@ interface Props {
   failureMessage: string
   /** Re-read the asset when the run ends, for jobs that write a field on it. */
   refreshOnFinish?: boolean
+  /**
+   * A small square icon button beside a field's own label, instead of a full-width
+   * row with its own text. The label still names the action, as the accessible name
+   * and the running/error tooltip — it just is not painted on screen, because the
+   * field label already sits right next to it.
+   */
+  iconOnly?: boolean
 }
 
 export default function EnrichmentButton({
@@ -37,6 +45,7 @@ export default function EnrichmentButton({
   start,
   failureMessage,
   refreshOnFinish = true,
+  iconOnly = false,
 }: Props) {
   const job = useActivityStore((s) =>
     s.jobs.find((j) => j.asset_id === assetId && j.action === action)
@@ -71,20 +80,10 @@ export default function EnrichmentButton({
     }
   }
 
-  return (
-    <div className="space-y-1">
-      <button
-        type="button"
-        className="btn btn-ghost w-full justify-start text-xs"
-        disabled={running}
-        onClick={() => void run()}
-      >
-        <Icon className="mr-1.5 h-3.5 w-3.5" />
-        {running ? job?.stage || runningLabel : label}
-      </button>
-
+  const statusMessages = (
+    <>
       {unavailable && (
-        <p className="text-xs text-gray-500 dark:text-gray-400">
+        <p className={STATUS_CLASS}>
           No AI provider yet.{' '}
           <Link
             to="/settings"
@@ -98,9 +97,53 @@ export default function EnrichmentButton({
       {/* A finished job's own message, which is where "you wrote this yourself" and any
           provider failure arrive. */}
       {!running && job?.status === 'error' && job.error_message && (
-        <p className="text-xs text-red-600 dark:text-red-400">{job.error_message}</p>
+        <p className={STATUS_ERROR_CLASS}>{job.error_message}</p>
       )}
-      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {error && <p className={STATUS_ERROR_CLASS}>{error}</p>}
+    </>
+  )
+
+  if (iconOnly) {
+    return (
+      <>
+        <button
+          type="button"
+          className="btn btn-ghost p-1.5"
+          disabled={running}
+          onClick={() => void run()}
+          aria-label={running ? job?.stage || runningLabel : label}
+          title={running ? job?.stage || runningLabel : label}
+        >
+          {running ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Icon className="h-3.5 w-3.5" />
+          )}
+        </button>
+        {statusMessages}
+      </>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      <button
+        type="button"
+        className="btn btn-ghost w-full justify-start text-xs"
+        disabled={running}
+        onClick={() => void run()}
+      >
+        <Icon className="mr-1.5 h-3.5 w-3.5" />
+        {running ? job?.stage || runningLabel : label}
+      </button>
+
+      {statusMessages}
     </div>
   )
 }
+
+// Shared with the icon-only layout, whose messages sit outside the button's own
+// wrapper div — see AssetDetail's flex-wrap rows, which give them `w-full` so they
+// drop onto their own line under the label + button row instead of squeezing beside it.
+const STATUS_CLASS = 'w-full text-xs text-gray-500 dark:text-gray-400'
+const STATUS_ERROR_CLASS = 'w-full text-xs text-red-600 dark:text-red-400'

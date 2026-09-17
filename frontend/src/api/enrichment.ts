@@ -55,6 +55,13 @@ export const enrichmentApi = {
       .then((r) => r.data.data)
   },
 
+  /** Summarise, describe and autotag together — the "Generate all" button. */
+  generateAll(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/generate-all`)
+      .then((r) => r.data.data)
+  },
+
   autotag(assetId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/autotag`)

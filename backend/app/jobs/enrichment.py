@@ -24,6 +24,7 @@ from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
 from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
+from app.enrichment.generate_all import run as run_generate_all
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
@@ -45,6 +46,7 @@ from app.models.job import (
     KIND_DESCRIBE,
     KIND_EMBED,
     KIND_EXTRACT_TEXT,
+    KIND_GENERATE_ALL,
     KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
     LIBRARY_KINDS,
@@ -230,6 +232,8 @@ def _run_job(job_id: str) -> None:
                 detail = run_autotag(session, asset, progress)
             elif job.kind == KIND_DESCRIBE:
                 detail = run_describe(session, asset, progress)
+            elif job.kind == KIND_GENERATE_ALL:
+                detail = run_generate_all(session, asset, progress)
             elif job.kind == KIND_BULK_ENRICH:
                 bulk = run_bulk(session, job.user_id, job.payload, progress)
                 detail = f"{bulk.done} done"

@@ -89,6 +89,7 @@ async def ingest_upload(
 
     _reindex(session, asset)
     _describe(session, storage, asset)
+    _chain_transcription(session, asset)
     return asset
 
 
@@ -139,6 +140,47 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     session.commit()
     session.refresh(asset)
     _reindex(session, asset)
+
+
+def _chain_transcription(session: Session, asset: Asset) -> None:
+    """Transcribe audio and video the moment they land, without being asked.
+
+    Mirrors `jobs/enrichment.py::_chain_embedding`, one step earlier in the same
+    chain: a video that nobody transcribes has nothing for describe, summarise,
+    autotag or search to read, and asking a user to press Transcribe by hand before
+    any of that works is a step the pipeline does not need them for.
+
+    Guarded on a Deepgram key actually being configured, for the same reason the
+    embedding chain is guarded on a provider: queueing unconditionally would put a
+    red "no Deepgram key" row in the activity feed after every single upload, which
+    trains people to ignore it.
+
+    Imports `app.jobs.enrichment` lazily rather than at module load — that module's
+    import chain leads back through `app.enrichment.describe` to this one, and
+    importing it at the top of this file would be a cycle.
+    """
+    from app.enrichment.transcribe import can_transcribe
+    from app.jobs import enrichment as enrichment_jobs
+    from app.models.job import KIND_TRANSCRIBE
+    from app.settings_store import load_deepgram_key
+
+    if not can_transcribe(asset):
+        return
+
+    try:
+        if not load_deepgram_key(session, asset.user_id):
+            logger.info(
+                "Not transcribing asset %s: no Deepgram key configured for this user",
+                asset.id,
+            )
+            return
+
+        if enrichment_jobs.active_job(session, asset.id, KIND_TRANSCRIBE) is not None:
+            return
+
+        enrichment_jobs.submit(session, asset, KIND_TRANSCRIBE)
+    except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
+        logger.warning("Could not queue transcription for asset %s", asset.id, exc_info=True)
 
 
 def _reindex(session: Session, asset: Asset) -> None:

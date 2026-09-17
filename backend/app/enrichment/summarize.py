@@ -26,21 +26,27 @@ logger = logging.getLogger(__name__)
 
 Progress = Callable[..., None]
 
+# Enough for several real paragraphs and not enough for an essay. Also told to the
+# model in the prompt below, which is what stops the backstop below from being the
+# thing that actually decides where a summary ends — a limit a model does not know
+# about is a limit it will write past, and the truncation lands mid-sentence.
+MAX_SUMMARY_CHARS = 6000
+
 SYSTEM_PROMPT = (
     "You write summaries for a media library. The person reading yours is trying to "
     "find this file again later, sometimes years afterwards, often remembering only "
     "roughly what was in it.\n\n"
-    "Write one paragraph of plain prose. Lead with what the thing actually is, then "
-    "what it covers — the specific names, places, claims and terms someone would "
-    "search for. Prefer the concrete over the general.\n\n"
+    "Write plain prose. Lead with what the thing actually is, then what it covers — "
+    "the specific names, places, claims and terms someone would search for. Prefer "
+    "the concrete over the general.\n\n"
+    f"Keep the whole reply under {MAX_SUMMARY_CHARS} characters — a hard limit, not a "
+    "target, so finish the paragraph you are on rather than trailing off mid-sentence "
+    "as you approach it. Most summaries need nowhere near this much; write one "
+    "paragraph unless the material genuinely needs more than one.\n\n"
     "Never open with a phrase like 'This video' or 'The transcript shows'. Do not "
     "editorialise, do not assess whether anything said is true, and do not add a "
-    "preamble, a heading, or anything after the paragraph."
+    "preamble, a heading, or anything after the text."
 )
-
-# Enough for a real paragraph and not enough for an essay. The model is told to write
-# one paragraph; this is the backstop for when it does not listen.
-MAX_SUMMARY_CHARS = 2000
 
 
 def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
