@@ -33,21 +33,26 @@ logger = logging.getLogger(__name__)
 
 Progress = Callable[..., None]
 
+# A description is a retrieval aid, not an essay — but see summarize.py for why this is
+# also told to the model rather than left as a silent backstop: a limit it does not know
+# about is one it writes past, and the truncation lands mid-sentence.
+MAX_DESCRIPTION_CHARS = 6000
+
 SYSTEM_PROMPT = (
     "You write descriptions for a media library. Someone will search this library "
     "later with half-remembered words, and your description is what has to match.\n\n"
-    "Write one paragraph saying what is actually in this item: who appears or speaks, "
-    "what is shown, the places, organisations, events and specific terms a person would "
-    "type. Name things explicitly rather than referring to them generally — 'a man in a "
-    "lab coat' helps nobody find anything; a name does.\n\n"
+    "Write what is actually in this item: who appears or speaks, what is shown, the "
+    "places, organisations, events and specific terms a person would type. Name things "
+    "explicitly rather than referring to them generally — 'a man in a lab coat' helps "
+    "nobody find anything; a name does.\n\n"
+    f"Keep the whole reply under {MAX_DESCRIPTION_CHARS} characters — a hard limit, not "
+    "a target, so finish the sentence you are on rather than trailing off as you "
+    "approach it. Most descriptions need nowhere near this much; write one paragraph "
+    "unless the material genuinely needs more than one.\n\n"
     "Describe, do not judge. Do not assess whether anything shown or said is true, and "
     "do not summarise the argument — another field does that. Never open with 'This "
-    "image' or 'The video shows'. No heading, no preamble, nothing after the paragraph."
+    "image' or 'The video shows'. No heading, no preamble, nothing after the text."
 )
-
-# A description is a retrieval aid, not an essay. The model is asked for one paragraph;
-# this is the backstop for when it does not listen.
-MAX_DESCRIPTION_CHARS = 2000
 
 
 def _prompt(asset: Asset, material: source.SourceMaterial) -> str:

@@ -7,7 +7,9 @@ import {
   Mic,
   Pencil,
   ScanText,
+  Tags as TagsIcon,
   Trash2,
+  Wand2,
   X,
 } from 'lucide-react'
 import type { Asset } from '@/api/assets'
@@ -246,6 +248,18 @@ export default function AssetDetail({
 
   const details = (
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+      {/* One button that runs describe, summarise and autotag in turn, for anyone who
+          would otherwise press the three icon buttons below one after another. */}
+      <EnrichmentButton
+        assetId={asset.id}
+        action="generate_all"
+        icon={Wand2}
+        label="Generate all"
+        runningLabel="Generating…"
+        start={enrichmentApi.generateAll}
+        failureMessage="Could not start generating"
+      />
+
       <div>
         <label className="label" htmlFor="asset-name">
           Name
@@ -259,9 +273,23 @@ export default function AssetDetail({
       </div>
 
       <div className="space-y-2">
-        <label className="label" htmlFor="asset-description">
-          Description
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <label className="label mb-0" htmlFor="asset-description">
+            Description
+          </label>
+          {/* Beside the label it writes into, rather than as its own row below the
+              box — describe fills this field, and that is what the icon says. */}
+          <EnrichmentButton
+            assetId={asset.id}
+            action="describe"
+            icon={Eye}
+            label="Describe with AI"
+            runningLabel="Describing…"
+            start={enrichmentApi.describe}
+            failureMessage="Could not start describing"
+            iconOnly
+          />
+        </div>
         <textarea
           id="asset-description"
           ref={descriptionRef}
@@ -270,23 +298,24 @@ export default function AssetDetail({
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
-        {/* Beside the field it writes into, rather than in a block of AI buttons at the
-            bottom — describe fills this box, and that was not obvious before. */}
-        <EnrichmentButton
-          assetId={asset.id}
-          action="describe"
-          icon={Eye}
-          label="Describe with AI"
-          runningLabel="Describing…"
-          start={enrichmentApi.describe}
-          failureMessage="Could not start describing"
-        />
       </div>
 
       <div className="space-y-2">
-        <label className="label" htmlFor="asset-summary">
-          Summary
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <label className="label mb-0" htmlFor="asset-summary">
+            Summary
+          </label>
+          <EnrichmentButton
+            assetId={asset.id}
+            action="summarize"
+            icon={FileText}
+            label="Summarise with AI"
+            runningLabel="Summarising…"
+            start={enrichmentApi.summarize}
+            failureMessage="Could not start summarising"
+            iconOnly
+          />
+        </div>
         <textarea
           id="asset-summary"
           ref={summaryRef}
@@ -294,15 +323,6 @@ export default function AssetDetail({
           placeholder="Written by AI, or by you. Searchable either way."
           value={summary}
           onChange={(e) => setSummary(e.target.value)}
-        />
-        <EnrichmentButton
-          assetId={asset.id}
-          action="summarize"
-          icon={FileText}
-          label="Summarise with AI"
-          runningLabel="Summarising…"
-          start={enrichmentApi.summarize}
-          failureMessage="Could not start summarising"
         />
       </div>
 
@@ -322,6 +342,19 @@ export default function AssetDetail({
           onAdd={(names) => void addTags(names)}
           onRemove={(tagId) => void removeTag(tagId)}
           label="Tags"
+          labelAdornment={
+            <EnrichmentButton
+              assetId={asset.id}
+              action="autotag"
+              icon={TagsIcon}
+              label="Suggest tags and a title"
+              runningLabel="Tagging…"
+              start={enrichmentApi.autotag}
+              failureMessage="Could not start tagging"
+              refreshOnFinish={false}
+              iconOnly
+            />
+          }
         />
         {tagError && (
           <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{tagError}</p>

@@ -30,6 +30,7 @@ from app.models.job import (
     KIND_DESCRIBE,
     KIND_EMBED,
     KIND_EXTRACT_TEXT,
+    KIND_GENERATE_ALL,
     KIND_SUMMARIZE,
 )
 from app.models.document import DocumentPage
@@ -179,6 +180,41 @@ def start_describe(
         )
 
     job = enrichment_jobs.submit(session, asset, KIND_DESCRIBE)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.post(
+    "/{asset_id}/generate-all", response_model=DataResponse[ActivityJobRead], status_code=202
+)
+def start_generate_all(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue summarize, describe and autotag together — the one-button version of
+    pressing each in turn."""
+    asset = _owned_asset(asset_id, user.id, session)
+    _require_provider(session, user.id)
+
+    if not summarisable(asset):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_summarisable",
+                "message": "This asset has no content to generate from",
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_GENERATE_ALL) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "This asset is already generating metadata",
+            },
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_GENERATE_ALL)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
 

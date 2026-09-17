@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import type { Tag } from '@/api/tags'
 
@@ -22,6 +23,9 @@ interface Props {
   placeholder?: string
   /** Rendered above the input; also the accessible name. */
   label?: string
+  /** Rendered beside the label — the "suggest tags" AI trigger, so it sits at label
+   *  height rather than as its own row below the input. */
+  labelAdornment?: ReactNode
 }
 
 const MAX_SUGGESTIONS = 8
@@ -34,6 +38,7 @@ export default function TagInput({
   disabled = false,
   placeholder = 'Add a tag…',
   label = 'Tags',
+  labelAdornment,
 }: Props) {
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
@@ -99,7 +104,10 @@ export default function TagInput({
 
   return (
     <div className="space-y-1.5">
-      <span className="label mb-0">{label}</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span className="label mb-0">{label}</span>
+        {labelAdornment}
+      </div>
 
       <div
         className="flex flex-wrap items-center gap-1 rounded-lg border border-gray-300 px-2 py-1.5 focus-within:ring-2 focus-within:ring-blue-500 dark:border-gray-600"
