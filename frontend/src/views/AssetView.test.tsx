@@ -67,10 +67,14 @@ beforeEach(() => {
   vi.spyOn(tagsApi, 'list').mockResolvedValue([])
   vi.spyOn(tagsApi, 'listCategories').mockResolvedValue([])
   vi.spyOn(usageApi, 'forAsset').mockResolvedValue({
-    total_cost: 0,
-    events: 0,
-    estimated: false,
-  } as never)
+    total_events: 0,
+    priced_events: 0,
+    cost: 0,
+    currency: 'USD',
+    estimated: true,
+    tokens: 0,
+    seconds: 0,
+  })
 })
 
 afterEach(() => {
@@ -85,7 +89,7 @@ describe('AssetView', () => {
     renderAt('/a/a1')
 
     expect(
-      await screen.findByRole('dialog', { name: 'Giordano interview' })
+      await screen.findByRole('heading', { name: 'Giordano interview' })
     ).toBeInTheDocument()
   })
 
@@ -95,7 +99,7 @@ describe('AssetView', () => {
     vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
 
     renderAt('/a/a1')
-    await screen.findByRole('dialog', { name: 'Giordano interview' })
+    await screen.findByRole('heading', { name: 'Giordano interview' })
 
     expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a1'])
   })
@@ -112,7 +116,7 @@ describe('AssetView', () => {
     const spy = vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
 
     renderAt('/a/a1?t=412.5')
-    await screen.findByRole('dialog', { name: 'Giordano interview' })
+    await screen.findByRole('heading', { name: 'Giordano interview' })
 
     expect(spy).toHaveBeenCalledWith('a1')
     // The player seeks on `loadedmetadata`, which jsdom never fires, so the assertion
@@ -127,7 +131,7 @@ describe('AssetView', () => {
     // Nothing to assert on the player, but rendering at all proves NaN did not reach
     // `currentTime`, which throws in a real browser.
     expect(
-      await screen.findByRole('dialog', { name: 'Giordano interview' })
+      await screen.findByRole('heading', { name: 'Giordano interview' })
     ).toBeInTheDocument()
   })
 })

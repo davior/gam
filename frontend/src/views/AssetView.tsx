@@ -14,8 +14,10 @@ import AssetDetail from '@/components/AssetDetail'
  * not, and until now `/a/anything` fell through the catch-all route to the library with
  * no sign anything had gone wrong.
  *
- * Renders the same `AssetDetail` the library modal does, reading from the library store
- * so its edit, delete and tag controls write to the same place they always have.
+ * Renders the same `AssetDetail` the library panel does, reading from the library store
+ * so its edit, delete and tag controls write to the same place they always have. Here it
+ * is a page and not a panel: there is no library beside it to dock against, and until the
+ * chrome moved into `DetailDock` this route drew a floating dialog over an empty shell.
  */
 export default function AssetView() {
   const { id = '' } = useParams()
@@ -80,7 +82,14 @@ export default function AssetView() {
   if (!asset) return null
 
   return (
-    <AssetDetail asset={asset} startAt={startAt} onClose={() => navigate('/library')} />
+    <div className="h-full">
+      <AssetDetail
+        asset={asset}
+        startAt={startAt}
+        closeLabel="Back to the library"
+        onClose={() => navigate('/library')}
+      />
+    </div>
   )
 }
 

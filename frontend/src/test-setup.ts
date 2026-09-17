@@ -25,3 +25,35 @@ if (!('IntersectionObserver' in globalThis)) {
   globalThis.IntersectionObserver =
     NoopIntersectionObserver as unknown as typeof IntersectionObserver
 }
+
+// jsdom ships no matchMedia either, and the asset panel asks it whether there is room to
+// dock beside the library or whether it has to cover the screen. The stub reports no
+// match, so suites that do not care about it get the full-screen chrome; a suite that
+// wants the docked chrome spies on this and says so out loud.
+// A `'matchMedia' in window` check narrows `window` to `never` here — the DOM types
+// say the method exists, and only the runtime disagrees.
+if (typeof window.matchMedia !== 'function') {
+  window.matchMedia = function matchMedia(query: string): MediaQueryList {
+    return {
+      media: query,
+      matches: false,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    }
+  }
+}
+
+// And no ResizeObserver, which the auto-growing description and summary boxes use to
+// re-measure when the panel is dragged to a different width.
+if (!('ResizeObserver' in globalThis)) {
+  class NoopResizeObserver implements ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = NoopResizeObserver as unknown as typeof ResizeObserver
+}

@@ -1,5 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Eye, FileText, Link2, ScanText, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  Eye,
+  FileText,
+  Info,
+  Link2,
+  Mic,
+  Pencil,
+  ScanText,
+  Trash2,
+  X,
+} from 'lucide-react'
 import type { Asset } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
@@ -8,12 +18,14 @@ import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
+import { useAutoGrow } from '@/utils/useAutoGrow'
 import AssetThumb from '@/components/AssetThumb'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
+import Tabs, { type TabSpec } from '@/components/Tabs'
 import TranscriptPanel from '@/components/TranscriptPanel'
 
 /** Audio and video can be transcribed; nothing else has speech in it. */
@@ -22,11 +34,20 @@ const SPEECH_TYPES = new Set(['audio', 'video'])
 /** Documents have text read out of them instead — the same idea, a different source. */
 const TEXT_TYPE = 'document'
 
+/**
+ * Types with something to look at. They get a media well worth giving height to, and
+ * they are the only ones that gain anything from the side-by-side layout — a waveform-less
+ * audio bar beside a transcript would just be a tall black rectangle.
+ */
+const VISUAL_TYPES = new Set(['video', 'image'])
+
 interface Props {
   asset: Asset
   onClose: () => void
   /** Seconds to start playback at — a search hit opening at the moment it matched. */
   startAt?: number
+  /** What the close control says. `/a/:id` goes back to the library rather than closing. */
+  closeLabel?: string
 }
 
 /** A row of the metadata table, rendered only when there is something to show. */
@@ -40,7 +61,21 @@ function Fact({ label, value }: { label: string; value: string }) {
   )
 }
 
-export default function AssetDetail({ asset, onClose, startAt }: Props) {
+/**
+ * Everything about one asset, and nothing about where it sits.
+ *
+ * Positioning belongs to `DetailDock` — this fills whatever box it is handed, whether
+ * that is a panel docked beside the library, a full-screen sheet on a phone, or the
+ * whole of `/a/:id`. The root is a container query context, so the layout answers to the
+ * width it actually has rather than the viewport's: drag the panel past `@4xl` and the
+ * media moves beside the tabs instead of sitting above them.
+ */
+export default function AssetDetail({
+  asset,
+  onClose,
+  startAt,
+  closeLabel = 'Close',
+}: Props) {
   const update = useLibraryStore((s) => s.update)
   const remove = useLibraryStore((s) => s.remove)
   const setAssetTags = useLibraryStore((s) => s.setAssetTags)
@@ -56,42 +91,46 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const panelRef = useRef<HTMLDivElement>(null)
+  const descriptionRef = useAutoGrow(description)
+  const summaryRef = useAutoGrow(summary)
+
   // The detail view owns the player element so the transcript can drive it. Passing a
   // ref down beats lifting playback state up: seeking is imperative, and mirroring
   // currentTime into React state on every frame would re-render the whole panel
   // sixty times a second.
-  const playerRef = useRef<HTMLVideoElement | HTMLAudioElement | null>(null)
+  const [player, setPlayer] = useState<HTMLVideoElement | HTMLAudioElement | null>(null)
   const [currentTime, setCurrentTime] = useState(0)
 
   // Seek once the player has enough metadata to accept it. Setting currentTime before
   // the browser knows the duration is silently ignored, which is the difference between
   // a search result that opens at the right moment and one that opens at zero.
-  const seekOnLoad = useCallback(
-    (player: HTMLVideoElement | HTMLAudioElement | null) => {
-      playerRef.current = player
-      if (!player || startAt === undefined) return
+  const attachPlayer = useCallback(
+    (element: HTMLVideoElement | HTMLAudioElement | null) => {
+      setPlayer(element)
+      if (!element || startAt === undefined) return
 
       const apply = () => {
-        player.currentTime = startAt
+        element.currentTime = startAt
       }
-      if (player.readyState >= 1) {
+      if (element.readyState >= 1) {
         apply()
       } else {
-        player.addEventListener('loadedmetadata', apply, { once: true })
+        element.addEventListener('loadedmetadata', apply, { once: true })
       }
     },
     [startAt]
   )
 
-  const seekTo = useCallback((seconds: number) => {
-    const player = playerRef.current
-    if (!player) return
-    player.currentTime = seconds
-    void player.play()?.catch(() => {
-      // Autoplay can be refused; the seek still happened, which is what was asked for.
-    })
-  }, [])
+  const seekTo = useCallback(
+    (seconds: number) => {
+      if (!player) return
+      player.currentTime = seconds
+      void player.play()?.catch(() => {
+        // Autoplay can be refused; the seek still happened, which is what was asked for.
+      })
+    },
+    [player]
+  )
 
   // Re-seed when a different asset opens in the same panel, or the fields would keep
   // showing the previous one's values.
@@ -112,17 +151,6 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     ensureTagsLoaded()
   }, [ensureTagsLoaded])
 
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  // What enrichment has cost on this asset. Re-read whenever the asset changes, which
-  // includes after a job finishes — EnrichmentButton refreshes it, and that bumps
-  // `metadata_modified_date`, so this picks up the new spend without its own poll.
   // The /a/{id} URL, which is what GN-4 says a Notes document should link to. Built from
   // `window.location.origin` rather than a configured base: whichever host the user is
   // looking at is the one their colleague can reach too.
@@ -140,6 +168,9 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     }
   }, [asset.id])
 
+  // What enrichment has cost on this asset. Re-read whenever the asset changes, which
+  // includes after a job finishes — EnrichmentButton refreshes it, and that bumps
+  // `metadata_modified_date`, so this picks up the new spend without its own poll.
   const [usage, setUsage] = useState<UsageTotals | null>(null)
   useEffect(() => {
     let current = true
@@ -211,234 +242,259 @@ export default function AssetDetail({ asset, onClose, startAt }: Props) {
     }
   }
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label={asset.name}
-        className="card flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden p-0"
+  const visual = VISUAL_TYPES.has(asset.asset_type)
+
+  const details = (
+    <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
+      <div>
+        <label className="label" htmlFor="asset-name">
+          Name
+        </label>
+        <input
+          id="asset-name"
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label className="label" htmlFor="asset-description">
+          Description
+        </label>
+        <textarea
+          id="asset-description"
+          ref={descriptionRef}
+          className="input min-h-[6rem] resize-none overflow-hidden"
+          placeholder="What is in this? Anything you write here is searchable."
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+        {/* Beside the field it writes into, rather than in a block of AI buttons at the
+            bottom — describe fills this box, and that was not obvious before. */}
+        <EnrichmentButton
+          assetId={asset.id}
+          action="describe"
+          icon={Eye}
+          label="Describe with AI"
+          runningLabel="Describing…"
+          start={enrichmentApi.describe}
+          failureMessage="Could not start describing"
+        />
+      </div>
+
+      <div className="space-y-2">
+        <label className="label" htmlFor="asset-summary">
+          Summary
+        </label>
+        <textarea
+          id="asset-summary"
+          ref={summaryRef}
+          className="input min-h-[6rem] resize-none overflow-hidden"
+          placeholder="Written by AI, or by you. Searchable either way."
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+        />
+        <EnrichmentButton
+          assetId={asset.id}
+          action="summarize"
+          icon={FileText}
+          label="Summarise with AI"
+          runningLabel="Summarising…"
+          start={enrichmentApi.summarize}
+          failureMessage="Could not start summarising"
+        />
+      </div>
+
+      <button
+        type="button"
+        onClick={save}
+        disabled={!dirty || saving || !name.trim()}
+        className="btn btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <header className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-2.5 dark:border-gray-700">
-          <h2 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
-            {asset.name}
-          </h2>
-          <div className="flex shrink-0 items-center gap-1">
+        {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
+      </button>
+
+      <div>
+        <TagInput
+          tags={asset.tags}
+          suggestions={suggestions}
+          onAdd={(names) => void addTags(names)}
+          onRemove={(tagId) => void removeTag(tagId)}
+          label="Tags"
+        />
+        {tagError && (
+          <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">{tagError}</p>
+        )}
+      </div>
+
+      <SuggestionPanel assetId={asset.id} />
+    </div>
+  )
+
+  const info = (
+    <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+      {asset.asset_type === TEXT_TYPE && (
+        <EnrichmentButton
+          assetId={asset.id}
+          action="extract_text"
+          icon={ScanText}
+          label="Extract text"
+          runningLabel="Reading…"
+          start={enrichmentApi.extractText}
+          failureMessage="Could not start reading this document"
+          refreshOnFinish={false}
+        />
+      )}
+      <EmbedButton assetId={asset.id} />
+
+      <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
+        <Fact label="Type" value={asset.asset_type} />
+        <Fact label="Format" value={asset.file_format ?? ''} />
+        <Fact label="Size" value={formatBytes(asset.size_bytes)} />
+        <Fact label="Duration" value={formatDuration(asset.duration_seconds)} />
+        <Fact label="Dimensions" value={formatDimensions(asset.width, asset.height)} />
+        <Fact label="Codec" value={asset.codec ?? ''} />
+        <Fact label="Original name" value={asset.original_name ?? ''} />
+        <Fact label="Added" value={formatDate(asset.upload_date)} />
+        {usage && usage.total_events > 0 && (
+          <Fact
+            label="AI cost (est.)"
+            value={
+              usage.priced_events > 0
+                ? formatCost(usage.cost, usage.currency)
+                : 'not priced'
+            }
+          />
+        )}
+      </dl>
+
+      {confirmingDelete ? (
+        <div className="space-y-2 rounded-md border border-red-200 p-3 dark:border-red-900">
+          <p className="text-xs text-gray-700 dark:text-gray-300">
+            Delete this asset and its file? This cannot be undone.
+          </p>
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => void copyLink()}
-              className="btn btn-ghost p-1.5"
-              aria-label="Copy link to this asset"
-              title={copied ? 'Link copied' : 'Copy link to this asset'}
+              onClick={confirmDelete}
+              className="btn btn-danger flex-1"
             >
-              <Link2
-                className={`h-4 w-4 ${copied ? 'text-green-600 dark:text-green-400' : ''}`}
-              />
+              Delete
             </button>
             <button
               type="button"
-              onClick={onClose}
-              className="btn btn-ghost p-1.5"
-              aria-label="Close"
+              onClick={() => setConfirmingDelete(false)}
+              className="btn btn-secondary flex-1"
             >
-              <X className="h-4 w-4" />
+              Cancel
             </button>
           </div>
-        </header>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirmingDelete(true)}
+          className="btn btn-ghost w-full text-red-600 dark:text-red-400"
+        >
+          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+          Delete
+        </button>
+      )}
+    </div>
+  )
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-auto md:flex-row">
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex min-h-[240px] flex-1 items-center justify-center bg-gray-900 p-2">
-              <Preview
-                asset={asset}
-                attachPlayer={seekOnLoad}
-                onTimeUpdate={setCurrentTime}
-              />
-            </div>
-
-            {SPEECH_TYPES.has(asset.asset_type) && (
-              <div className="flex max-h-[38vh] min-h-0 flex-col border-t border-gray-200 dark:border-gray-700">
-                <TranscriptPanel
-                  assetId={asset.id}
-                  onSeek={seekTo}
-                  currentTime={currentTime}
-                />
-              </div>
-            )}
-
-            {asset.asset_type === TEXT_TYPE && (
-              <div className="flex max-h-[38vh] min-h-0 flex-col border-t border-gray-200 dark:border-gray-700">
-                <DocumentTextPanel assetId={asset.id} />
-              </div>
-            )}
-          </div>
-
-          <div className="w-full shrink-0 space-y-4 p-4 md:w-80">
-            <div>
-              <label className="label" htmlFor="asset-name">
-                Name
-              </label>
-              <input
-                id="asset-name"
-                className="input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="asset-description">
-                Description
-              </label>
-              <textarea
-                id="asset-description"
-                className="input min-h-[80px] resize-y"
-                placeholder="What is in this? Anything you write here is searchable."
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="asset-summary">
-                Summary
-              </label>
-              <textarea
-                id="asset-summary"
-                className="input min-h-[80px] resize-y"
-                placeholder="Written by AI, or by you. Searchable either way."
-                value={summary}
-                onChange={(e) => setSummary(e.target.value)}
-              />
-            </div>
-
-            <button
-              type="button"
-              onClick={save}
-              disabled={!dirty || saving || !name.trim()}
-              className="btn btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
-            </button>
-
-            <div>
-              <TagInput
-                tags={asset.tags}
-                suggestions={suggestions}
-                onAdd={(names) => void addTags(names)}
-                onRemove={(tagId) => void removeTag(tagId)}
-                label="Tags"
-              />
-              {tagError && (
-                <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
-                  {tagError}
-                </p>
-              )}
-            </div>
-
-            <SuggestionPanel assetId={asset.id} />
-            {asset.asset_type === TEXT_TYPE && (
-              <EnrichmentButton
+  const tabs: TabSpec[] = [
+    { id: 'details', label: 'Details', icon: Pencil, content: details },
+    ...(SPEECH_TYPES.has(asset.asset_type)
+      ? [
+          {
+            id: 'transcript',
+            label: 'Transcript',
+            icon: Mic,
+            content: (
+              <TranscriptPanel
                 assetId={asset.id}
-                action="extract_text"
-                icon={ScanText}
-                label="Extract text"
-                runningLabel="Reading…"
-                start={enrichmentApi.extractText}
-                failureMessage="Could not start reading this document"
-                refreshOnFinish={false}
+                onSeek={seekTo}
+                currentTime={currentTime}
               />
-            )}
-            <EnrichmentButton
-              assetId={asset.id}
-              action="describe"
-              icon={Eye}
-              label="Describe with AI"
-              runningLabel="Describing…"
-              start={enrichmentApi.describe}
-              failureMessage="Could not start describing"
-            />
-            <EnrichmentButton
-              assetId={asset.id}
-              action="summarize"
-              icon={FileText}
-              label="Summarise with AI"
-              runningLabel="Summarising…"
-              start={enrichmentApi.summarize}
-              failureMessage="Could not start summarising"
-            />
-            <EmbedButton assetId={asset.id} />
+            ),
+          },
+        ]
+      : []),
+    ...(asset.asset_type === TEXT_TYPE
+      ? [
+          {
+            id: 'text',
+            label: 'Text',
+            icon: FileText,
+            content: <DocumentTextPanel assetId={asset.id} />,
+          },
+        ]
+      : []),
+    { id: 'info', label: 'Info', icon: Info, content: info },
+  ]
 
-            <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
-              <Fact label="Type" value={asset.asset_type} />
-              <Fact label="Format" value={asset.file_format ?? ''} />
-              <Fact label="Size" value={formatBytes(asset.size_bytes)} />
-              <Fact label="Duration" value={formatDuration(asset.duration_seconds)} />
-              <Fact
-                label="Dimensions"
-                value={formatDimensions(asset.width, asset.height)}
-              />
-              <Fact label="Codec" value={asset.codec ?? ''} />
-              <Fact label="Original name" value={asset.original_name ?? ''} />
-              <Fact label="Added" value={formatDate(asset.upload_date)} />
-              {usage && usage.total_events > 0 && (
-                <Fact
-                  label="AI cost (est.)"
-                  value={
-                    usage.priced_events > 0
-                      ? formatCost(usage.cost, usage.currency)
-                      : 'not priced'
-                  }
-                />
-              )}
-            </dl>
+  return (
+    <div className="@container flex h-full min-h-0 flex-col">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 px-4 py-2.5 dark:border-gray-700">
+        <h2 className="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {asset.name}
+        </h2>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => void copyLink()}
+            className="btn btn-ghost p-1.5"
+            aria-label="Copy link to this asset"
+            title={copied ? 'Link copied' : 'Copy link to this asset'}
+          >
+            <Link2
+              className={`h-4 w-4 ${copied ? 'text-green-600 dark:text-green-400' : ''}`}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn btn-ghost p-1.5"
+            aria-label={closeLabel}
+            title={closeLabel}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </header>
 
-            {confirmingDelete ? (
-              <div className="space-y-2 rounded-md border border-red-200 p-3 dark:border-red-900">
-                <p className="text-xs text-gray-700 dark:text-gray-300">
-                  Delete this asset and its file? This cannot be undone.
-                </p>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={confirmDelete}
-                    className="btn btn-danger flex-1"
-                  >
-                    Delete
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingDelete(false)}
-                    className="btn btn-secondary flex-1"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmingDelete(true)}
-                className="btn btn-ghost w-full text-red-600 dark:text-red-400"
-              >
-                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                Delete
-              </button>
-            )}
-          </div>
+      <div className={`flex min-h-0 flex-1 flex-col ${visual ? '@4xl:flex-row' : ''}`}>
+        <div
+          className={`flex items-center justify-center bg-gray-900 ${
+            visual
+              ? 'aspect-video w-full shrink-0 @4xl:aspect-auto @4xl:h-full @4xl:min-h-0 @4xl:w-auto @4xl:flex-1'
+              : 'w-full shrink-0 py-4'
+          }`}
+        >
+          <Preview
+            asset={asset}
+            attachPlayer={attachPlayer}
+            onTimeUpdate={setCurrentTime}
+          />
+        </div>
+
+        <div
+          className={`flex min-h-0 flex-1 flex-col border-t border-gray-200 dark:border-gray-700 ${
+            visual
+              ? '@4xl:w-[26rem] @4xl:flex-none @4xl:border-l @4xl:border-t-0 @6xl:w-[32rem]'
+              : ''
+          }`}
+        >
+          <Tabs tabs={tabs} />
         </div>
       </div>
     </div>
   )
 }
 
-/** The asset itself, played or shown in place. */
+/** The asset itself, played or shown in place. Fills the well it is given. */
 function Preview({
   asset,
   attachPlayer,
@@ -460,6 +516,9 @@ function Preview({
     // controls + preload="metadata": the browser fetches enough to show a duration and
     // enable seeking without downloading the whole file. The Range support on the
     // server is what makes that work.
+    //
+    // h-full + object-contain rather than a viewport cap: the well decides how much room
+    // there is, and the video letterboxes into it whatever shape the panel is dragged to.
     return (
       <video
         key={asset.id}
@@ -469,7 +528,7 @@ function Preview({
         preload="metadata"
         poster={asset.thumb_url ?? undefined}
         onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
-        className="max-h-[45vh] w-full"
+        className="h-full w-full object-contain"
       />
     )
   }
@@ -483,7 +542,7 @@ function Preview({
         controls
         preload="metadata"
         onTimeUpdate={(e) => onTimeUpdate(e.currentTarget.currentTime)}
-        className="w-full px-4"
+        className="w-full max-w-2xl px-4"
       />
     )
   }
@@ -493,13 +552,13 @@ function Preview({
       <img
         src={asset.file_url}
         alt={asset.name}
-        className="max-h-[60vh] object-contain"
+        className="h-full w-full object-contain"
       />
     )
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 p-8">
+    <div className="flex flex-col items-center gap-3 px-8 py-4">
       <AssetThumb asset={asset} className="h-40 w-32 rounded" />
       <a
         href={asset.file_url}
