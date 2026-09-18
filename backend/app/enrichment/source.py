@@ -147,6 +147,15 @@ def gather(
     a summary what it is *about*. The transcript stays primary either way; this adds to
     it, and does not reorder the precedence the milestone doc sets out.
     """
+    if asset.storage_key is None and asset.parent_asset_id:
+        # A clip (M7). It has no transcript of its own — only the parent does, for the
+        # whole recording rather than this range — and it inherits the parent's
+        # `thumb_key` (see `services/assets.py::create_clip`), so without this check
+        # the poster-fallback branch below would silently "succeed" using a generic
+        # frame instead of ever raising. That produces a description of the wrong
+        # content rather than failing loudly, which is worse than refusing outright.
+        raise NoSourceMaterial("This is a clip. Describe, summarise or tag the original asset instead.")
+
     text = transcript_text(session, asset)
     if text:
         truncated = len(text) > MAX_TRANSCRIPT_CHARS

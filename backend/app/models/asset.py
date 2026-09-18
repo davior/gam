@@ -21,9 +21,8 @@ class Asset(SQLModel, table=True):
     search, filter and tag query became a union — and "show me everything about the
     Giordano interview" is the query this product exists to answer.
 
-    Fields for those later milestones are not declared yet. Adding a column is one
-    Alembic migration, which is exactly why the project has Alembic; carrying six
-    milestones of unused columns is not.
+    M8's fields are not declared yet — that is still one Alembic migration away, and
+    carrying unused columns for a milestone not yet started is not worth it.
     """
 
     # The library listing is "my assets, newest first", and it is the hottest query in
@@ -50,6 +49,20 @@ class Asset(SQLModel, table=True):
     # parent's bytes, not a copy of them.
     storage_key: Optional[str] = None
     thumb_key: Optional[str] = None
+
+    # ─── clips (M7) ──────────────────────────────────────────────────────────
+    # A clip is *identified* by `storage_key IS NULL AND parent_asset_id IS NOT
+    # NULL` — this column is the physical fact a delete guard depends on, not a label.
+    # A real foreign key (not the transcriptsegment/documentpage pattern of no FK plus
+    # explicit cleanup): unlike those, a live clip is meant to *block* its parent's
+    # deletion until it is promoted or removed, and SQLite enforcing that is the
+    # safety net behind `services/assets.py::delete_asset`'s own guard, the same
+    # belt-and-suspenders role the FK already plays for `assettag`/`suggestion`.
+    parent_asset_id: Optional[str] = Field(default=None, foreign_key="asset.id", index=True)
+    # Seconds into the parent. Both set together, always by the code that creates the
+    # clip or extraction — never edited afterwards (M7 does not build a trim editor).
+    in_point: Optional[float] = None
+    out_point: Optional[float] = None
 
     original_name: Optional[str] = None
     mime_type: Optional[str] = None

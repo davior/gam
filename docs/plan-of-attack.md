@@ -439,6 +439,13 @@ a thing a future session will otherwise assume is done.
    exercised only by tests with stubbed retrievers, which prove the *fusion* is correct
    and say nothing about retrieval quality. Until that run happens, treat M5 as
    structurally complete and qualitatively unmeasured.
+
+   **Update, reported during M7**: the user confirms embedding is deployed and operating
+   well in production. Recorded as-given rather than upgraded into a pass on the specific
+   acceptance queries above — a general "it's working" and "the Giordano/Schwab queries
+   return the right asset at the right second" are different claims, and only the user is
+   in a position to run the second. If that specific run has also happened, this note
+   should be replaced with the result rather than left to imply it from the general one.
 2. **GN-7 and GN-8 are specified and unapplied** (python-jose on five CVEs; the Python
    version). They are changes to `davior/gecko-notes`, not here — see
    `docs/gecko-notes-integration.md`.

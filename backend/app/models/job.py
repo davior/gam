@@ -38,6 +38,13 @@ KIND_GENERATE_ALL = "generate_all"
 # One action applied across a chosen set of assets. Which action, and which assets,
 # live in `EnrichmentJob.payload` — see there for why it is one job and not N.
 KIND_BULK_ENRICH = "bulk_enrich"
+# M7. Cutting a time range with ffmpeg — either into a brand-new standalone asset, or
+# in place over an existing clip (`payload["mode"]` says which; see
+# `enrichment/extract_subvideo.py`). Deliberately outside `ENRICHMENT_KINDS`: that set
+# gates M6's AI-cost bulk-enrichment selection UI, and this calls no provider and
+# costs nothing, the same reason `KIND_EXTRACT_TEXT` sits apart from the LLM jobs
+# despite also being per-asset.
+KIND_EXTRACT_SUBVIDEO = "extract_subvideo"
 
 # Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(

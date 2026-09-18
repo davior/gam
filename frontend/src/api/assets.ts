@@ -20,6 +20,15 @@ export interface Asset {
   asset_type: AssetType
   source: string
 
+  /** M7. Provenance on any of clip/promoted/extracted; only a live clip
+   *  (`source === 'clip'`) has no file of its own and needs `in_point`/`out_point`
+   *  to bound playback of its parent's bytes — a promoted or freshly-extracted
+   *  sub-video keeps this as a breadcrumb but is a standalone asset in every other
+   *  respect, `source` (not this) is what tells the two apart. */
+  parent_asset_id: string | null
+  in_point: number | null
+  out_point: number | null
+
   original_name: string | null
   mime_type: string | null
   file_format: string | null

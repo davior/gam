@@ -32,6 +32,12 @@ class ActivityJobRead(BaseModel):
     asset_name: str = ""
     model: str = ""
 
+    # M7 only, and only once a `KIND_EXTRACT_SUBVIDEO` "extract" job has finished: the
+    # new asset it created. `asset_id` stays pointed at the *source* throughout that
+    # job's life, so this is the one place the frontend can learn the result's id —
+    # there is nowhere else to put it in a deliberately flat, kind-agnostic shape.
+    result_asset_id: Optional[str] = None
+
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime

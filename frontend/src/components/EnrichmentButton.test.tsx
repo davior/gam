@@ -24,6 +24,7 @@ function job(overrides: Partial<ActivityJob> = {}): ActivityJob {
     asset_id: 'a1',
     asset_name: 'clip.mp4',
     model: 'claude-sonnet-4-20250514',
+    result_asset_id: null,
     error_message: null,
     created_at: '2026-09-15T06:00:00Z',
     updated_at: '2026-09-15T06:00:00Z',

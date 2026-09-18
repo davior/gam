@@ -12,21 +12,25 @@ import logging
 import mimetypes
 from typing import AsyncIterator, Iterable, Optional
 
-from sqlmodel import Session, col, delete
+from sqlmodel import Session, col, delete, select, update
 
 from app.auth import sign_media_key
 from app.clock import utcnow
 from app.config import settings
 from app.ingest import thumbnails
 from app.ingest.filetypes import (
+    SOURCE_CLIP,
+    SOURCE_SUBVIDEO,
     SOURCE_UPLOAD,
+    TYPE_AUDIO,
     TYPE_IMAGE,
+    TYPE_VIDEO,
     asset_type_for,
     display_name_from,
     extension_of,
     sanitize_original_name,
 )
-from app.ingest.probe import probe
+from app.ingest.probe import ProbeResult, probe
 from app.models.asset import Asset
 from app.models.suggestion import Suggestion
 from app.models.document import DocumentPage
@@ -34,7 +38,7 @@ from app.models.transcript import TranscriptSegment
 from app.schemas_assets import AssetRead, AssetTagRead
 from app.search import fts, vectors
 from app.services import tags
-from app.storage import LocalStorage, StorageError, new_key, thumb_key_for
+from app.storage import LocalStorage, StorageError, StoredFile, new_key, thumb_key_for
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +214,24 @@ def reindex_ids(session: Session, asset_ids: Iterable[str]) -> None:
             _reindex(session, asset)
 
 
+def blocking_clips(session: Session, asset_id: str) -> list[Asset]:
+    """Live clips that would be orphaned by deleting this asset.
+
+    Only rows with no `storage_key` of their own count — a promoted clip or a
+    freshly-extracted sub-video owns real bytes and does not depend on this asset
+    still existing, even though it keeps `parent_asset_id` as a provenance breadcrumb.
+    Called by the router *before* `delete_asset`, so a blocked delete never reaches the
+    point of touching a row.
+    """
+    return list(
+        session.exec(
+            select(Asset).where(
+                col(Asset.parent_asset_id) == asset_id, col(Asset.storage_key).is_(None)
+            )
+        ).all()
+    )
+
+
 def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     """Remove the row, everything that hangs off it, and the bytes it owns.
 
@@ -228,7 +250,11 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
 
     Suggestions are in the first category — `Suggestion.asset_id` is a foreign key too,
     so an asset with a pending suggestion would be undeletable exactly the way a tagged
-    one used to be.
+    one used to be. `parent_asset_id` (M7) is the same category for a promoted clip or
+    a fresh extraction that kept this asset as a provenance breadcrumb — the caller is
+    expected to have already called `blocking_clips` and refused the delete if any
+    *live* clip depends on this asset, but a survivor's mere breadcrumb still has to be
+    cleared, or the same foreign key raises on it the moment this row is gone.
     """
     storage_key, thumb_key = asset.storage_key, asset.thumb_key
 
@@ -238,6 +264,7 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
     session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
     session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
+    session.exec(update(Asset).where(col(Asset.parent_asset_id) == asset_id).values(parent_asset_id=None))
     session.delete(asset)
     session.commit()
 
@@ -326,24 +353,216 @@ def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str
     return list(changes.keys())
 
 
+# ─── clips and sub-videos (M7) ────────────────────────────────────────────────
+
+
+def _format_timestamp(seconds: float) -> str:
+    total = max(int(seconds), 0)
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}:{secs:02d}"
+
+
+def _format_range(start: float, end: float) -> str:
+    return f"{_format_timestamp(start)}–{_format_timestamp(end)}"
+
+
+def create_clip(
+    session: Session,
+    parent: Asset,
+    *,
+    in_point: float,
+    out_point: float,
+    name: Optional[str] = None,
+) -> Asset:
+    """A non-destructive clip: an Asset row, no file, no ffmpeg, no job.
+
+    Validated against `parent` rather than trusted from the caller — `in_point`/
+    `out_point` are user input by way of an in/out editor — and raises `ValueError`
+    on anything that should not become a row, which the router turns into a 400, the
+    same pattern `list_assets` already uses for `min_duration > max_duration`.
+    Clipping a clip is refused rather than resolved to the real ancestor: `promote`
+    already turns a clip into a real file in place, which covers "I want this exact
+    range as a standalone file" without a second, coordinate-flattening code path.
+    """
+    if parent.asset_type not in (TYPE_VIDEO, TYPE_AUDIO):
+        raise ValueError("Only video and audio assets can be clipped")
+    if parent.storage_key is None:
+        raise ValueError("A clip cannot itself be clipped — clip the original asset")
+    if in_point < 0 or out_point <= in_point:
+        raise ValueError("The out point must be after the in point")
+    if parent.duration_seconds is not None and out_point > parent.duration_seconds:
+        raise ValueError("The out point is past the end of the asset")
+
+    clip = Asset(
+        user_id=parent.user_id,
+        name=name or f"Clip of {parent.name} ({_format_range(in_point, out_point)})",
+        asset_type=parent.asset_type,
+        source=SOURCE_CLIP,
+        storage_key=None,
+        # Copied, not resolved later: a clip's thumbnail is a real, already-existing
+        # object, so it signs and serves exactly like any other asset's `thumb_key` —
+        # only `file_url` needs `to_read_model`'s parent-resolution, since only
+        # `storage_key` has to stay null for this to be a clip at all.
+        thumb_key=parent.thumb_key,
+        parent_asset_id=parent.id,
+        in_point=in_point,
+        out_point=out_point,
+        mime_type=parent.mime_type,
+        file_format=parent.file_format,
+        duration_seconds=out_point - in_point,
+        width=parent.width,
+        height=parent.height,
+        codec=parent.codec,
+    )
+    session.add(clip)
+    session.commit()
+    session.refresh(clip)
+    _reindex(session, clip)
+    return clip
+
+
+def list_children(session: Session, parent_id: str, user_id: str) -> list[Asset]:
+    """Everything derived from this asset: live clips and past promotions/extractions.
+
+    Unfiltered by `storage_key` deliberately — a "Clips" tab wants the whole history,
+    and the delete guard's promote UI filters this down to `source == SOURCE_CLIP`
+    itself, so one endpoint serves both rather than needing a second for the narrower
+    question `blocking_clips` already answers for the guard itself.
+    """
+    return list(
+        session.exec(
+            select(Asset)
+            .where(col(Asset.parent_asset_id) == parent_id, Asset.user_id == user_id)
+            .order_by(col(Asset.upload_date).desc())
+        ).all()
+    )
+
+
+def create_subvideo_asset(
+    session: Session,
+    *,
+    source_asset: Asset,
+    stored: StoredFile,
+    thumb_key: Optional[str],
+    in_point: float,
+    out_point: float,
+    name: Optional[str],
+    probe_result: ProbeResult,
+) -> Asset:
+    """A freshly-extracted sub-video: a brand-new, standalone Asset.
+
+    `parent_asset_id` is provenance only — this row owns real bytes of its own
+    (`storage_key=stored.key`), so it never blocks `source_asset`'s deletion and never
+    appears in `blocking_clips`. `in_point`/`out_point` stay null: this file's own
+    timeline starts at 0, unlike a clip's window into its parent's.
+    """
+    subvideo = Asset(
+        user_id=source_asset.user_id,
+        name=name or f"{source_asset.name} ({_format_range(in_point, out_point)})",
+        asset_type=source_asset.asset_type,
+        source=SOURCE_SUBVIDEO,
+        storage_key=stored.key,
+        thumb_key=thumb_key,
+        parent_asset_id=source_asset.id,
+        original_name=source_asset.original_name,
+        mime_type=mimetypes.guess_type(stored.key)[0],
+        file_format=extension_of(stored.key).lstrip("."),
+        size_bytes=stored.size_bytes,
+        checksum_sha256=stored.sha256,
+        duration_seconds=probe_result.duration_seconds or (out_point - in_point),
+        width=probe_result.width,
+        height=probe_result.height,
+        codec=probe_result.codec,
+    )
+    session.add(subvideo)
+    session.commit()
+    session.refresh(subvideo)
+    _reindex(session, subvideo)
+    return subvideo
+
+
+def promote_clip(
+    session: Session, clip: Asset, *, stored: StoredFile, thumb_key: Optional[str], probe_result: ProbeResult
+) -> Asset:
+    """Turn a live clip into a standalone sub-video, in place.
+
+    Same row, same id — anything that already references this clip (a search hit, a
+    link, a "Clips" tab entry) keeps pointing at something real. `parent_asset_id`
+    stays, now as provenance rather than a live dependency. `in_point`/`out_point` are
+    cleared, not kept: they were coordinates into the *parent's* timeline, and the
+    extracted file has its own, starting at 0 — leaving the old values in place would
+    have playback seek into a nine-second file at second 61.
+    """
+    clip.storage_key = stored.key
+    clip.thumb_key = thumb_key or clip.thumb_key
+    clip.source = SOURCE_SUBVIDEO
+    clip.in_point = None
+    clip.out_point = None
+    clip.mime_type = mimetypes.guess_type(stored.key)[0]
+    clip.file_format = extension_of(stored.key).lstrip(".")
+    clip.size_bytes = stored.size_bytes
+    clip.checksum_sha256 = stored.sha256
+    if probe_result.duration_seconds is not None:
+        clip.duration_seconds = probe_result.duration_seconds
+    if probe_result.width is not None:
+        clip.width = probe_result.width
+    if probe_result.height is not None:
+        clip.height = probe_result.height
+    if probe_result.codec is not None:
+        clip.codec = probe_result.codec
+    clip.metadata_modified_date = utcnow()
+
+    session.add(clip)
+    session.commit()
+    session.refresh(clip)
+    _reindex(session, clip)
+    return clip
+
+
 # ─── serialisation ───────────────────────────────────────────────────────────
 
 
+def parents_for_many(session: Session, assets: Iterable[Asset]) -> dict[str, Asset]:
+    """Every listed asset's parent, in one query, for `to_read_model`'s `parent` arg.
+
+    Same shape as `tags.tags_for_many`, and for the same reason: a listing's clips must
+    not each ask for their own parent, which is a query per clip on the hottest page in
+    the application. Most rows on a page are not clips at all, so this is usually a
+    query over an empty set of ids — cheap, and simpler than special-casing that away.
+    """
+    parent_ids = {a.parent_asset_id for a in assets if a.parent_asset_id}
+    if not parent_ids:
+        return {}
+    rows = session.exec(select(Asset).where(col(Asset.id).in_(parent_ids))).all()
+    return {row.id: row for row in rows}
+
+
 def to_read_model(
-    asset: Asset, storage: LocalStorage, asset_tags: Optional[list] = None
+    asset: Asset,
+    storage: LocalStorage,
+    asset_tags: Optional[list] = None,
+    parent: Optional[Asset] = None,
 ) -> AssetRead:
     """An Asset as the API returns it, with freshly signed URLs.
 
-    `asset_tags` is passed in rather than fetched. A listing loads every row's tags in
-    one query and hands each one its slice; fetching here instead would put a query per
-    asset on the hottest path in the application.
+    `asset_tags` is passed in rather than fetched, for the same reason `parent` is:
+    a listing loads every row's tags (and every clip's parent) in one query each and
+    hands each row its slice, rather than asking per row on the hottest path in the
+    application.
+
+    A clip (`asset.storage_key is None`) has no file of its own — `file_url` and
+    `missing` resolve against `parent`'s bytes instead, since that is what actually
+    plays. `thumb_url` needs no such resolution: a clip's `thumb_key` is copied from
+    its parent at creation time (`create_clip`), so it already points at a real object
+    and signs like any other asset's.
     """
-    file_url = _signed_url(asset.storage_key)
+    playable_key = asset.storage_key if asset.storage_key else (parent.storage_key if parent else None)
+    file_url = _signed_url(playable_key)
     thumb_url = _signed_url(asset.thumb_key)
 
     missing = False
-    if asset.storage_key:
-        missing = not storage.stat(asset.storage_key).exists
+    if playable_key:
+        missing = not storage.stat(playable_key).exists
 
     return AssetRead(
         id=asset.id,
@@ -352,6 +571,9 @@ def to_read_model(
         summary=asset.summary,
         asset_type=asset.asset_type,
         source=asset.source,
+        parent_asset_id=asset.parent_asset_id,
+        in_point=asset.in_point,
+        out_point=asset.out_point,
         original_name=asset.original_name,
         mime_type=asset.mime_type,
         file_format=asset.file_format,

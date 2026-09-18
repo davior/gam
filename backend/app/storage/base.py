@@ -98,6 +98,16 @@ class Storage(Protocol):
 
     def write_bytes(self, key: str, data: bytes) -> StoredFile: ...
 
+    def write_file(self, key: str, source_path: Path) -> StoredFile:
+        """For a file a job already produced on disk — ffmpeg's own output.
+
+        Not a rename: `source_path` is typically under a `tempfile.TemporaryDirectory`,
+        commonly a different filesystem from the storage root (a Docker bind mount,
+        for instance), and `os.rename`/`os.replace` across filesystems raises `EXDEV`.
+        Implementations copy the bytes in, the same way `write_stream` does.
+        """
+        ...
+
     def open(self, key: str) -> BinaryIO: ...
 
     def materialise(self, key: str) -> AbstractContextManager[Path]:

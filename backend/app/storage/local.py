@@ -83,6 +83,37 @@ class LocalStorage:
             raise
         return StoredFile(key=key, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
 
+    def write_file(self, key: str, source_path: Path) -> StoredFile:
+        """For a file a job already produced on disk — ffmpeg's sub-video output.
+
+        A real copy, not `shutil.move`/`os.rename`: `source_path` usually lives under a
+        `tempfile.TemporaryDirectory`, which is not guaranteed to share a filesystem
+        with the storage root (it commonly does not, under a Docker bind mount), and a
+        cross-filesystem rename raises `EXDEV`. Copies in `CHUNK_SIZE` pieces so a large
+        video does not sit in memory whole, hashing as it streams — same shape as
+        `write_stream`, reading from a file instead of an async iterator. The final
+        `.partial` -> `path` rename is always same-filesystem, since both are under
+        `self.root`.
+        """
+        path = self._path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = path.with_name(path.name + ".partial")
+
+        digest = hashlib.sha256()
+        size = 0
+        try:
+            with open(source_path, "rb") as src, open(partial, "wb") as dst:
+                while chunk := src.read(CHUNK_SIZE):
+                    dst.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+            os.replace(partial, path)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
+
+        return StoredFile(key=key, size_bytes=size, sha256=digest.hexdigest())
+
     # ─── reading ─────────────────────────────────────────────────────────────
 
     def open(self, key: str) -> BinaryIO:
