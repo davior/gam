@@ -166,3 +166,50 @@ def test_the_migrated_schema_enforces_case_insensitive_tag_names(alembic_config)
             "INSERT INTO tag (id, user_id, name, created_at)"
             " VALUES ('3', 'other', 'nato', '2026-01-01')"
         )
+
+
+def test_add_clip_columns_survives_real_foreign_key_references(alembic_config):
+    """The landmine this guards against was real, not theoretical (M7's first deploy).
+
+    `56ac14e89a0c` -> `7d4b9c1a6f28` batch-recreates `asset` to add its own
+    self-referencing foreign key. SQLite enforces foreign keys on DROP TABLE too — an
+    implicit "as if every row were deleted" check — so recreating `asset` while
+    `PRAGMA foreign_keys=ON` (every connection here runs with it on, see
+    app.database's connect listener) fails the moment another table holds a row that
+    actually references one, which is exactly what `assettag` does in any populated
+    database. A fresh database never catches this: schema migrations always run before
+    any fixture inserts a row, so there is nothing yet to violate — which is exactly
+    how this shipped clean and broke on the first real deploy. This seeds a real
+    cross-reference first, the way production always has one, so the migration is
+    proven against the case that matters rather than the empty case every other test
+    in this file uses.
+    """
+    config, db_path = alembic_config
+    command.upgrade(config, "56ac14e89a0c")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key,"
+            " size_bytes, field_provenance, upload_date, modified_date, metadata_modified_date)"
+            " VALUES ('a1', 'u', 'Real asset', 'video', 'local_upload', 'k1',"
+            " 100, '{}', '2026-01-01', '2026-01-01', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO tag (id, user_id, name, created_at)"
+            " VALUES ('t1', 'u', 'Tag', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO assettag (asset_id, tag_id, created_at) VALUES ('a1', 't1', '2026-01-01')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT id FROM asset WHERE id = 'a1'").fetchone() is not None
+        assert conn.execute(
+            "SELECT * FROM assettag WHERE asset_id = 'a1' AND tag_id = 't1'"
+        ).fetchone() is not None
+        conn.execute("PRAGMA foreign_keys=ON")
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
