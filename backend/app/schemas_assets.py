@@ -16,6 +16,13 @@ class AssetRead(BaseModel):
     asset_type: str
     source: str
 
+    # M7. `parent_asset_id` is provenance on any of clip/promoted/extracted; only a
+    # clip (`source == "clip"`) has no file of its own and needs `in_point`/
+    # `out_point` to bound playback of its parent's bytes.
+    parent_asset_id: Optional[str] = None
+    in_point: Optional[float] = None
+    out_point: Optional[float] = None
+
     original_name: Optional[str] = None
     mime_type: Optional[str] = None
     file_format: Optional[str] = None

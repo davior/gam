@@ -14,13 +14,14 @@ nothing in GAM holds a document read-only while a job runs.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Type
 
 from sqlmodel import Session, col, select
 
 from app.jobs.runner import ACTIVE_STATUSES, JobQueue, is_stale
-from app.models.job import EnrichmentJob
+from app.models.job import KIND_EXTRACT_SUBVIDEO, EnrichmentJob
 from app.schemas_jobs import ActivityJobRead
 
 
@@ -40,6 +41,23 @@ class JobKind:
         self.queue_for = queue_for
 
 
+def _result_asset_id(job: EnrichmentJob) -> Optional[str]:
+    """The asset a `KIND_EXTRACT_SUBVIDEO` "extract" job created, once it has.
+
+    Best-effort, the same defensive shape `routers/transcripts.py::_words_of` uses to
+    read a JSON-as-TEXT column that might be empty, or — for every other kind, whose
+    payload means something else entirely — simply not have this key.
+    """
+    if job.kind != KIND_EXTRACT_SUBVIDEO or not job.payload:
+        return None
+    try:
+        data = json.loads(job.payload)
+    except ValueError:
+        return None
+    value = data.get("created_asset_id") if isinstance(data, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def _enrichment_to_activity(job: EnrichmentJob) -> ActivityJobRead:
     return ActivityJobRead(
         id=job.id,
@@ -56,6 +74,7 @@ def _enrichment_to_activity(job: EnrichmentJob) -> ActivityJobRead:
         asset_id=job.asset_id,
         asset_name=job.asset_name or "",
         model=job.model or "",
+        result_asset_id=_result_asset_id(job),
         error_message=job.error_message,
         created_at=job.created_at,
         updated_at=job.updated_at,

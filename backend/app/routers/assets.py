@@ -211,12 +211,19 @@ def list_assets(
         .offset(offset)
     ).all()
 
-    # One query for the whole page's tags, not one per row.
+    # One query for the whole page's tags, and one for however many of them are clips'
+    # parents — not one of either per row.
     tags_by_asset = tag_service.tags_for_many(session, [row.id for row in rows])
+    parents_by_id = service.parents_for_many(session, rows)
 
     return ListResponse[AssetRead](
         data=[
-            service.to_read_model(row, storage, tags_by_asset.get(row.id, []))
+            service.to_read_model(
+                row,
+                storage,
+                tags_by_asset.get(row.id, []),
+                parent=parents_by_id.get(row.parent_asset_id),
+            )
             for row in rows
         ],
         total=total,
@@ -245,8 +252,11 @@ def get_asset(
     # Tags loaded explicitly, like the list endpoint does. `to_read_model` defaults them
     # to empty, so omitting this does not fail — it silently returns an untagged asset,
     # and the store believes it.
+    parent = session.get(Asset, asset.parent_asset_id) if asset.parent_asset_id else None
     return DataResponse(
-        data=service.to_read_model(asset, storage, tag_service.tags_for(session, asset.id))
+        data=service.to_read_model(
+            asset, storage, tag_service.tags_for(session, asset.id), parent=parent
+        )
     )
 
 
@@ -271,8 +281,11 @@ def update_asset(
     # Same reason as the read above, and it bites harder here: the library store replaces
     # its copy with whatever this returns, so a response with empty tags makes an
     # asset's tags disappear from the grid after a rename until the page is reloaded.
+    parent = session.get(Asset, asset.parent_asset_id) if asset.parent_asset_id else None
     return DataResponse(
-        data=service.to_read_model(asset, storage, tag_service.tags_for(session, asset.id))
+        data=service.to_read_model(
+            asset, storage, tag_service.tags_for(session, asset.id), parent=parent
+        )
     )
 
 
@@ -292,6 +305,23 @@ def delete_asset(
     storage: LocalStorage = Depends(get_storage),
 ) -> None:
     asset = _owned(asset_id, user.id, session)
+
+    # Checked here, before `delete_asset` touches anything: a live clip (M7) is meant
+    # to block this, and reporting how many rather than just refusing is what lets the
+    # frontend offer "promote them, then delete" instead of a dead end.
+    blocking = service.blocking_clips(session, asset.id)
+    if blocking:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "asset_has_dependent_clips",
+                "message": (
+                    f"{len(blocking)} clip{'' if len(blocking) == 1 else 's'} depend on "
+                    "this asset. Extract them as sub-videos first."
+                ),
+            },
+        )
+
     service.delete_asset(session, storage, asset)
 
 

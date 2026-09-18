@@ -64,10 +64,19 @@ def search(
     assets = search_service.load_assets(
         session, user.id, [a.asset_id for a in outcome.assets]
     )
+    # A clip can be a hit same as any asset (it is indexed like one — see
+    # `services/assets.py::create_clip`); its `file_url` resolves through its parent,
+    # batch-loaded here for the same reason `list_assets` does it rather than asking
+    # per row.
+    parents_by_id = asset_service.parents_for_many(session, assets.values())
 
     hits = [
         SearchHit(
-            asset=asset_service.to_read_model(assets[fused.asset_id], storage),
+            asset=asset_service.to_read_model(
+                assets[fused.asset_id],
+                storage,
+                parent=parents_by_id.get(assets[fused.asset_id].parent_asset_id),
+            ),
             score=round(fused.score, 6),
             snippet=fused.snippet,
             start_time=fused.start_time,

@@ -7,6 +7,7 @@ own cap while collectively ignoring it.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -22,10 +23,12 @@ from app.enrichment.embed import run as run_embed
 from app.enrichment.autotag import run as run_autotag
 from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
+from app.enrichment.extract_subvideo import run as run_extract_subvideo
 from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
 from app.enrichment.generate_all import run as run_generate_all
 from app.enrichment.source import NoSourceMaterial
+from app.enrichment.subvideo import SubvideoExtractionError
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
@@ -45,6 +48,7 @@ from app.models.job import (
     KIND_BULK_ENRICH,
     KIND_DESCRIBE,
     KIND_EMBED,
+    KIND_EXTRACT_SUBVIDEO,
     KIND_EXTRACT_TEXT,
     KIND_GENERATE_ALL,
     KIND_SUMMARIZE,
@@ -147,11 +151,18 @@ def submit_library(
     return job
 
 
-def submit(session: Session, asset: Asset, kind: str) -> EnrichmentJob:
+def submit(
+    session: Session, asset: Asset, kind: str, *, payload: Optional[str] = None
+) -> EnrichmentJob:
     """Create a job row and hand it to the queue.
 
     The row is committed before the queue is told about it. The worker looks the job up
     by id in its own session, so enqueueing first is a race it can lose.
+
+    `payload` is optional and defaults to `None` for every existing caller — only
+    `KIND_EXTRACT_SUBVIDEO` needs it today, to carry in/out points and mode in rather
+    than inventing a second submit function for the one kind that needs more than an
+    asset. `submit_library` already takes one for the same reason, one level up.
     """
     job = EnrichmentJob(
         user_id=asset.user_id,
@@ -160,6 +171,7 @@ def submit(session: Session, asset: Asset, kind: str) -> EnrichmentJob:
         status="queued",
         stage="Queued",
         asset_name=asset.name,
+        payload=payload,
     )
     session.add(job)
     session.commit()
@@ -226,6 +238,16 @@ def _run_job(job_id: str) -> None:
                 detail = f"{count} vector{'' if count == 1 else 's'}"
             elif job.kind == KIND_EXTRACT_TEXT:
                 detail = run_extract_text(session, asset, progress)
+            elif job.kind == KIND_EXTRACT_SUBVIDEO:
+                detail, created_asset_id = run_extract_subvideo(session, asset, job.payload, progress)
+                # Only "extract" mode returns one — "promote" mutates `asset` (the
+                # clip) in place, and the frontend already has that id as `job.asset_id`
+                # throughout, so there is nothing new to report. Set directly on the
+                # live `job` row rather than threaded through `set_fields` below: that
+                # call's kwargs are the terminal-status fields, and `payload` is not
+                # one of them, so this survives it untouched.
+                if created_asset_id:
+                    job.payload = json.dumps({"created_asset_id": created_asset_id})
             elif job.kind == KIND_SUMMARIZE:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
@@ -301,6 +323,12 @@ def _run_job(job_id: str) -> None:
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
         except TextExtractionError as exc:
+            message = str(exc)
+            _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
+
+        except SubvideoExtractionError as exc:
             message = str(exc)
             _mark_asset_failed(session, asset, job)
             set_fields(session, job, status="error", stage="", error_message=message)

@@ -27,6 +27,10 @@ interface Props {
   failureMessage: string
   /** Re-read the asset when the run ends, for jobs that write a field on it. */
   refreshOnFinish?: boolean
+  /** Called once when a running job reaches a terminal state, with that job — for a
+   *  caller that needs more than "re-read this same asset" (M7's sub-video
+   *  extraction reads `result_asset_id` off it to point at what was created). */
+  onFinish?: (job: ActivityJob) => void
   /**
    * A small square icon button beside a field's own label, instead of a full-width
    * row with its own text. The label still names the action, as the accessible name
@@ -45,6 +49,7 @@ export default function EnrichmentButton({
   start,
   failureMessage,
   refreshOnFinish = true,
+  onFinish,
   iconOnly = false,
 }: Props) {
   const job = useActivityStore((s) =>
@@ -62,9 +67,12 @@ export default function EnrichmentButton({
   // showing the old value until the library is reloaded.
   const wasRunning = useRef(false)
   useEffect(() => {
-    if (wasRunning.current && !running && refreshOnFinish) void refreshAsset(assetId)
+    if (wasRunning.current && !running) {
+      if (refreshOnFinish) void refreshAsset(assetId)
+      if (job) onFinish?.(job)
+    }
     wasRunning.current = running
-  }, [running, assetId, refreshAsset, refreshOnFinish])
+  }, [running, assetId, refreshAsset, refreshOnFinish, job, onFinish])
 
   const run = async () => {
     setError(null)

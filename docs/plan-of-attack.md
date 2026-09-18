@@ -327,7 +327,8 @@ it was written in does not survive the session.
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
 | M6 AI enrichment | **Complete, all 8 steps** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`; [#17](https://github.com/davior/gam/pull/17) `autotag`, the suggestion model, and generated titles; [#18](https://github.com/davior/gam/pull/18) `describe`; [#19](https://github.com/davior/gam/pull/19) `UsageEvent`, the pricing table and the cost readout; [#20](https://github.com/davior/gam/pull/20) bulk enrichment over a selection, which also picked up the `SelectionBar` embed deferred from M5. Two gaps M6 did **not** close are recorded in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and below: `extract_text`, since built, and attribution, still undesigned. |
-| **M7–M9** | **Not started.** M7 is the only one with no external dependency. |
+| M7 Clips & sub-videos | **Complete** — [#26](https://github.com/davior/gam/pull/26). Non-destructive clips, ffmpeg sub-video extraction (fast stream-copy with an automatic re-encode fallback), and a parent-delete guard with a one-click promote path. Two bugs caught before shipping — a promoted clip almost kept its parent-relative `in_point`/`out_point`, and the delete guard's own state was briefly getting wiped by a store-driven remount — are recorded in [`m7-clips-and-subvideos.md`](m7-clips-and-subvideos.md), along with why the milestone's actual file layout diverges from this document's own architecture sketch. |
+| **M8–M9** | **Not started.** Both need an external dependency M7 did not (fal.ai for M8, GVC itself for M9). |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
 [#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
@@ -439,6 +440,13 @@ a thing a future session will otherwise assume is done.
    exercised only by tests with stubbed retrievers, which prove the *fusion* is correct
    and say nothing about retrieval quality. Until that run happens, treat M5 as
    structurally complete and qualitatively unmeasured.
+
+   **Update, reported during M7**: the user confirms embedding is deployed and operating
+   well in production. Recorded as-given rather than upgraded into a pass on the specific
+   acceptance queries above — a general "it's working" and "the Giordano/Schwab queries
+   return the right asset at the right second" are different claims, and only the user is
+   in a position to run the second. If that specific run has also happened, this note
+   should be replaced with the result rather than left to imply it from the general one.
 2. **GN-7 and GN-8 are specified and unapplied** (python-jose on five CVEs; the Python
    version). They are changes to `davior/gecko-notes`, not here — see
    `docs/gecko-notes-integration.md`.

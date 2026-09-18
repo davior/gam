@@ -145,6 +145,7 @@ describe('SettingsView', () => {
       asset_id: null,
       asset_name: '',
       model: 'text-embedding-3-small',
+      result_asset_id: null,
       error_message: null,
       created_at: '2026-09-14T10:00:00Z',
       updated_at: '2026-09-14T10:00:00Z',

@@ -40,6 +40,10 @@ export interface ActivityJob {
   asset_id: string | null
   asset_name: string
   model: string
+  /** M7 only: set once a `extract_subvideo` "extract" job finishes, to the asset it
+   *  created. `asset_id` stays pointed at the source throughout, so this is the only
+   *  place to learn the result's id. */
+  result_asset_id: string | null
   error_message: string | null
   created_at: string
   updated_at: string
@@ -87,6 +91,15 @@ export const activityApi = {
   ): Promise<ActivityJob[]> {
     return client
       .get<ListResponse<ActivityJob>>('/activity', { params })
+      .then((r) => r.data.data)
+  },
+
+  /** One job by id, for polling a specific run rather than the whole active list —
+   *  M7's promote flow waits on several jobs at once, which the store's capped
+   *  `jobs` array cannot be trusted to still contain all of by the time they finish. */
+  get(kind: string, jobId: string): Promise<ActivityJob> {
+    return client
+      .get<DataResponse<ActivityJob>>(`/activity/${kind}/${jobId}`)
       .then((r) => r.data.data)
   },
 

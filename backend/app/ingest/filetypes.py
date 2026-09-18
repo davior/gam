@@ -44,6 +44,13 @@ SOURCE_UPLOAD = "local_upload"
 SOURCE_URL = "url"
 SOURCE_AI = "ai_generated"
 SOURCE_GVC = "gvc_export"
+# M7. A clip owns no bytes of its own (`Asset.storage_key IS NULL`) — this is the
+# frontend-facing signal for that fact, not the guard itself; `services/assets.py`'s
+# delete guard checks `storage_key` directly, since that is what a delete actually
+# depends on being true. Promoting a clip, or extracting one fresh from a parent,
+# flips `source` to `SOURCE_SUBVIDEO` — a real, standalone file from here on.
+SOURCE_CLIP = "clip"
+SOURCE_SUBVIDEO = "sub_video"
 
 # Pillow can decode these directly. The rest of the image set (HEIC, AVIF without a
 # plugin, SVG) needs something else, so a thumbnail is skipped rather than attempted.
