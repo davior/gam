@@ -206,7 +206,8 @@ def test_patch_updates_metadata_and_records_human_provenance(library, session):
     assert response.status_code == 200
     assert response.json()["data"]["name"] == "Ocean at sunset"
 
-    # FR 8.1.3: a later AI run reads this to know what a person wrote.
+    # FR 8.1.3 bookkeeping: still recorded, though only `name` has anything left that
+    # reads it (a suggested title never overwrites one a person already chose).
     asset = session.get(Asset, created["id"])
     import json
 

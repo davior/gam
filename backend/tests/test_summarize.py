@@ -2,7 +2,8 @@
 
 Two behaviours matter more than the rest and have most of the cases below: what the job
 chooses to read (a transcribed video is summarised from its transcript, never from one
-frame of it), and what it refuses to overwrite (a summary somebody typed).
+frame of it), and that pressing the button always lands a fresh answer — even over a
+summary somebody typed by hand.
 """
 
 import json
@@ -23,6 +24,7 @@ from app.models.transcript import TranscriptSegment
 from app.providers import _upstream
 from app.providers.base import ProviderError
 from app.services import assets as asset_service
+from app.services import tags as tag_service
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEST_USER = "user-under-test"
@@ -225,6 +227,18 @@ def test_the_owners_own_note_is_given_as_context(library, session, upstream):
     assert "Shot on the roof in Lisbon." in sent_prompt(upstream)
 
 
+def test_the_assets_own_tags_are_given_as_context(library, session, upstream):
+    created = _upload_image(library)
+    asset = session.get(Asset, created["id"])
+    tag = tag_service.get_or_create(session, TEST_USER, "DARPA")
+    tag_service.attach(session, asset.id, tag.id)
+    configure_provider(session)
+
+    summarize.run(session, asset, lambda *a, **k: None)
+
+    assert "DARPA" in sent_prompt(upstream)
+
+
 # ─── what it writes ──────────────────────────────────────────────────────────
 
 
@@ -240,19 +254,19 @@ def test_the_summary_lands_on_the_asset(library, session, upstream):
     assert json.loads(asset.field_provenance)["summary"] == "ai"
 
 
-def test_it_refuses_to_overwrite_a_summary_someone_wrote(library, session, upstream):
-    """FR 8.1.3. `field_provenance` was written from M1 and read by nothing until now."""
+def test_a_summary_someone_wrote_is_replaced_when_asked(library, session, upstream):
+    """Pressing Summarize is an explicit request for a fresh answer, so it always lands
+    — even over a summary a person typed themselves."""
     created = _upload_image(library)
     asset = session.get(Asset, created["id"])
     asset_service.apply_metadata(session, asset, {"summary": "Mine, thanks."})
     configure_provider(session)
 
-    detail = summarize.run(session, asset, lambda *a, **k: None)
+    summarize.run(session, asset, lambda *a, **k: None)
 
     session.refresh(asset)
-    assert asset.summary == "Mine, thanks."
-    # Reported rather than silently doing nothing and claiming success.
-    assert "you wrote this" in detail.lower()
+    assert asset.summary == SUMMARY
+    assert json.loads(asset.field_provenance)["summary"] == "ai"
 
 
 def test_a_previous_ai_summary_is_replaced(library, session, upstream):
@@ -302,8 +316,9 @@ def test_ai_metadata_writes_an_untouched_field(library, session):
     assert json.loads(asset.field_provenance) == {"summary": "ai"}
 
 
-def test_ai_metadata_skips_only_the_human_field(library, session):
-    """A mixed write should land the parts it is allowed to, not abort wholesale."""
+def test_ai_metadata_overwrites_a_field_marked_human(library, session):
+    """A field someone edited by hand is still fair game for the next AI write —
+    pressing Generate again is what asked for this."""
     created = _upload_image(library)
     asset = session.get(Asset, created["id"])
     asset_service.apply_metadata(session, asset, {"description": "Mine."})
@@ -312,21 +327,11 @@ def test_ai_metadata_skips_only_the_human_field(library, session):
         session, asset, {"description": "theirs", "summary": "auto"}
     )
 
-    assert written == ["summary"]
+    assert written == ["description", "summary"]
     session.refresh(asset)
-    assert asset.description == "Mine."
+    assert asset.description == "theirs"
     assert asset.summary == "auto"
-
-
-def test_ai_metadata_with_nothing_allowed_writes_nothing(library, session):
-    created = _upload_image(library)
-    asset = session.get(Asset, created["id"])
-    asset_service.apply_metadata(session, asset, {"summary": "Mine."})
-    before = asset.metadata_modified_date
-
-    assert asset_service.apply_ai_metadata(session, asset, {"summary": "auto"}) == []
-    session.refresh(asset)
-    assert asset.metadata_modified_date == before
+    assert json.loads(asset.field_provenance)["description"] == "ai"
 
 
 # ─── the endpoint ────────────────────────────────────────────────────────────

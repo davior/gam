@@ -94,8 +94,7 @@ export default function EnrichmentButton({
           .
         </p>
       )}
-      {/* A finished job's own message, which is where "you wrote this yourself" and any
-          provider failure arrive. */}
+      {/* A finished job's own message, which is where a provider failure arrives. */}
       {!running && job?.status === 'error' && job.error_message && (
         <p className={STATUS_ERROR_CLASS}>{job.error_message}</p>
       )}

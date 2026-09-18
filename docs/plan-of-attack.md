@@ -137,8 +137,11 @@ class Asset(SQLModel, table=True):
 
 Two deliberate deviations from the SRS schema:
 
-- **`field_provenance`** implements FR 8.1.3 ("manual edits are never overwritten by a
-  later AI run without confirmation"). Without it that requirement has no mechanism.
+- **`field_provenance`** was built for FR 8.1.3 ("manual edits are never overwritten by a
+  later AI run without confirmation"), but no longer enforces it — see `docs/m6-ai-
+  enrichment.md`'s "What `field_provenance` records" for why a silent skip turned out to
+  be the wrong default. The column still records `"human"` vs `"ai"` per field; nothing
+  currently gates on it.
 - **Transcripts are rows, not a nested JSON blob.** `TranscriptSegment(id, asset_id,
   user_id, idx, text, start_time, end_time, words JSON)`. FR 10.1.4 requires returning
   *a matching snippet with its timestamp*; that means each segment must be individually
