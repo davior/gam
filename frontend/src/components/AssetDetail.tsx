@@ -205,7 +205,8 @@ export default function AssetDetail({
       // the one you did — including while they're still empty.
       const changes: AssetUpdate = {}
       if (name.trim() !== asset.name) changes.name = name.trim()
-      if (description !== (asset.description ?? '')) changes.description = description || null
+      if (description !== (asset.description ?? ''))
+        changes.description = description || null
       if (summary !== (asset.summary ?? '')) changes.summary = summary || null
 
       await update(asset.id, changes)
