@@ -1,8 +1,10 @@
 """The summarize job: turn what an asset contains into a paragraph about it.
 
 The first job in M6 to produce something a person reads, and the first AI write path in
-the app — so it is also the first caller of `apply_ai_metadata`, which is what keeps a
-re-run from replacing a summary somebody wrote by hand (FR 8.1.3).
+the app — so it is also the first caller of `apply_ai_metadata`. Pressing the button is
+an explicit request for a fresh summary, so a re-run always replaces whatever is there,
+including a summary somebody typed by hand — `apply_ai_metadata` still records that the
+result came from AI, but nothing stops it from landing.
 
 What it reads is not this module's decision; `enrichment/source.py` makes it once for
 every job that will need it. For a transcribed video that is the transcript.
@@ -20,6 +22,7 @@ from app.models.asset import Asset
 from app.providers import build_provider
 from app.providers.base import ProviderError, ProviderUnavailable
 from app.services import assets as asset_service
+from app.services import tags as tag_service
 from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
@@ -49,11 +52,13 @@ SYSTEM_PROMPT = (
 )
 
 
-def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
+def _prompt(asset: Asset, material: source.SourceMaterial, tag_names: list[str]) -> str:
     parts = [f"Filename: {asset.original_name or asset.name}"]
     if asset.description:
         # A description the user wrote is context, not something to restate.
         parts.append(f"The owner's own note about it: {asset.description}")
+    if tag_names:
+        parts.append("Tags already applied to this item: " + ", ".join(tag_names))
 
     if material.kind == source.FROM_TRANSCRIPT:
         header = "Transcript of the recording"
@@ -96,15 +101,16 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
     )
     progress("Summarising", 30, detail)
 
+    tag_names = [t.name for t in tag_service.tags_for(session, asset.id)]
     completion = provider.complete(
-        _prompt(asset, material),
+        _prompt(asset, material, tag_names),
         system=SYSTEM_PROMPT,
         images=material.images,
     )
 
     # Recorded before this job decides what to do with the answer, so usage does not
-    # depend on the outcome: a reply that gets trimmed, or that provenance then refuses
-    # to write, cost the same tokens as one that lands.
+    # depend on the outcome: a reply that gets trimmed still cost the same tokens as one
+    # that does not.
     #
     # Not a complete guarantee, and the gap is worth knowing: a reply the *provider's*
     # parser rejects — an empty completion, unusable JSON — raises before there is a
@@ -123,11 +129,7 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
     # not still land a summary afterwards.
     progress("Saving", 90, "")
 
-    written = asset_service.apply_ai_metadata(session, asset, {"summary": text})
-    if not written:
-        # Not an error. The user wrote their own summary, which outranks this one — but
-        # saying so beats a job that reports success and changed nothing.
-        return "Left alone — you wrote this summary yourself"
+    asset_service.apply_ai_metadata(session, asset, {"summary": text})
 
     logger.info(
         "Summarised asset %s from %s (%d in / %d out tokens)",

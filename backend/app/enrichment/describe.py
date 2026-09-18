@@ -27,6 +27,7 @@ from app.models.asset import Asset
 from app.providers import build_provider
 from app.providers.base import ProviderError, ProviderUnavailable
 from app.services import assets as asset_service
+from app.services import tags as tag_service
 from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
+def _prompt(asset: Asset, material: source.SourceMaterial, tag_names: list[str]) -> str:
     parts = [f"Filename: {asset.original_name or asset.name}"]
     if asset.summary:
         # Context, not something to restate — saying so is what stops the model
@@ -64,6 +65,8 @@ def _prompt(asset: Asset, material: source.SourceMaterial) -> str:
             f"A summary already exists; do not repeat it, describe what is in the "
             f"item instead: {asset.summary}"
         )
+    if tag_names:
+        parts.append("Tags already applied to this item: " + ", ".join(tag_names))
 
     if material.kind == source.FROM_TRANSCRIPT:
         header = "Transcript of the recording"
@@ -109,8 +112,9 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
     )
 
     progress("Describing", 30, "")
+    tag_names = [t.name for t in tag_service.tags_for(session, asset.id)]
     completion = provider.complete(
-        _prompt(asset, material),
+        _prompt(asset, material, tag_names),
         system=SYSTEM_PROMPT,
         images=material.images,
     )
@@ -129,9 +133,7 @@ def run(session: Session, asset: Asset, progress: Progress) -> str:
     # land a description afterwards.
     progress("Saving", 90, "")
 
-    written = asset_service.apply_ai_metadata(session, asset, {"description": text})
-    if not written:
-        return "Left alone — you wrote this description yourself"
+    asset_service.apply_ai_metadata(session, asset, {"description": text})
 
     saw = " and a frame" if material.images and material.kind == source.FROM_TRANSCRIPT else ""
     logger.info(

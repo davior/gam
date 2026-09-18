@@ -142,22 +142,6 @@ def test_a_provider_reporting_no_tokens_records_nothing(library, session, upstre
     assert session.exec(select(UsageEvent)).all() == []
 
 
-def test_usage_does_not_depend_on_what_happens_to_the_answer(library, session, upstream):
-    """Provenance refuses the write, but the tokens were still spent. A total that only
-    counted runs whose output landed would understate what the library cost."""
-    from app.services import assets as asset_service
-
-    created = _upload_image(library)
-    asset = session.get(Asset, created["id"])
-    asset_service.apply_metadata(session, asset, {"summary": "Mine, thanks."})
-    configure_provider(session)
-
-    detail = summarize.run(session, asset, lambda *a, **k: None)
-
-    assert "you wrote this" in detail.lower()
-    assert len(session.exec(select(UsageEvent)).all()) == 1
-
-
 def test_a_reply_the_provider_parser_rejects_is_not_recorded(library, session, upstream):
     """The one gap, asserted rather than left to be discovered. An empty completion
     raises inside the client, before this job holds a Completion to record — so those

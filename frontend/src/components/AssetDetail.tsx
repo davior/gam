@@ -12,7 +12,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import type { Asset } from '@/api/assets'
+import type { Asset, AssetUpdate } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
 import { formatCost, usageApi, type UsageTotals } from '@/api/usage'
@@ -199,11 +199,16 @@ export default function AssetDetail({
     if (!dirty || !name.trim()) return
     setSaving(true)
     try {
-      await update(asset.id, {
-        name: name.trim(),
-        description: description || null,
-        summary: summary || null,
-      })
+      // Only the fields that actually changed: the API marks every key it receives as
+      // human-written provenance (FR 8.1.3 bookkeeping), so sending name/description/
+      // summary as a fixed trio would stamp the two you didn't touch right alongside
+      // the one you did — including while they're still empty.
+      const changes: AssetUpdate = {}
+      if (name.trim() !== asset.name) changes.name = name.trim()
+      if (description !== (asset.description ?? '')) changes.description = description || null
+      if (summary !== (asset.summary ?? '')) changes.summary = summary || null
+
+      await update(asset.id, changes)
     } catch {
       // The store restores the server's version and surfaces the message; the panel
       // stays open so the edit is not lost.

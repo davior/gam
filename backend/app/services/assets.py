@@ -265,10 +265,11 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
 def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
     """Apply a user's manual edits, recording that a human made them.
 
-    The provenance write is what FR 8.1.3 rests on: a later AI enrichment run reads it
-    to know which fields a person has touched, and must not overwrite those without
-    asking. Recording it here — at the only place manual edits happen — is what keeps
-    that guarantee from depending on every future caller remembering it.
+    Stamping "human" here still matters for `name`: a suggested title is only ever
+    applied through this path (`services/suggestions.py::accept`), and there is no
+    direct AI write path that could replace it afterwards. For `description` and
+    `summary` the stamp is now informational only — `apply_ai_metadata` no longer reads
+    it before overwriting either field.
     """
     if not changes:
         return asset
@@ -293,19 +294,15 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
 
 
 def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str]:
-    """Write fields an enrichment job produced, without overwriting a person's work.
+    """Write fields an enrichment job produced.
 
-    The counterpart to `apply_metadata`, and the first thing to actually *read*
-    `field_provenance` — FR 8.1.3 requires that a later AI run never silently replaces
-    something someone typed, and until now the column was written and consulted by
-    nothing.
+    The counterpart to `apply_metadata`. Pressing a "Generate"/"Summarize"/"Describe"
+    control is a deliberate, explicit request for a fresh answer, so it always lands —
+    including over a value a person typed by hand. `field_provenance` is still stamped
+    "ai" afterwards, so the record of who wrote a field stays accurate even though
+    nothing here gates on it any more.
 
-    A field with no provenance entry has never been touched by a person, so it is free
-    to write: absence is the signal, and no third provenance value is needed for it. A
-    field marked "human" is skipped and named in the return value, so the caller can say
-    what it left alone rather than reporting a clean run that quietly did less.
-
-    Returns the fields actually written.
+    Returns the fields written (always every key in `changes`, once any are given).
     """
     if not changes:
         return []
@@ -315,16 +312,9 @@ def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str
     except ValueError:
         provenance = {}
 
-    written: list[str] = []
     for field_name, value in changes.items():
-        if provenance.get(field_name) == "human":
-            continue
         setattr(asset, field_name, value)
         provenance[field_name] = "ai"
-        written.append(field_name)
-
-    if not written:
-        return []
 
     asset.field_provenance = json.dumps(provenance, sort_keys=True)
     asset.metadata_modified_date = utcnow()
@@ -333,7 +323,7 @@ def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str
     session.commit()
     session.refresh(asset)
     _reindex(session, asset)
-    return written
+    return list(changes.keys())
 
 
 # ─── serialisation ───────────────────────────────────────────────────────────

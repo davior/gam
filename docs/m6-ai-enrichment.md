@@ -210,18 +210,37 @@ Two decisions that go with it:
   user sees in their library without asking is a different act from filling a blank. It
   goes through the same accept/reject path as `autotag` (FR 9.1.4).
 
-### What protects a human edit
+### What `field_provenance` records
+
+**Amended post-M6, once real use showed the original rule did not hold up. Read this in
+place of the "What protects a human edit" section it replaces; the rest of this document
+still reflects the design as landed.**
 
 `field_provenance` is written in exactly one place — `services/assets.py::apply_metadata`,
-which stamps `"human"` — and read nowhere. A freshly ingested asset therefore has `{}`.
+which stamps `"human"` — and, as of M6, was read by `apply_ai_metadata` to *refuse* to
+overwrite a `"human"` field. That turned out to be the wrong default: pressing
+Summarize/Describe/"Generate all" is already a deliberate, explicit request for a fresh
+answer, and a silent no-op in response to it read as broken rather than protective —
+doubly so because the field it refused to touch was often one the person had never
+actually typed into (see below).
 
-That absence is already the signal step 7 needs, so **no new provenance value is
-required**: a field with no entry has never been touched by a person and an AI run may
-write it; a field marked `"human"` may not be overwritten without asking. An AI write
-stamps `"ai"`, which a later AI run is free to replace.
+So `apply_ai_metadata` no longer checks provenance before writing. Every enrichment write
+lands, unconditionally, including over a value a person wrote by hand. The column is
+still stamped — `"human"` from a manual edit, `"ai"` from a generated one — purely as a
+record of who last wrote a field, for the "surfacing provenance in the UI" idea this
+document originally deferred. Nothing currently gates on it.
 
-`name` is the exception, and not because of provenance: it is never blank, so the
-suggestion rule above applies to it whether or not a person has edited it.
+The other half of why the old rule bit harder than intended: the asset panel's single
+"Save changes" button sends `name`, `description` and `summary` together in one request
+whenever any one of them changed, so editing just the name also re-sent the other two
+fields' current values — which the API cannot distinguish from a deliberate edit, and so
+stamped `"human"` on fields the person had never touched, including ones still blank.
+That collateral marking is fixed alongside this change; provenance now reflects only the
+field actually edited.
+
+`name` remains the one field the suggestion rule (accept/reject, never a direct write)
+applies to regardless of provenance, because it is never blank rather than because of
+anything provenance records.
 
 ---
 
@@ -355,14 +374,13 @@ backend/app/
    Rejections are kept rather than deleted, so a re-run does not propose a tag the user
    already declined. Accepting a title goes through `apply_metadata` — the *human* path —
    because the user read it and chose it, which also stops a later run replacing it.
-7. `field_provenance` enforcement — **mostly done**, arriving with step 4 because
-   `summarize` was the first AI write path and shipping it without this would have meant
-   shipping the bug the rule exists to prevent. `services/assets.py::apply_ai_metadata`
-   reads the column, writes fields with no entry, skips ones marked `"human"`, and
-   returns what it actually wrote. No new provenance value was needed; an absent entry
-   already means "no person has touched this". What remains: applying it to `describe`'s
-   write path when that lands, and surfacing provenance in the UI so a user can see which
-   fields the AI wrote.
+7. `field_provenance` enforcement — **landed with step 4, then reverted post-M6.**
+   `apply_ai_metadata` originally read the column and skipped a field marked `"human"`.
+   In practice that made "Generate"/"Summarize"/"Describe" silently do nothing on a
+   field the person had often never actually typed into — see "What `field_provenance`
+   records" above for why, and for what it does now instead: every explicit press
+   overwrites unconditionally, and the column is kept only as a record of who wrote a
+   field, not as a gate.
 8. ~~Bulk enrichment over a selection — including the `SelectionBar` embed deferred from
    M5.~~ **Done.** One `bulk_enrich` job over the whole selection rather than one job per
    asset: cancellation is per row, so N jobs would mean N Cancel clicks and N

@@ -17,8 +17,9 @@ from app.models.job import EnrichmentJob, KIND_DESCRIBE
 from app.providers import _upstream
 from app.providers.base import ProviderError
 from app.services import assets as asset_service
+from app.services import tags as tag_service
 
-from tests.test_summarize import _upload_image, add_transcript, configure_provider
+from tests.test_summarize import TEST_USER, _upload_image, add_transcript, configure_provider
 
 DESCRIPTION = "James Giordano speaking to camera in a panelled studio, discussing DARPA."
 
@@ -115,6 +116,18 @@ def test_an_existing_summary_is_context_not_material_to_repeat(library, session,
     assert "do not repeat it" in prompt
 
 
+def test_the_assets_own_tags_are_given_as_context(library, session, upstream):
+    created = _upload_image(library)
+    asset = session.get(Asset, created["id"])
+    tag = tag_service.get_or_create(session, TEST_USER, "DARPA")
+    tag_service.attach(session, asset.id, tag.id)
+    configure_provider(session)
+
+    describe.run(session, asset, lambda *a, **k: None)
+
+    assert "DARPA" in sent_prompt(upstream)
+
+
 # ─── the ordinary paths ──────────────────────────────────────────────────────
 
 
@@ -139,17 +152,19 @@ def test_the_description_lands_on_the_asset(library, session, upstream):
     assert json.loads(asset.field_provenance)["description"] == "ai"
 
 
-def test_it_refuses_to_overwrite_a_description_someone_wrote(library, session, upstream):
+def test_a_description_someone_wrote_is_replaced_when_asked(library, session, upstream):
+    """Pressing Describe is an explicit request for a fresh answer, so it always lands
+    — even over a description a person typed themselves."""
     created = _upload_image(library)
     asset = session.get(Asset, created["id"])
     asset_service.apply_metadata(session, asset, {"description": "Mine, thanks."})
     configure_provider(session)
 
-    detail = describe.run(session, asset, lambda *a, **k: None)
+    describe.run(session, asset, lambda *a, **k: None)
 
     session.refresh(asset)
-    assert asset.description == "Mine, thanks."
-    assert "you wrote this" in detail.lower()
+    assert asset.description == DESCRIPTION
+    assert json.loads(asset.field_provenance)["description"] == "ai"
 
 
 def test_an_over_long_reply_is_trimmed(library, session, upstream):
