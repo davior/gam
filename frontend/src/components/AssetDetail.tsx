@@ -48,7 +48,9 @@ function ownsNoFile(asset: Asset): boolean {
 async function waitForJobs(jobIds: string[]): Promise<void> {
   let remaining = jobIds
   while (remaining.length > 0) {
-    const jobs = await Promise.all(remaining.map((id) => activityApi.get('enrichment', id)))
+    const jobs = await Promise.all(
+      remaining.map((id) => activityApi.get('enrichment', id))
+    )
     const failed = jobs.find((j) => j.status === 'error')
     if (failed) throw new Error(failed.error_message ?? 'A clip could not be promoted')
     remaining = jobs
@@ -509,10 +511,9 @@ export default function AssetDetail({
       {dependentClips ? (
         <div className="space-y-2 rounded-md border border-amber-200 p-3 dark:border-amber-900">
           <p className="text-xs text-gray-700 dark:text-gray-300">
-            {dependentClips.length} clip{dependentClips.length === 1 ? '' : 's'} depend
-            on this asset. Extract {dependentClips.length === 1 ? 'it' : 'them'} as
-            sub-video{dependentClips.length === 1 ? '' : 's'} first, then this can be
-            deleted.
+            {dependentClips.length} clip{dependentClips.length === 1 ? '' : 's'} depend on
+            this asset. Extract {dependentClips.length === 1 ? 'it' : 'them'} as sub-video
+            {dependentClips.length === 1 ? '' : 's'} first, then this can be deleted.
           </p>
           <ul className="max-h-24 space-y-0.5 overflow-auto text-[11px] text-gray-500 dark:text-gray-400">
             {dependentClips.map((clip) => (
@@ -707,7 +708,9 @@ function Preview({
   // ranged.py`) knows about trim points, the same as the parent's bytes are served
   // unchanged either way. `asset.out_point` is null for anything that is not a live
   // clip, so this is a no-op for an ordinary asset.
-  const handleTimeUpdate = (e: React.SyntheticEvent<HTMLVideoElement | HTMLAudioElement>) => {
+  const handleTimeUpdate = (
+    e: React.SyntheticEvent<HTMLVideoElement | HTMLAudioElement>
+  ) => {
     const time = e.currentTarget.currentTime
     onTimeUpdate(time)
     if (asset.out_point !== null && time >= asset.out_point) {

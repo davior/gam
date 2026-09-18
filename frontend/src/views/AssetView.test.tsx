@@ -198,8 +198,12 @@ describe('clips (M7)', () => {
     expect(screen.queryByRole('tab', { name: 'Clip' })).not.toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: 'Transcript' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Generate all' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Describe with AI' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Summarise with AI' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Describe with AI' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Summarise with AI' })
+    ).not.toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'Suggest tags and a title' })
     ).not.toBeInTheDocument()
@@ -248,9 +252,7 @@ describe('clips (M7)', () => {
     expect(guard.getByText('Clip one')).toBeInTheDocument()
     expect(guard.getByText('Clip two')).toBeInTheDocument()
     expect(removeAsset).not.toHaveBeenCalled()
-    expect(
-      screen.getByRole('button', { name: 'Promote and delete' })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Promote and delete' })).toBeInTheDocument()
   })
 
   it('promoting every dependent clip retries the delete, which then succeeds', async () => {
@@ -287,7 +289,10 @@ describe('clips (M7)', () => {
     vi.spyOn(clipsApi, 'list').mockResolvedValue([clip()])
     vi.spyOn(clipsApi, 'promote').mockResolvedValue(activityJob({ status: 'processing' }))
     vi.spyOn(activityApi, 'get').mockResolvedValue(
-      activityJob({ status: 'error', error_message: 'ffmpeg is not available on this server' })
+      activityJob({
+        status: 'error',
+        error_message: 'ffmpeg is not available on this server',
+      })
     )
 
     renderAt('/a/a1')
@@ -296,7 +301,9 @@ describe('clips (M7)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Promote and delete' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Promote and delete' })
+    )
 
     expect(await screen.findByText(/ffmpeg is not available/i)).toBeInTheDocument()
     // Never even attempted — the guard's whole job is to keep a doomed delete from

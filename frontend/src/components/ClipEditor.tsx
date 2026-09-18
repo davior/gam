@@ -66,7 +66,10 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
     setError(null)
     setCreated(null)
     try {
-      const clip = await clipsApi.create(asset.id, { in_point: inPoint, out_point: outPoint })
+      const clip = await clipsApi.create(asset.id, {
+        in_point: inPoint,
+        out_point: outPoint,
+      })
       setClips((current) => [clip, ...current])
       setInPoint(null)
       setOutPoint(null)
@@ -204,7 +207,9 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
                     </Link>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-gray-800 dark:text-gray-200">{clip.name}</p>
+                    <p className="truncate text-gray-800 dark:text-gray-200">
+                      {clip.name}
+                    </p>
                     {isLiveClip && clip.in_point !== null && clip.out_point !== null && (
                       <p className="text-[11px] text-gray-400 dark:text-gray-500">
                         {formatDuration(clip.in_point)}–{formatDuration(clip.out_point)}
