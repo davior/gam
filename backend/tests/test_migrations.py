@@ -213,3 +213,109 @@ def test_add_clip_columns_survives_real_foreign_key_references(alembic_config):
         ).fetchone() is not None
         conn.execute("PRAGMA foreign_keys=ON")
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_asset_fts_rebuild_preserves_the_existing_index(alembic_config):
+    """`9c2e08b4a1f7` drops and recreates asset_fts, which throws away its contents.
+
+    FTS5 has no ALTER TABLE ADD COLUMN, so adding `attribution_text` means recreating
+    the virtual table — and because asset_fts stores its own copy of the text rather
+    than using external-content mode, the recreate destroys the index for every asset
+    already in the library. The repopulate is what puts it back, and it is invisible to
+    any test that only compares columns: a migration missing it passes the drift check,
+    leaves the schema perfect, and silently returns nothing for every keyword search
+    until each asset happens to be edited again.
+
+    So this seeds a real index entry at the revision before, and asserts it is still
+    searchable after — which is the only assertion that can tell the two apart.
+    """
+    config, db_path = alembic_config
+    command.upgrade(config, "3f7a21c9d4e5")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key,"
+            " size_bytes, field_provenance, upload_date, modified_date, metadata_modified_date,"
+            " description, summary, publisher, creator)"
+            " VALUES ('a1', 'u', 'Giordano interview', 'video', 'local_upload', 'k1',"
+            " 100, '{}', '2026-01-01', '2026-01-01', '2026-01-01',"
+            " 'A long conversation', 'Nano weapons', 'Modern Wisdom', 'James Giordano')"
+        )
+        conn.execute(
+            "INSERT INTO tag (id, user_id, name, created_at)"
+            " VALUES ('t1', 'u', 'neuroscience', '2026-01-01')"
+        )
+        conn.execute(
+            "INSERT INTO assettag (asset_id, tag_id, created_at)"
+            " VALUES ('a1', 't1', '2026-01-01')"
+        )
+        # The pre-M10 six-column shape, as the old migration created it.
+        conn.execute(
+            "INSERT INTO asset_fts (asset_id, user_id, name, description, summary, tags_text)"
+            " VALUES ('a1', 'u', 'Giordano interview', 'A long conversation',"
+            " 'Nano weapons', 'neuroscience')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM asset_fts").fetchone()[0] == 1
+
+        # The pre-existing content still matches, which is the regression that a
+        # missing repopulate would cause.
+        for term in ("Giordano", "conversation", "neuroscience"):
+            hit = conn.execute(
+                "SELECT asset_id FROM asset_fts WHERE asset_fts MATCH ?", (term,)
+            ).fetchone()
+            assert hit is not None and hit[0] == "a1", f"lost the index entry for {term!r}"
+
+
+def test_asset_fts_rebuild_indexes_attribution(alembic_config):
+    """The point of the rebuild: an asset becomes findable by who published it."""
+    config, db_path = alembic_config
+    command.upgrade(config, "3f7a21c9d4e5")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key,"
+            " size_bytes, field_provenance, upload_date, modified_date, metadata_modified_date,"
+            " creator, publisher, source_title, license, source_url)"
+            " VALUES ('a1', 'u', 'Clip', 'video', 'local_upload', 'k1',"
+            " 100, '{}', '2026-01-01', '2026-01-01', '2026-01-01',"
+            " 'Jane Doe', 'BBC', 'Panorama', 'CC BY 4.0', 'https://example.org/x')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        for term in ("BBC", "Panorama", "Jane"):
+            hit = conn.execute(
+                "SELECT asset_id FROM asset_fts WHERE asset_fts MATCH ?", (term,)
+            ).fetchone()
+            assert hit is not None and hit[0] == "a1", f"not findable by {term!r}"
+
+
+def test_asset_fts_downgrade_also_repopulates(alembic_config):
+    """A downgrade that emptied the index would be a data-shaped loss, not a schema one."""
+    config, db_path = alembic_config
+    command.upgrade(config, "3f7a21c9d4e5")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key,"
+            " size_bytes, field_provenance, upload_date, modified_date, metadata_modified_date)"
+            " VALUES ('a1', 'u', 'Giordano interview', 'video', 'local_upload', 'k1',"
+            " 100, '{}', '2026-01-01', '2026-01-01', '2026-01-01')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+    command.downgrade(config, "3f7a21c9d4e5")
+
+    with sqlite3.connect(db_path) as conn:
+        hit = conn.execute(
+            "SELECT asset_id FROM asset_fts WHERE asset_fts MATCH 'Giordano'"
+        ).fetchone()
+        assert hit is not None and hit[0] == "a1"

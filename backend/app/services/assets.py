@@ -14,6 +14,7 @@ from typing import AsyncIterator, Iterable, Optional
 
 from sqlmodel import Session, col, delete, select, update
 
+from app import attribution
 from app.auth import sign_media_key
 from app.clock import utcnow
 from app.config import settings
@@ -31,7 +32,12 @@ from app.ingest.filetypes import (
     sanitize_original_name,
 )
 from app.ingest.probe import ProbeResult, probe
-from app.models.asset import Asset
+from app.models.asset import (
+    PROVENANCE_AI,
+    PROVENANCE_EMBEDDED,
+    PROVENANCE_HUMAN,
+    Asset,
+)
 from app.models.suggestion import Suggestion
 from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
@@ -201,7 +207,20 @@ def _reindex(session: Session, asset: Asset) -> None:
     whether the write succeeded.
     """
     try:
-        fts.index_asset(session, asset, tags_text=tags.tags_text_for(session, asset.id))
+        # Attribution is resolved through the parent before indexing, so a clip is
+        # findable by the publisher it inherited and "everything from the BBC" is not
+        # quietly missing every clip. The parent lookup only happens for rows that have
+        # one, and `_reindex_children_of` below keeps those entries current when the
+        # parent's own attribution later changes.
+        parent = (
+            session.get(Asset, asset.parent_asset_id) if asset.parent_asset_id else None
+        )
+        fts.index_asset(
+            session,
+            asset,
+            tags_text=tags.tags_text_for(session, asset.id),
+            attribution_text=attribution.index_text(attribution.resolve(asset, parent)),
+        )
     except Exception:  # noqa: BLE001 - see above
         logger.warning("Could not index asset %s for search", asset.id, exc_info=True)
 
@@ -298,25 +317,7 @@ def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:
     `summary` the stamp is now informational only — `apply_ai_metadata` no longer reads
     it before overwriting either field.
     """
-    if not changes:
-        return asset
-
-    try:
-        provenance = json.loads(asset.field_provenance or "{}")
-    except ValueError:
-        provenance = {}
-
-    for field, value in changes.items():
-        setattr(asset, field, value)
-        provenance[field] = "human"
-
-    asset.field_provenance = json.dumps(provenance, sort_keys=True)
-    asset.metadata_modified_date = utcnow()
-
-    session.add(asset)
-    session.commit()
-    session.refresh(asset)
-    _reindex(session, asset)
+    _apply(session, asset, changes, PROVENANCE_HUMAN)
     return asset
 
 
@@ -331,17 +332,45 @@ def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str
 
     Returns the fields written (always every key in `changes`, once any are given).
     """
+    _apply(session, asset, changes, PROVENANCE_AI)
+    return list(changes.keys())
+
+
+def apply_embedded_metadata(session: Session, asset: Asset, changes: dict) -> list[str]:
+    """Write fields read out of the file's own container metadata.
+
+    The third writer, and the reason `_apply` takes the stamp as an argument rather than
+    hard-coding one. An EXIF `Artist` or an ID3 frame is a fact about the file, so it is
+    written without asking — but it is not something a person verified, and
+    `PROVENANCE_EMBEDDED` is what preserves that difference for whatever reads it later.
+
+    Callers are responsible for having filtered to fields that are actually empty: this
+    overwrites like the other two, because a writer that silently skipped would hide the
+    same class of bug `apply_ai_metadata`'s docstring describes.
+    """
+    _apply(session, asset, changes, PROVENANCE_EMBEDDED)
+    return list(changes.keys())
+
+
+def _apply(session: Session, asset: Asset, changes: dict, provenance_value: str) -> None:
+    """The shared body of the three writers above: set the fields, stamp who set them.
+
+    A malformed `field_provenance` is rebuilt rather than raising. It is a record *about*
+    the metadata, and losing that record must never cost the write it describes.
+    """
     if not changes:
-        return []
+        return
 
     try:
         provenance = json.loads(asset.field_provenance or "{}")
     except ValueError:
         provenance = {}
+    if not isinstance(provenance, dict):
+        provenance = {}
 
     for field_name, value in changes.items():
         setattr(asset, field_name, value)
-        provenance[field_name] = "ai"
+        provenance[field_name] = provenance_value
 
     asset.field_provenance = json.dumps(provenance, sort_keys=True)
     asset.metadata_modified_date = utcnow()
@@ -350,7 +379,31 @@ def apply_ai_metadata(session: Session, asset: Asset, changes: dict) -> list[str
     session.commit()
     session.refresh(asset)
     _reindex(session, asset)
-    return list(changes.keys())
+
+    # A clip's index entry carries the attribution it inherited, so correcting this
+    # asset's publisher leaves every clip of it indexed under the old one until they are
+    # rebuilt. Only on an attribution change, and only for rows that actually have
+    # children — the common edit (a description, a summary) touches neither.
+    if any(name in changes for name in attribution.ATTRIBUTION_FIELDS):
+        _reindex_children_of(session, asset)
+
+
+def _reindex_children_of(session: Session, parent: Asset) -> None:
+    """Rebuild the index entries of everything derived from this asset.
+
+    Inheritance is resolved at read time everywhere *except* the keyword index, which by
+    its nature stores a snapshot. This is the one place that snapshot has to be caught
+    up, and it is why `resolve`'s one-level rule matters: there is no grandchild to
+    recurse into.
+    """
+    try:
+        children = list_children(session, parent.id, parent.user_id)
+    except Exception:  # noqa: BLE001 - a stale child index must not fail the parent's write
+        logger.warning("Could not list children of %s to re-index", parent.id, exc_info=True)
+        return
+
+    for child in children:
+        _reindex(session, child)
 
 
 # ─── clips and sub-videos (M7) ────────────────────────────────────────────────
