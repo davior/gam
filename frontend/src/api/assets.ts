@@ -1,5 +1,6 @@
 import client from '@/api/client'
 import type { Tag } from '@/api/tags'
+import type { ActivityJob } from '@/api/transcripts'
 
 /**
  * The asset library API.
@@ -49,6 +50,31 @@ export interface Asset {
   /** Batch-loaded for a page by the server, so reading this is free. */
   tags: Tag[]
 
+  /**
+   * M10. Whose work this is — as opposed to `source`, which is how the file got here.
+   *
+   * These are the *resolved* values: a clip with nothing of its own carries what it
+   * inherited from its parent, so a clip of an attributed video shows a real credit
+   * rather than eight blanks. `attribution_inherited` names which of them came that
+   * way, so the panel can mark them instead of letting an inherited value look like
+   * something typed on the clip.
+   */
+  source_url: string | null
+  creator: string | null
+  publisher: string | null
+  source_title: string | null
+  /** ISO 8601 partial: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`. Partial on purpose — a book
+   *  is from 1994 and nothing should invent a January 1st for it. */
+  published_date: string | null
+  retrieved_at: string | null
+  license: string | null
+  /** An override. Null means the displayed `credit` is composed from the fields above. */
+  credit_line: string | null
+
+  /** Read-only: the line to display, composed unless `credit_line` overrides it. */
+  credit: string
+  attribution_inherited: string[]
+
   upload_date: string
   modified_date: string
   metadata_modified_date: string
@@ -82,6 +108,15 @@ export interface ListAssetsParams {
   max_duration?: number
   uploaded_after?: string
   uploaded_before?: string
+  /** M10. Each of these resolves through a clip's parent server-side, so filtering by
+   *  publisher returns the clips that inherit it as well as the asset itself. */
+  creator?: string
+  publisher?: string
+  source_title?: string
+  published_after?: string
+  published_before?: string
+  /** True for "still missing a source" — how a backlog gets worked through. */
+  unattributed?: boolean
   limit?: number
   offset?: number
 }
@@ -97,7 +132,32 @@ export interface AssetUpdate {
   name?: string
   description?: string | null
   summary?: string | null
+
+  /** M10. The only path that can *correct* attribution: the harvester fills blanks
+   *  only, and an AI may propose but never write. */
+  source_url?: string | null
+  creator?: string | null
+  publisher?: string | null
+  source_title?: string | null
+  published_date?: string | null
+  retrieved_at?: string | null
+  license?: string | null
+  credit_line?: string | null
 }
+
+/** The attribution fields, in the order the panel shows them. */
+export const ATTRIBUTION_FIELDS = [
+  'creator',
+  'source_title',
+  'publisher',
+  'published_date',
+  'source_url',
+  'license',
+  'retrieved_at',
+  'credit_line',
+] as const
+
+export type AttributionField = (typeof ATTRIBUTION_FIELDS)[number]
 
 interface DataResponse<T> {
   data: T
@@ -143,5 +203,18 @@ export const assetsApi = {
 
   remove(id: string): Promise<void> {
     return client.delete(`/assets/${id}`).then(() => undefined)
+  },
+
+  /**
+   * Re-read embedded metadata for every file already in the library.
+   *
+   * For everything uploaded before M10 existed: the EXIF and ID3 have been sitting on
+   * disk the whole time and nothing ever looked. Returns the queued job, which shows up
+   * in the activity feed like any other.
+   */
+  harvestAttribution(): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>('/assets/harvest-attribution')
+      .then((r) => r.data.data)
   },
 }

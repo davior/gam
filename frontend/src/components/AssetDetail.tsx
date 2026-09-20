@@ -6,6 +6,7 @@ import {
   Link2,
   Mic,
   Pencil,
+  Quote,
   ScanText,
   Scissors,
   Tags as TagsIcon,
@@ -25,6 +26,7 @@ import { useTagStore } from '@/stores/tags'
 import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
 import { useAutoGrow } from '@/utils/useAutoGrow'
 import AssetThumb from '@/components/AssetThumb'
+import AttributionPanel from '@/components/AttributionPanel'
 import ClipEditor from '@/components/ClipEditor'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
@@ -495,6 +497,9 @@ export default function AssetDetail({
         <Fact label="Dimensions" value={formatDimensions(asset.width, asset.height)} />
         <Fact label="Codec" value={asset.codec ?? ''} />
         <Fact label="Original name" value={asset.original_name ?? ''} />
+        {/* The resolved credit, so it is readable without opening the Source tab — and
+            visible on a clip, which shows what it inherited. */}
+        <Fact label="Credit" value={asset.credit} />
         <Fact label="Added" value={formatDate(asset.upload_date)} />
         {usage && usage.total_events > 0 && (
           <Fact
@@ -624,6 +629,12 @@ export default function AssetDetail({
           },
         ]
       : []),
+    {
+      id: 'attribution',
+      label: 'Source',
+      icon: Quote,
+      content: <AttributionPanel asset={asset} />,
+    },
     { id: 'info', label: 'Info', icon: Info, content: info },
   ]
 

@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import AssetThumb from '@/components/AssetThumb'
 import type { Asset } from '@/api/assets'
+import { noAttribution } from '@/test-fixtures'
 
 function makeAsset(overrides: Partial<Asset> = {}): Asset {
   return {
@@ -9,6 +10,7 @@ function makeAsset(overrides: Partial<Asset> = {}): Asset {
     name: 'Test',
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'image',
     source: 'local_upload',
     parent_asset_id: null,

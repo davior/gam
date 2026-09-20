@@ -17,6 +17,7 @@ import { enrichmentApi } from '@/api/enrichment'
 import { usageApi } from '@/api/usage'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
+import { noAttribution } from '@/test-fixtures'
 
 const tag = (id: string, name: string): Tag => ({ id, name, category_id: null })
 
@@ -26,6 +27,7 @@ function makeAsset(id: string, name: string, tags: Tag[] = []): Asset {
     name,
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'video',
     source: 'local_upload',
     parent_asset_id: null,

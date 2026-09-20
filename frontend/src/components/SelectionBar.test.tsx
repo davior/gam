@@ -11,6 +11,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import type { Asset } from '@/api/assets'
 import type { ActivityJob } from '@/api/transcripts'
+import { noAttribution } from '@/test-fixtures'
 
 function asset(id: string): Asset {
   return {
@@ -18,6 +19,7 @@ function asset(id: string): Asset {
     name: id,
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'video',
     source: 'local_upload',
     parent_asset_id: null,

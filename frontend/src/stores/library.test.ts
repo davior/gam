@@ -16,6 +16,7 @@ import {
 import { tagsApi, type Tag } from '@/api/tags'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
+import { noAttribution } from '@/test-fixtures'
 
 const tag = (id: string, name: string): Tag => ({ id, name, category_id: null })
 
@@ -25,6 +26,7 @@ function makeAsset(id: string, tags: Tag[] = []): Asset {
     name: id,
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'video',
     source: 'local_upload',
     parent_asset_id: null,
@@ -71,6 +73,45 @@ const lastParams = (): ListAssetsParams => {
   const calls = list.mock.calls
   return calls[calls.length - 1][0] ?? {}
 }
+
+describe('attribution filters', () => {
+  it('sends the creator and publisher filters under the API names', async () => {
+    const store = useLibraryStore.getState()
+    store.setCreatorFilter('jane')
+    store.setPublisherFilter('bbc')
+    await useLibraryStore.getState().load()
+
+    expect(lastParams()).toMatchObject({ creator: 'jane', publisher: 'bbc' })
+  })
+
+  it('only sends `unattributed` when the chip is on', async () => {
+    // `unattributed: false` is a real server-side filter — "everything that *has*
+    // attribution" — so sending it whenever the chip is off would hide every
+    // unattributed asset from the default library view.
+    await useLibraryStore.getState().load()
+    expect(lastParams().unattributed).toBeUndefined()
+
+    useLibraryStore.getState().setUnattributedOnly(true)
+    await useLibraryStore.getState().load()
+    expect(lastParams().unattributed).toBe(true)
+
+    useLibraryStore.getState().setUnattributedOnly(false)
+    await useLibraryStore.getState().load()
+    expect(lastParams().unattributed).toBeUndefined()
+  })
+
+  it('is cleared by clearFilters', async () => {
+    const store = useLibraryStore.getState()
+    store.setCreatorFilter('jane')
+    store.setUnattributedOnly(true)
+
+    useLibraryStore.getState().clearFilters()
+    await useLibraryStore.getState().load()
+
+    expect(lastParams().creator).toBeUndefined()
+    expect(lastParams().unattributed).toBeUndefined()
+  })
+})
 
 describe('filters', () => {
   it('sends every filter under the name the API uses', async () => {
