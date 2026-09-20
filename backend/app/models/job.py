@@ -45,6 +45,10 @@ KIND_BULK_ENRICH = "bulk_enrich"
 # costs nothing, the same reason `KIND_EXTRACT_TEXT` sits apart from the LLM jobs
 # despite also being per-asset.
 KIND_EXTRACT_SUBVIDEO = "extract_subvideo"
+# M10. Proposing where an asset came from. Inside `ENRICHMENT_KINDS` unlike the two
+# above: it calls a provider and costs money, so it belongs in the bulk-enrichment
+# selection UI and its cost estimate.
+KIND_ATTRIBUTE = "attribute"
 # M10. Re-reading embedded attribution (EXIF, ID3, PDF Author) across a whole library,
 # for the files that were already there when M10 landed. Library-wide, and outside
 # `ENRICHMENT_KINDS` for the same reason as the two above: it calls no provider and
@@ -61,6 +65,7 @@ ENRICHMENT_KINDS = frozenset(
         KIND_EMBED,
         KIND_EXTRACT_TEXT,
         KIND_GENERATE_ALL,
+        KIND_ATTRIBUTE,
     }
 )
 

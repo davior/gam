@@ -18,6 +18,7 @@ from app.config import settings
 from app.database import engine
 from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
+from app.enrichment.attribute import run as run_attribute
 from app.enrichment.backfill import run as run_backfill
 from app.enrichment.harvest_attribution import run as run_harvest_attribution
 from app.enrichment.embed import run as run_embed
@@ -45,6 +46,7 @@ from app.models.asset import Asset
 from app.models.job import (
     EnrichmentJob,
     KIND_AUTOTAG,
+    KIND_ATTRIBUTE,
     KIND_BACKFILL_EMBEDDINGS,
     KIND_HARVEST_ATTRIBUTION,
     KIND_BULK_ENRICH,
@@ -254,6 +256,8 @@ def _run_job(job_id: str) -> None:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
                 detail = run_autotag(session, asset, progress)
+            elif job.kind == KIND_ATTRIBUTE:
+                detail = run_attribute(session, asset, progress)
             elif job.kind == KIND_DESCRIBE:
                 detail = run_describe(session, asset, progress)
             elif job.kind == KIND_GENERATE_ALL:

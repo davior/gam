@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { Check, Copy, Link2 } from 'lucide-react'
+import { Check, Copy, Link2, ScanSearch } from 'lucide-react'
 import type { Asset, AssetUpdate, AttributionField } from '@/api/assets'
+import { enrichmentApi } from '@/api/enrichment'
+import EnrichmentButton from '@/components/EnrichmentButton'
+import SuggestionPanel from '@/components/SuggestionPanel'
 import { useLibraryStore } from '@/stores/library'
 import { useSavedFlash } from '@/utils/useSavedFlash'
 
@@ -196,6 +199,24 @@ export default function AttributionPanel({ asset }: Props) {
       <p className="text-xs text-gray-500 dark:text-gray-400">
         Where this came from, so it can be credited when you use it.
       </p>
+
+      {/* Proposes, never writes — the one enrichment that may not, because a wrong
+          citation credits somebody else's work to the wrong outlet in a field that then
+          looks finished. Absent on a clip: it has no bytes and no transcript of its own
+          to read, and it inherits its original's attribution anyway. */}
+      {!asset.parent_asset_id && (
+        <EnrichmentButton
+          assetId={asset.id}
+          action="attribute"
+          icon={ScanSearch}
+          label="Find the source with AI"
+          runningLabel="Looking…"
+          start={enrichmentApi.attribute}
+          failureMessage="Could not start looking"
+        />
+      )}
+
+      <SuggestionPanel assetId={asset.id} />
 
       {FIELDS.map((field) => (
         <div key={field.name}>

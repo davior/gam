@@ -8,14 +8,17 @@ user pressed.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Iterable, Optional
 
 from sqlmodel import Session, col, delete, select
 
+from app import attribution
 from app.clock import utcnow
 from app.models.asset import Asset
 from app.models.suggestion import (
+    KIND_ATTRIBUTION,
     KIND_TAG,
     KIND_TITLE,
     STATUS_ACCEPTED,
@@ -75,10 +78,14 @@ def propose(
     Only *pending* rows are cleared. Accepted and rejected ones are decisions the user
     made and this has no business discarding them.
     """
+    # Scoped to the kinds this run produces. Clearing every pending row would throw away
+    # the attribution suggestions a separate job proposed, which the user has not seen
+    # yet and this run knows nothing about.
     session.exec(
         delete(Suggestion).where(
             col(Suggestion.asset_id) == asset.id,
             col(Suggestion.status) == STATUS_PENDING,
+            col(Suggestion.kind).in_([KIND_TAG, KIND_TITLE]),
         )
     )
 
@@ -148,6 +155,15 @@ def accept(session: Session, asset: Asset, suggestion: Suggestion) -> Suggestion
                 asset_service.reindex_ids(session, [asset.id])
     elif suggestion.kind == KIND_TITLE:
         asset_service.apply_metadata(session, asset, {"name": suggestion.value})
+    elif suggestion.kind == KIND_ATTRIBUTION:
+        decoded = decode_attribution(suggestion)
+        if decoded:
+            # Through `apply_metadata`, the *human* path, stamping provenance "human" —
+            # because it is: the user read the evidence and chose it. Same reasoning as
+            # the title above.
+            asset_service.apply_metadata(
+                session, asset, {decoded["field"]: decoded["value"]}
+            )
 
     suggestion.status = STATUS_ACCEPTED
     suggestion.resolved_at = utcnow()
@@ -168,3 +184,119 @@ def reject(session: Session, suggestion: Suggestion) -> Suggestion:
     session.commit()
     session.refresh(suggestion)
     return suggestion
+
+
+# ─── attribution (M10) ───────────────────────────────────────────────────────
+
+
+def decode_attribution(suggestion: Suggestion) -> dict:
+    """The {field, value, evidence} a KIND_ATTRIBUTION row carries.
+
+    Returns an empty dict rather than raising on anything malformed: a suggestion whose
+    payload cannot be read is one the UI should skip, not one that should break the
+    panel listing every other suggestion beside it.
+    """
+    try:
+        payload = json.loads(suggestion.value or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    field_name = payload.get("field")
+    value = payload.get("value")
+    if not isinstance(field_name, str) or field_name not in attribution.ATTRIBUTION_FIELDS:
+        return {}
+    if not isinstance(value, str) or not value.strip():
+        return {}
+
+    evidence = payload.get("evidence")
+    return {
+        "field": field_name,
+        "value": value.strip(),
+        "evidence": evidence.strip() if isinstance(evidence, str) else "",
+    }
+
+
+def _declined_attribution(session: Session, asset_id: str) -> set[tuple[str, str]]:
+    """(field, value) pairs already refused, so a re-run does not ask twice."""
+    rows = session.exec(
+        select(Suggestion).where(
+            Suggestion.asset_id == asset_id,
+            Suggestion.status == STATUS_REJECTED,
+            Suggestion.kind == KIND_ATTRIBUTION,
+        )
+    ).all()
+
+    declined = set()
+    for row in rows:
+        decoded = decode_attribution(row)
+        if decoded:
+            declined.add((decoded["field"], decoded["value"].lower()))
+    return declined
+
+
+def propose_attribution(
+    session: Session,
+    asset: Asset,
+    *,
+    proposals: Iterable[dict],
+    model: str,
+) -> int:
+    """Record proposed attribution, one row per field.
+
+    Skips any field the asset already has a value for. A model reading a chyron is a
+    useful second opinion on a blank field and an unwelcome one on a field somebody
+    typed — and since accepting writes through the human path, letting it propose over
+    an answer would make "accept" a way to quietly overwrite one.
+    """
+    session.exec(
+        delete(Suggestion).where(
+            col(Suggestion.asset_id) == asset.id,
+            col(Suggestion.status) == STATUS_PENDING,
+            col(Suggestion.kind) == KIND_ATTRIBUTION,
+        )
+    )
+
+    declined = _declined_attribution(session, asset.id)
+
+    created = 0
+    seen: set[str] = set()
+    for proposal in proposals:
+        field_name = proposal.get("field")
+        value = (proposal.get("value") or "").strip()
+        evidence = (proposal.get("evidence") or "").strip()
+
+        if field_name not in attribution.ATTRIBUTION_FIELDS or not value:
+            continue
+        if field_name in seen:
+            continue
+        # `credit_line` is composed from the others; proposing one would put a sentence
+        # in front of the user that no component field supports.
+        if field_name == "credit_line":
+            continue
+        if (field_name, value.lower()) in declined:
+            continue
+        existing = getattr(asset, field_name, None)
+        if isinstance(existing, str) and existing.strip():
+            continue
+        if existing is not None and not isinstance(existing, str):
+            continue
+
+        seen.add(field_name)
+        session.add(
+            Suggestion(
+                user_id=asset.user_id,
+                asset_id=asset.id,
+                kind=KIND_ATTRIBUTION,
+                value=json.dumps(
+                    {"field": field_name, "value": value, "evidence": evidence},
+                    sort_keys=True,
+                ),
+                model=model,
+            )
+        )
+        created += 1
+
+    session.commit()
+    return created

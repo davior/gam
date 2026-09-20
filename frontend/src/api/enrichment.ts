@@ -22,16 +22,26 @@ interface ListResponse<T> {
 export interface Suggestion {
   id: string
   asset_id: string
-  kind: 'tag' | 'title'
+  kind: 'tag' | 'title' | 'attribution'
   value: string
   status: 'pending' | 'accepted' | 'rejected'
+
+  /** M10, and null on every other kind. An attribution row carries JSON in `value`;
+   *  the server decodes it so the same shape is not parsed in two places. */
+  field: string | null
+  proposed_value: string | null
+  /** What the model quoted as its reason. Attribution may only ever be *suggested*,
+   *  and a reviewer who cannot see what it read is not reviewing anything — so this
+   *  is shown, not hidden behind a tooltip. */
+  evidence: string | null
 }
 
 /** What a whole selection can be put through. Transcription is deliberately absent —
  *  it is billed per minute of audio, and a mis-click over two hundred videos is an
  *  expensive way to discover it was on the menu. Extracting text is here for the
  *  opposite reason: it calls nothing, and documents arrive by the folder. */
-export type BulkAction = 'describe' | 'summarize' | 'autotag' | 'embed' | 'extract_text'
+export type BulkAction =
+  'describe' | 'summarize' | 'autotag' | 'embed' | 'extract_text' | 'attribute'
 
 /** One readable chunk of a document, in the unit that document naturally has. */
 export interface DocumentPage {
@@ -65,6 +75,14 @@ export const enrichmentApi = {
   autotag(assetId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/autotag`)
+      .then((r) => r.data.data)
+  },
+
+  /** Propose where this came from. Writes nothing — every proposal arrives as a
+   *  suggestion carrying the evidence it was read from. */
+  attribute(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/attribute`)
       .then((r) => r.data.data)
   },
 

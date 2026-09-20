@@ -19,9 +19,10 @@ from typing import Callable, Optional
 
 from sqlmodel import Session
 
-from app.enrichment import autotag, describe, embed, extract_text, summarize
+from app.enrichment import attribute, autotag, describe, embed, extract_text, summarize
 from app.models.asset import Asset
 from app.models.job import (
+    KIND_ATTRIBUTE,
     KIND_AUTOTAG,
     KIND_DESCRIBE,
     KIND_EMBED,
@@ -45,6 +46,10 @@ ACTIONS = {
     KIND_DESCRIBE: describe.run,
     KIND_SUMMARIZE: summarize.run,
     KIND_AUTOTAG: autotag.run,
+    # The action most worth having over a selection after extract_text: twenty
+    # screenshots grabbed from one programme in one sitting share every attribution
+    # field, and it writes nothing either way — every result is a suggestion.
+    KIND_ATTRIBUTE: attribute.run,
     KIND_EMBED: embed.run,
     # Safe to include where transcription is not: it calls nothing and bills nothing, so
     # the mis-click that makes transcription too expensive to offer here costs only time.

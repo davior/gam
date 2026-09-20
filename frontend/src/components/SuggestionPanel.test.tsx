@@ -17,6 +17,9 @@ function suggestion(overrides: Partial<Suggestion> = {}): Suggestion {
     kind: 'tag',
     value: 'DARPA',
     status: 'pending',
+    field: null,
+    proposed_value: null,
+    evidence: null,
     ...overrides,
   }
 }
@@ -207,5 +210,54 @@ describe('SuggestionPanel', () => {
     await waitFor(() =>
       expect(screen.queryByText(/nothing is applied until you say so/i)).toBeNull()
     )
+  })
+})
+
+describe('attribution suggestions (M10)', () => {
+  const attribution = (overrides: Partial<Suggestion> = {}) =>
+    suggestion({
+      id: 'att-1',
+      kind: 'attribution',
+      value: '{"field":"publisher","value":"BBC Two","evidence":"the lower third"}',
+      field: 'publisher',
+      proposed_value: 'BBC Two',
+      evidence: 'the lower third reads BBC TWO',
+      ...overrides,
+    })
+
+  it('shows the field, the value and the evidence', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([attribution()])
+    renderPanel()
+
+    expect(await screen.findByText('BBC Two')).toBeInTheDocument()
+    expect(screen.getByText('Publisher')).toBeInTheDocument()
+    // Shown, not hidden: attribution may never be written directly, and accepting
+    // without seeing what the model read is not a review.
+    expect(screen.getByText(/the lower third reads BBC TWO/)).toBeInTheDocument()
+  })
+
+  it('accepts one', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([attribution()])
+    const accept = vi
+      .spyOn(enrichmentApi, 'accept')
+      .mockResolvedValue(attribution({ status: 'accepted' }))
+    renderPanel()
+
+    await userEvent.click(await screen.findByRole('button', { name: /accept bbc two/i }))
+
+    await waitFor(() => expect(accept).toHaveBeenCalledWith('a1', 'att-1'))
+  })
+
+  it('skips a row the server could not decode', async () => {
+    // A malformed payload should cost its own suggestion, not the panel listing the
+    // others beside it.
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([
+      attribution({ id: 'bad', field: null, proposed_value: null }),
+      suggestion({ id: 'tag-1', kind: 'tag', value: 'DARPA' }),
+    ])
+    renderPanel()
+
+    expect(await screen.findByText('DARPA')).toBeInTheDocument()
+    expect(screen.queryByText('BBC Two')).toBeNull()
   })
 })

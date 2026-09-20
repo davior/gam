@@ -25,6 +25,7 @@ from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
 from app.models.job import (
+    KIND_ATTRIBUTE,
     KIND_AUTOTAG,
     KIND_BULK_ENRICH,
     KIND_DESCRIBE,
@@ -34,7 +35,7 @@ from app.models.job import (
     KIND_SUMMARIZE,
 )
 from app.models.document import DocumentPage
-from app.models.suggestion import Suggestion
+from app.models.suggestion import KIND_ATTRIBUTION, Suggestion
 from app.providers import build_provider
 from app.schemas import DataResponse, ListResponse
 from app.schemas_jobs import ActivityJobRead
@@ -51,6 +52,25 @@ class SuggestionRead(BaseModel):
     kind: str
     value: str
     status: str
+
+    # M10. Decoded here rather than in the browser: a `kind == "attribution"` row carries
+    # JSON in `value`, and asking the client to parse a server-side encoding would put
+    # the same shape in two places to keep in step. Null on every other kind.
+    field: Optional[str] = None
+    proposed_value: Optional[str] = None
+    # What the model quoted as its reason. The grounding rule is the reason attribution
+    # is suggestion-only, and a reviewer who cannot see what it read is not reviewing.
+    evidence: Optional[str] = None
+
+
+def _to_suggestion_read(row: Suggestion) -> SuggestionRead:
+    read = SuggestionRead.model_validate(row)
+    decoded = suggestion_service.decode_attribution(row) if row.kind == KIND_ATTRIBUTION else {}
+    if decoded:
+        read.field = decoded["field"]
+        read.proposed_value = decoded["value"]
+        read.evidence = decoded["evidence"]
+    return read
 
 
 def _require_provider(session: Session, user_id: str) -> None:
@@ -116,6 +136,46 @@ def start_summarize(
         )
 
     job = enrichment_jobs.submit(session, asset, KIND_SUMMARIZE)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.post(
+    "/{asset_id}/attribute", response_model=DataResponse[ActivityJobRead], status_code=202
+)
+def start_attribute(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue a pass that proposes where this came from. It writes nothing.
+
+    The one enrichment that may never write directly: a description the model gets wrong
+    is a poorer search result, while a citation it gets wrong credits somebody else's
+    work to the wrong outlet, in a field that then looks finished. Every proposal arrives
+    as a `Suggestion` carrying the evidence it was read from, for a person to accept.
+    """
+    asset = _owned_asset(asset_id, user.id, session)
+    _require_provider(session, user.id)
+
+    if not summarisable(asset):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_summarisable",
+                "message": "This asset has no content to read",
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_ATTRIBUTE) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "This asset is already being attributed",
+            },
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_ATTRIBUTE)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
 
@@ -307,7 +367,7 @@ def list_suggestions(
     _owned_asset(asset_id, user.id, session)
     rows = suggestion_service.pending_for(session, asset_id)
     return ListResponse(
-        data=[SuggestionRead.model_validate(r) for r in rows],
+        data=[_to_suggestion_read(r) for r in rows],
         total=len(rows),
         limit=len(rows),
         offset=0,
@@ -340,7 +400,7 @@ def accept_suggestion(
     asset = _owned_asset(asset_id, user.id, session)
     row = _owned_suggestion(asset_id, suggestion_id, user.id, session)
     return DataResponse(
-        data=SuggestionRead.model_validate(suggestion_service.accept(session, asset, row))
+        data=_to_suggestion_read(suggestion_service.accept(session, asset, row))
     )
 
 
@@ -357,7 +417,7 @@ def reject_suggestion(
     """Record a no. Kept, so a later run does not propose the same thing again."""
     _owned_asset(asset_id, user.id, session)
     row = _owned_suggestion(asset_id, suggestion_id, user.id, session)
-    return DataResponse(data=SuggestionRead.model_validate(suggestion_service.reject(session, row)))
+    return DataResponse(data=_to_suggestion_read(suggestion_service.reject(session, row)))
 
 
 class BulkEnrichRequest(BaseModel):
