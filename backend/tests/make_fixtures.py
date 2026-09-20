@@ -73,8 +73,119 @@ def main() -> None:
 
     _write_minimal_pdf(FIXTURES / "sample_document.pdf")
     _write_office_documents()
+    _write_attributed_fixtures()
 
     print("wrote:", ", ".join(sorted(p.name for p in FIXTURES.iterdir())))
+
+
+def _write_attributed_fixtures() -> None:
+    """Files that carry real embedded attribution, for M10's harvester.
+
+    Separate from the `sample_*` set on purpose: those deliberately carry *no*
+    attribution, which is what proves the harvester writes nothing when there is nothing
+    to read. A single set carrying metadata could not test both halves.
+
+    Every one of these uses the same cast — Jane Doe at the BBC, Panorama, 2019-03-15 —
+    so one assertion shape covers every format and a mismatch is obvious on sight.
+    """
+    from PIL import Image
+
+    # Video: MP4 tag block. `title` is set deliberately and must NOT be harvested — in a
+    # media container it names this file rather than a containing work, and mapping it
+    # would rename half the library on upload. `album` is what stands in for the work.
+    run([
+        "ffmpeg", "-y", "-nostdin",
+        "-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+        "-metadata", "artist=Jane Doe",
+        "-metadata", "album=Panorama",
+        # MP4 has no publisher atom, so ffmpeg drops this one — deliberately left in
+        # to document that, and why the video fixture has no publisher while the MP3
+        # below (ID3 has TPUB) does.
+        "-metadata", "publisher=BBC",
+        "-metadata", "copyright=(C) 2019 BBC",
+        "-metadata", "date=2019-03-15",
+        "-metadata", "title=Encoder boilerplate that must not be harvested",
+        "-metadata", "comment=https://example.org/panorama",
+        str(FIXTURES / "attributed_video.mp4"),
+    ])
+
+    # Audio: ID3. A bare year, which is the common case and the reason
+    # `published_date` is a partial-date string rather than a DateTime.
+    run([
+        "ffmpeg", "-y", "-nostdin",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        "-c:a", "libmp3lame",
+        "-metadata", "artist=Jane Doe",
+        "-metadata", "album=Panorama",
+        "-metadata", "publisher=BBC",
+        "-metadata", "date=2019",
+        str(FIXTURES / "attributed_audio.mp3"),
+    ])
+
+    # Image: EXIF. DateTimeOriginal goes in the Exif sub-IFD (0x8769) where a real
+    # camera puts it, not in IFD0 — a fixture that put it at the top level would let a
+    # harvester that only looks there pass while failing on every actual photograph.
+    image = Image.new("RGB", (320, 240), (60, 120, 180))
+    exif = image.getexif()
+    exif[0x013B] = "Jane Doe"
+    exif[0x8298] = "(C) 2019 BBC"
+    # Assigned back, not just mutated: Pillow serialises the sub-IFD from the value
+    # stored under 0x8769, so mutating the dict get_ifd() returns is silently dropped on
+    # save. That mistake produces a fixture with no DateTimeOriginal at all, which a
+    # harvester bug would then "pass" against.
+    sub_ifd = exif.get_ifd(0x8769)
+    sub_ifd[0x9003] = "2019:03:15 10:11:12"
+    exif[0x8769] = sub_ifd
+    image.save(FIXTURES / "attributed_image.jpg", exif=exif, quality=90)
+
+    _write_attributed_pdf(FIXTURES / "attributed_document.pdf")
+
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("Gecko Asset Manager")
+    properties = document.core_properties
+    properties.author = "Jane Doe"
+    properties.title = "Panorama"
+    properties.created = __import__("datetime").datetime(2019, 3, 15, 10, 11, 12)
+    document.save(FIXTURES / "attributed_document.docx")
+
+
+def _write_attributed_pdf(target: Path) -> None:
+    """A one-page PDF carrying an Info dictionary.
+
+    Same hand-built approach as `_write_minimal_pdf`, plus the /Info trailer entry that
+    holds Author, Title and CreationDate. PDF dates use the D:YYYYMMDDHHmmSS form, which
+    the harvester's date normaliser has to reduce like every other format's.
+    """
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+        b"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        b"<< /Length 62 >>\nstream\nBT /F1 18 Tf 20 100 Td (Gecko Asset Manager) Tj ET\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Author (Jane Doe) /Title (Panorama) /CreationDate (D:20190315101112Z) >>",
+    ]
+
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{index} 0 obj\n".encode() + body + b"\nendobj\n"
+
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Info {len(objects)} 0 R >>\n"
+        f"startxref\n{xref_at}\n".encode()
+        + b"%%EOF\n"
+    )
+    target.write_bytes(bytes(out))
 
 
 def _write_office_documents() -> None:

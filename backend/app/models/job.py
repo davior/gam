@@ -45,6 +45,11 @@ KIND_BULK_ENRICH = "bulk_enrich"
 # costs nothing, the same reason `KIND_EXTRACT_TEXT` sits apart from the LLM jobs
 # despite also being per-asset.
 KIND_EXTRACT_SUBVIDEO = "extract_subvideo"
+# M10. Re-reading embedded attribution (EXIF, ID3, PDF Author) across a whole library,
+# for the files that were already there when M10 landed. Library-wide, and outside
+# `ENRICHMENT_KINDS` for the same reason as the two above: it calls no provider and
+# costs nothing.
+KIND_HARVEST_ATTRIBUTION = "harvest_attribution"
 
 # Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(
@@ -63,7 +68,9 @@ ENRICHMENT_KINDS = frozenset(
 # branches on this set rather than on a hardcoded kind, so adding another one needs no
 # change to the dispatch. A bulk run over a selection is here too: it has many assets,
 # which for the purposes of `asset_id` is the same as having none.
-LIBRARY_KINDS = frozenset({KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH})
+LIBRARY_KINDS = frozenset(
+    {KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH, KIND_HARVEST_ATTRIBUTION}
+)
 
 
 class EnrichmentJob(SQLModel, table=True):

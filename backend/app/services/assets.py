@@ -10,15 +10,17 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-from typing import AsyncIterator, Iterable, Optional
+from typing import Any, AsyncIterator, Iterable, Optional
 
+from sqlalchemy import and_, func, not_, or_
+from sqlalchemy.orm import aliased
 from sqlmodel import Session, col, delete, select, update
 
 from app import attribution
 from app.auth import sign_media_key
 from app.clock import utcnow
 from app.config import settings
-from app.ingest import thumbnails
+from app.ingest import embedded_metadata, thumbnails
 from app.ingest.filetypes import (
     SOURCE_CLIP,
     SOURCE_SUBVIDEO,
@@ -112,6 +114,7 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     if not asset.storage_key:
         return
 
+    embedded: dict = {}
     try:
         with storage.materialise(asset.storage_key) as path:
             result = probe(path)
@@ -135,6 +138,15 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
                 asset.original_name or "",
                 duration_seconds=result.duration_seconds,
             )
+
+            # Read inside the `with`, applied after: the file is only on disk for the
+            # duration of this block, but writing needs a committed row.
+            embedded = embedded_metadata.harvest(
+                path,
+                asset.asset_type,
+                asset.original_name or "",
+                probe_tags=result.tags,
+            )
     except (StorageError, OSError) as exc:
         logger.warning("Could not describe asset %s: %s", asset.id, exc)
         return
@@ -150,6 +162,37 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     session.commit()
     session.refresh(asset)
     _reindex(session, asset)
+    apply_embedded_attribution(session, asset, embedded)
+
+
+def apply_embedded_attribution(session: Session, asset: Asset, embedded: dict) -> None:
+    """Write harvested attribution into the fields that are still empty.
+
+    Filtering to empty fields is what makes this safe to run without asking, and what
+    makes the library-wide re-harvest safe to run twice: an EXIF `Artist` is a fact about
+    the file, but it is frequently the camera's registered owner rather than the
+    photographer, so it gets to fill a blank and never to overwrite an answer. The
+    `PROVENANCE_EMBEDDED` stamp is what lets a later pass tell the two apart.
+    """
+    if not embedded:
+        return
+
+    fillable = {
+        name: value
+        for name, value in embedded.items()
+        if name in attribution.ATTRIBUTION_FIELDS and _is_unset(getattr(asset, name, None))
+    }
+    if not fillable:
+        return
+
+    try:
+        apply_embedded_metadata(session, asset, fillable)
+    except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
+        logger.warning("Could not store embedded attribution for %s", asset.id, exc_info=True)
+
+
+def _is_unset(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def _chain_transcription(session: Session, asset: Asset) -> None:
@@ -590,6 +633,64 @@ def parents_for_many(session: Session, assets: Iterable[Asset]) -> dict[str, Ass
     return {row.id: row for row in rows}
 
 
+def _blank(column):
+    """SQL for "nothing recorded here" — NULL, or an empty string.
+
+    `retrieved_at` is a DateTime, where `!= ''` is not a meaningful comparison, so the
+    empty-string half is only applied to the text columns.
+    """
+    if column.key == "retrieved_at":
+        return column.is_(None)
+    return or_(column.is_(None), func.trim(column) == "")
+
+
+def _records_attribution(model) -> Any:
+    """SQL for "this row has at least one attribution field filled in"."""
+    return or_(*[not_(_blank(getattr(model, name))) for name in attribution.ATTRIBUTION_FIELDS])
+
+
+def own_or_inherited(field_name: str, build) -> Any:
+    """Lift a condition on an asset's own column to "or the parent it inherits from".
+
+    Inheritance is resolved on read everywhere else, so a filter that only looked at the
+    row would answer "everything from the BBC" with the documentary and none of the
+    clips cut from it — which reads as a bug and is the sort of quiet incompleteness a
+    user has no way to notice.
+
+    `build` turns a column into a condition. It is applied to the asset's own column and
+    to the parent's; the parent only counts where the asset's own value is blank, which
+    is exactly the coalesce `attribution.resolve` performs on read.
+    """
+    parent = aliased(Asset)
+    own_column = getattr(Asset, field_name)
+    return or_(
+        build(own_column),
+        and_(
+            _blank(own_column),
+            select(1)
+            .where(parent.id == Asset.parent_asset_id, build(getattr(parent, field_name)))
+            .exists(),
+        ),
+    )
+
+
+def unattributed_clause(unattributed: bool) -> Any:
+    """Rows with no attribution at all, their parent's included.
+
+    This is how a backlog gets worked through — "what still has no source" — so it has to
+    agree with what the panel shows. A clip that displays its parent's credit is not
+    missing one.
+    """
+    parent = aliased(Asset)
+    inherits_attribution = (
+        select(1)
+        .where(parent.id == Asset.parent_asset_id, _records_attribution(parent))
+        .exists()
+    )
+    anything = or_(_records_attribution(Asset), inherits_attribution)
+    return not_(anything) if unattributed else anything
+
+
 def to_read_model(
     asset: Asset,
     storage: LocalStorage,
@@ -617,6 +718,8 @@ def to_read_model(
     if playable_key:
         missing = not storage.stat(playable_key).exists
 
+    resolved_attribution = attribution.resolve(asset, parent)
+
     return AssetRead(
         id=asset.id,
         name=asset.name,
@@ -638,6 +741,20 @@ def to_read_model(
         file_url=file_url,
         thumb_url=thumb_url,
         missing=missing,
+        # Resolved, not raw: a clip shows what it inherited, and `attribution_inherited`
+        # tells the UI which of those to mark as coming from the parent. `parent` is the
+        # same batch-loaded row the file_url resolution above already uses, so this adds
+        # no query to a listing.
+        source_url=resolved_attribution.source_url,
+        creator=resolved_attribution.creator,
+        publisher=resolved_attribution.publisher,
+        source_title=resolved_attribution.source_title,
+        published_date=resolved_attribution.published_date,
+        retrieved_at=resolved_attribution.retrieved_at,
+        license=resolved_attribution.license,
+        credit_line=resolved_attribution.credit_line,
+        credit=resolved_attribution.credit,
+        attribution_inherited=list(resolved_attribution.inherited),
         tags=[
             AssetTagRead(id=t.id, name=t.name, category_id=t.category_id)
             for t in (asset_tags or [])

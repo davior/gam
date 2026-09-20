@@ -19,6 +19,7 @@ from app.database import engine
 from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
 from app.enrichment.backfill import run as run_backfill
+from app.enrichment.harvest_attribution import run as run_harvest_attribution
 from app.enrichment.embed import run as run_embed
 from app.enrichment.autotag import run as run_autotag
 from app.enrichment.bulk import run as run_bulk
@@ -45,6 +46,7 @@ from app.models.job import (
     EnrichmentJob,
     KIND_AUTOTAG,
     KIND_BACKFILL_EMBEDDINGS,
+    KIND_HARVEST_ATTRIBUTION,
     KIND_BULK_ENRICH,
     KIND_DESCRIBE,
     KIND_EMBED,
@@ -272,6 +274,14 @@ def _run_job(job_id: str) -> None:
                     # Surfaced rather than swallowed: a run that quietly skipped three
                     # assets looks identical to one that embedded everything.
                     detail += f", {result.failed} failed"
+            elif job.kind == KIND_HARVEST_ATTRIBUTION:
+                harvested = run_harvest_attribution(session, job.user_id, progress)
+                detail = (
+                    f"{harvested.attributed} attributed of {harvested.scanned} scanned"
+                )
+                if harvested.failed:
+                    # Surfaced rather than swallowed, same as the two runs above.
+                    detail += f", {harvested.failed} unreadable"
             else:
                 raise TranscriptionError(f"Unknown enrichment kind: {job.kind}")
 
