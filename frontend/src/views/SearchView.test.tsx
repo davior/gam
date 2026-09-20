@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import SearchView from '@/views/SearchView'
 import { searchApi, type SearchHit, type SearchResponse } from '@/api/search'
 import type { Asset } from '@/api/assets'
+import { noAttribution } from '@/test-fixtures'
 
 function asset(overrides: Partial<Asset> = {}): Asset {
   return {
@@ -12,6 +13,7 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     name: 'Giordano interview',
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'video',
     source: 'local_upload',
     parent_asset_id: null,

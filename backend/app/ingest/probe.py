@@ -11,9 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from app.media_tools import ffmpeg_available
 
@@ -32,6 +32,14 @@ class ProbeResult:
     codec: Optional[str] = None
     has_audio: bool = False
     has_video: bool = False
+    # The container's own tag block — artist, copyright, date and friends. ffprobe has
+    # been returning these all along (`-show_format` includes them) and this class threw
+    # them away; M10's attribution harvester reads them. Keys are lowercased here
+    # because containers disagree about case and callers should not have to.
+    #
+    # `frozen=True` is for immutability, not hashability — a mutable default would be
+    # shared across instances, and nothing hashes a ProbeResult.
+    tags: Mapping[str, str] = field(default_factory=dict)
 
 
 def probe(path: Path) -> ProbeResult:
@@ -97,7 +105,28 @@ def _interpret(payload: dict[str, Any]) -> ProbeResult:
         codec=codec,
         has_audio=audio is not None,
         has_video=video is not None,
+        tags=_container_tags(payload, video, audio),
     )
+
+
+def _container_tags(
+    payload: dict[str, Any],
+    video: Optional[dict[str, Any]],
+    audio: Optional[dict[str, Any]],
+) -> Mapping[str, str]:
+    """The container's tag block, lowercased, format first and streams as a fallback.
+
+    Where a tag lives depends on the container: MP4 and MP3 put artist/copyright/date on
+    the format, while some MKV and transport-stream files carry them only on a stream.
+    Reading both means the caller does not have to know which it was handed. Format wins,
+    because it describes the file rather than one track of it.
+    """
+    merged: dict[str, str] = {}
+    for source in (audio, video, payload.get("format")):
+        for key, value in ((source or {}).get("tags") or {}).items():
+            if isinstance(value, str) and value.strip():
+                merged[str(key).strip().lower()] = value.strip()
+    return merged
 
 
 def _display_dimensions(stream: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:

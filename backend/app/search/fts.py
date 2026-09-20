@@ -46,6 +46,11 @@ SEGMENT_FTS = "segment_fts"
 # UNINDEXED columns ride along so a hit resolves to an asset and a timestamp without a
 # second query, while staying out of the tokeniser — an asset id must not match a text
 # search.
+#
+# `attribution_text` is appended rather than slotted in beside `name`, and that position
+# is load-bearing: `search_assets` passes a *column index* to snippet() (2, for `name`),
+# so inserting a column anywhere before it would silently start excerpting the wrong
+# field. Appending keeps every existing index valid.
 ASSET_FTS_DDL = """
 CREATE VIRTUAL TABLE asset_fts USING fts5(
     asset_id UNINDEXED,
@@ -54,6 +59,7 @@ CREATE VIRTUAL TABLE asset_fts USING fts5(
     description,
     summary,
     tags_text,
+    attribution_text,
     tokenize='porter unicode61'
 )
 """
@@ -69,7 +75,15 @@ CREATE VIRTUAL TABLE segment_fts USING fts5(
 )
 """
 
-ASSET_FTS_COLUMNS = ("asset_id", "user_id", "name", "description", "summary", "tags_text")
+ASSET_FTS_COLUMNS = (
+    "asset_id",
+    "user_id",
+    "name",
+    "description",
+    "summary",
+    "tags_text",
+    "attribution_text",
+)
 SEGMENT_FTS_COLUMNS = ("segment_id", "asset_id", "user_id", "body", "start_time")
 
 # The virtual tables, plus the shadow tables SQLite creates behind each one
@@ -119,13 +133,22 @@ class FtsHit:
 # ─── writing ─────────────────────────────────────────────────────────────────
 
 
-def index_asset(session: Session, asset: Asset, tags_text: str = "") -> None:
-    """Re-index one asset's own metadata. Safe to call repeatedly."""
+def index_asset(
+    session: Session, asset: Asset, tags_text: str = "", attribution_text: str = ""
+) -> None:
+    """Re-index one asset's own metadata. Safe to call repeatedly.
+
+    `attribution_text` is passed in rather than composed here for the same reason
+    `tags_text` is: this module knows about the index, not about what the application
+    considers worth indexing. `services/assets._reindex` builds both.
+    """
     remove_asset(session, asset.id)
     session.execute(
         text(
-            f"INSERT INTO {ASSET_FTS} (asset_id, user_id, name, description, summary, tags_text)"
-            " VALUES (:asset_id, :user_id, :name, :description, :summary, :tags_text)"
+            f"INSERT INTO {ASSET_FTS}"
+            " (asset_id, user_id, name, description, summary, tags_text, attribution_text)"
+            " VALUES"
+            " (:asset_id, :user_id, :name, :description, :summary, :tags_text, :attribution_text)"
         ),
         {
             "asset_id": asset.id,
@@ -134,6 +157,7 @@ def index_asset(session: Session, asset: Asset, tags_text: str = "") -> None:
             "description": asset.description or "",
             "summary": asset.summary or "",
             "tags_text": tags_text,
+            "attribution_text": attribution_text,
         },
     )
     session.commit()

@@ -12,10 +12,14 @@ from sqlmodel import Session, col, func, select
 from app.auth import CurrentUser
 from app.database import get_session
 from app.ingest.filetypes import ASSET_TYPES
+from app.jobs import enrichment as enrichment_jobs
+from app.jobs.registry import KINDS
 from app.models.asset import Asset
+from app.models.job import KIND_HARVEST_ATTRIBUTION
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult
+from app.schemas_jobs import ActivityJobRead
 from app.schemas_tags import AssetTagsWrite, BulkTagsResult, BulkTagsWrite, TagRead
 from app.services import assets as service
 from app.services import tags as tag_service
@@ -136,6 +140,12 @@ def list_assets(
     max_duration: Optional[float] = Query(default=None, ge=0),
     uploaded_after: Optional[datetime] = Query(default=None),
     uploaded_before: Optional[datetime] = Query(default=None),
+    creator: Optional[str] = Query(default=None, max_length=200),
+    publisher: Optional[str] = Query(default=None, max_length=200),
+    source_title: Optional[str] = Query(default=None, max_length=200),
+    published_after: Optional[str] = Query(default=None, max_length=10),
+    published_before: Optional[str] = Query(default=None, max_length=10),
+    unattributed: Optional[bool] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -185,6 +195,41 @@ def list_assets(
             | col(Asset.description).ilike(term)
             | col(Asset.original_name).ilike(term)
         )
+
+    # Attribution (M10). Each resolves through the parent the same way the read model
+    # does, so a clip is returned by the publisher it inherited — see
+    # `services/assets.own_or_inherited` for why a row-only filter would be wrong.
+    for field_name, value in (
+        ("creator", creator),
+        ("publisher", publisher),
+        ("source_title", source_title),
+    ):
+        if value and value.strip():
+            needle = f"%{value.strip()}%"
+            filters.append(
+                service.own_or_inherited(
+                    field_name, lambda column, n=needle: column.ilike(n)
+                )
+            )
+
+    # Lexicographic, which is chronological here because AssetUpdate guarantees the
+    # format. "2019" as a lower bound therefore includes all of 2019, and as an upper
+    # bound excludes it — the same half-open behaviour a date picker implies.
+    if published_after:
+        filters.append(
+            service.own_or_inherited(
+                "published_date", lambda column, v=published_after: column >= v
+            )
+        )
+    if published_before:
+        filters.append(
+            service.own_or_inherited(
+                "published_date", lambda column, v=published_before: column <= v
+            )
+        )
+
+    if unattributed is not None:
+        filters.append(service.unattributed_clause(unattributed))
 
     # Tag and category filters resolve to a set of ids first. Both are questions about
     # the join table rather than about the asset row, and an id set keeps them from
@@ -425,3 +470,35 @@ def bulk_tag_assets(
     return DataResponse[BulkTagsResult](
         data=BulkTagsResult(updated=len(owned), tags_added=[_tag_read(t) for t in added])
     )
+
+
+@router.post(
+    "/harvest-attribution",
+    response_model=DataResponse[ActivityJobRead],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_attribution_harvest(
+    user: CurrentUser, session: Session = Depends(get_session)
+) -> DataResponse[ActivityJobRead]:
+    """Re-read embedded attribution for every file already in this library.
+
+    Ingest harvests each new upload, so this exists for everything uploaded before M10 —
+    on an instance that has been running a while, the whole library. Those files have
+    been carrying their EXIF and ID3 and PDF Author on disk the entire time; nothing has
+    ever looked.
+
+    Safe to run repeatedly, because the harvest only ever fills blanks: a second run is a
+    no-op over what the first one filled and over anything since corrected by hand. That
+    is also why there is no "already harvested" flag to keep.
+    """
+    if enrichment_jobs.active_library_job(session, user.id, KIND_HARVEST_ATTRIBUTION):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "Your library is already being scanned for embedded metadata",
+            },
+        )
+
+    job = enrichment_jobs.submit_library(session, user.id, KIND_HARVEST_ATTRIBUTION)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))

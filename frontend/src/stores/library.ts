@@ -47,6 +47,12 @@ interface LibraryState {
   /** ISO dates (`YYYY-MM-DD`) straight from `<input type="date">`. */
   uploadedAfter: string | null
   uploadedBefore: string | null
+  /** M10. Substring matches, resolved through a clip's parent server-side, so filtering
+   *  by publisher returns the clips that inherit it too. */
+  creatorFilter: string | null
+  publisherFilter: string | null
+  /** True for "still missing a source", which is how a backlog gets worked through. */
+  unattributedOnly: boolean
 
   uploading: boolean
   uploadProgress: number
@@ -61,6 +67,9 @@ interface LibraryState {
   setSourceFilter: (source: string | null) => void
   setDurationRange: (min: number | null, max: number | null) => void
   setUploadedRange: (after: string | null, before: string | null) => void
+  setCreatorFilter: (creator: string | null) => void
+  setPublisherFilter: (publisher: string | null) => void
+  setUnattributedOnly: (only: boolean) => void
   clearFilters: () => void
   upload: (files: File[]) => Promise<void>
   update: (id: string, changes: AssetUpdate) => Promise<void>
@@ -90,6 +99,9 @@ const NO_FILTERS = {
   maxDuration: null,
   uploadedAfter: null,
   uploadedBefore: null,
+  creatorFilter: null,
+  publisherFilter: null,
+  unattributedOnly: false,
 } satisfies Partial<LibraryState>
 
 /**
@@ -111,6 +123,12 @@ function filterParams(state: LibraryState): ListAssetsParams {
     max_duration: state.maxDuration ?? undefined,
     uploaded_after: state.uploadedAfter ?? undefined,
     uploaded_before: state.uploadedBefore ?? undefined,
+    creator: state.creatorFilter ?? undefined,
+    publisher: state.publisherFilter ?? undefined,
+    // Only sent when on: `false` is a real filter server-side ("everything that *has*
+    // attribution"), and sending it whenever the chip is off would hide every
+    // unattributed asset from the default library view.
+    unattributed: state.unattributedOnly ? true : undefined,
   }
 }
 
@@ -205,6 +223,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   setDurationRange(minDuration, maxDuration) {
     set({ minDuration, maxDuration })
+    void get().load()
+  },
+
+  setCreatorFilter(creatorFilter) {
+    set({ creatorFilter })
+    void get().load()
+  },
+
+  setPublisherFilter(publisherFilter) {
+    set({ publisherFilter })
+    void get().load()
+  },
+
+  setUnattributedOnly(unattributedOnly) {
+    set({ unattributedOnly })
     void get().load()
   },
 

@@ -1,6 +1,9 @@
 # M10 — Attribution
 
-**Status:** specified, not built. This document is the spec; no code exists yet.
+**Status:** built. The spec below held with three changes, each recorded in place:
+a library-wide re-harvest was added (the files already uploaded carry their metadata on
+disk and nothing had ever looked), a bulk attribution pass over a selection was built
+rather than deferred, and `rights_notes` stayed out as decided.
 
 Numbered M10 but landing **before** M8 and M9. Out of numeric order on purpose: M8 needs
 a fal.ai account and M9 needs GVC to exist, while this needs neither and is the one piece
@@ -291,13 +294,37 @@ instance of it.
 - **No per-clip timestamped citation format.** A clip can override `credit_line` freehand;
   a structured "at 04:12" convention can wait until GVC shows what it needs.
 
-## Open, and genuinely undecided
+## ~~Open, and genuinely undecided~~ Resolved during the build
 
-Whether a bulk attribution pass over a selection is worth building, as M6 did for
-enrichment. It probably is for a batch imported from one source in one sitting — twenty
-screenshots from the same programme share every field. Left out of the first pass because
-the `unattributed` filter plus the existing `SelectionBar` may make it a small addition
-rather than a design.
+Whether a bulk attribution pass over a selection was worth building. **Built.** It turned
+out to be one entry in `enrichment/bulk.py::ACTIONS` and one button in `SelectionBar`,
+because the machinery M6 put in place already covered it — well under the cost of the
+design discussion the question implied. It writes nothing either way, since every result
+is a suggestion, so it carries none of the risk that keeps transcription out of that list.
+
+## What the build added beyond the spec
+
+- **A library-wide re-harvest** (`POST /api/assets/harvest-attribution`). Ingest handles
+  new uploads, but everything uploaded before M10 still has its EXIF and ID3 on disk with
+  nothing having looked. Safe to run repeatedly, because the harvest only fills blanks.
+- **Child re-indexing on an attribution change.** Inheritance resolves on read everywhere
+  except the keyword index, which by nature stores a snapshot. Without this, correcting a
+  parent's publisher left every clip of it indexed under the old one — findable by a value
+  no longer shown anywhere.
+
+## Two bugs real files caught that a stubbed tag dictionary would not have
+
+Both would have passed against mocked metadata, and both are why the fixtures are real
+files built by `tests/make_fixtures.py`:
+
+- **EXIF `DateTimeOriginal` lives in the Exif sub-IFD (0x8769), not IFD0.** A harvester
+  reading only the top level works on hand-built fixtures and fails on every actual
+  photograph. The fixture generator carries the matching trap: Pillow serialises the
+  sub-IFD from the value stored under 0x8769, so mutating the dict `get_ifd()` returns is
+  silently dropped on save — which produces a fixture with no date at all for a broken
+  reader to "pass" against.
+- **PDF writes its date as `D:20190315101112Z`** — prefixed and separator-less, unlike
+  every other format, and unmatched by a normaliser written against the rest.
 
 ---
 

@@ -29,7 +29,19 @@ from app.clock import utcnow
 # writing it replaces something rather than filling a blank.
 KIND_TAG = "tag"
 KIND_TITLE = "title"
-KINDS = (KIND_TAG, KIND_TITLE)
+# M10. One row per proposed attribution field, with `value` holding JSON-as-TEXT:
+# {"field": "publisher", "value": "BBC Two", "evidence": "the chyron reads BBC TWO"}.
+#
+# One kind rather than eight, because `accept` dispatches on `kind` and eight near
+# identical branches would be eight places to forget one. Still one row per field, so a
+# user can take the publisher and decline the date — which is the common case, since a
+# model reads a channel logo far more reliably than a broadcast date.
+#
+# `evidence` is not decoration: attribution is the one enrichment that may not write
+# directly, because a fabricated citation is worse than a blank one, and a reviewer who
+# cannot see what the model read is not really reviewing anything.
+KIND_ATTRIBUTION = "attribution"
+KINDS = (KIND_TAG, KIND_TITLE, KIND_ATTRIBUTION)
 
 STATUS_PENDING = "pending"
 STATUS_ACCEPTED = "accepted"

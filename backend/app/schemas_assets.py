@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, field_validator
+
+# A whole year, a year and month, or a full date. Months 01-12 and days 01-31 are
+# enforced here so the string column cannot hold "2019-13" and sort between "2019-12"
+# and "2020-01" — the range filters rely on lexicographic order being chronological.
+_ISO_PARTIAL_DATE = re.compile(r"\d{4}(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?")
 
 
 class AssetRead(BaseModel):
@@ -42,6 +48,29 @@ class AssetRead(BaseModel):
     # vanished underneath the database shows as missing instead of as a broken image.
     missing: bool = False
 
+    # ─── attribution (M10) ───────────────────────────────────────────────────
+    # These are the *resolved* values: a clip with nothing of its own carries what it
+    # inherited from its parent, so the panel shows a real credit rather than eight
+    # blanks beside a video that is plainly attributed.
+    source_url: Optional[str] = None
+    creator: Optional[str] = None
+    publisher: Optional[str] = None
+    source_title: Optional[str] = None
+    published_date: Optional[str] = None
+    retrieved_at: Optional[datetime] = None
+    license: Optional[str] = None
+    credit_line: Optional[str] = None
+
+    # The line to display: `credit_line` when one was typed, otherwise composed from the
+    # fields above. Read-only and computed per response, for the same reason `file_url`
+    # is: a stored copy would be stale the moment a component field changed.
+    credit: str = ""
+    # Which of the fields above came from the parent rather than from this row. Sent so
+    # the UI can mark an inherited value as inherited instead of letting it look like
+    # something typed on the clip — which is what would make a user "correct" it here
+    # and quietly break the link to the source.
+    attribution_inherited: List[str] = Field(default_factory=list)
+
     # Batch-loaded for a listing, never per row: sixty assets a page each asking for
     # their own tags is sixty queries that grow with the page.
     tags: List["AssetTagRead"] = Field(default_factory=list)
@@ -73,6 +102,36 @@ class AssetUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     description: Optional[str] = Field(default=None, max_length=20_000)
     summary: Optional[str] = Field(default=None, max_length=20_000)
+
+    # Attribution (M10). All editable by hand — the harvester only ever fills blanks,
+    # and an AI may only propose, so this is the sole path that can correct a value.
+    source_url: Optional[str] = Field(default=None, max_length=2_000)
+    creator: Optional[str] = Field(default=None, max_length=500)
+    publisher: Optional[str] = Field(default=None, max_length=500)
+    source_title: Optional[str] = Field(default=None, max_length=500)
+    published_date: Optional[str] = Field(default=None, max_length=10)
+    retrieved_at: Optional[datetime] = None
+    license: Optional[str] = Field(default=None, max_length=500)
+    credit_line: Optional[str] = Field(default=None, max_length=2_000)
+
+    @field_validator("published_date")
+    @classmethod
+    def _published_date_is_an_iso_partial(cls, value: Optional[str]) -> Optional[str]:
+        """`YYYY`, `YYYY-MM` or `YYYY-MM-DD`, and nothing else.
+
+        The looseness of a string column is what lets a partial date exist at all; the
+        validator is what stops it becoming a free-text field where "summer 1994" and
+        "15/03/19" would sort meaninglessly and break the range filters, which compare
+        lexicographically precisely because the format is guaranteed here.
+        """
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            return None
+        if not _ISO_PARTIAL_DATE.fullmatch(cleaned):
+            raise ValueError("published_date must be YYYY, YYYY-MM or YYYY-MM-DD")
+        return cleaned
 
     @field_validator("name")
     @classmethod

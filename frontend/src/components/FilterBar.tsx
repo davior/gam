@@ -63,6 +63,12 @@ export default function FilterBar() {
   const toggleTag = useLibraryStore((s) => s.toggleTag)
   const setCategoryFilter = useLibraryStore((s) => s.setCategoryFilter)
   const setSourceFilter = useLibraryStore((s) => s.setSourceFilter)
+  const creatorFilter = useLibraryStore((s) => s.creatorFilter)
+  const publisherFilter = useLibraryStore((s) => s.publisherFilter)
+  const unattributedOnly = useLibraryStore((s) => s.unattributedOnly)
+  const setCreatorFilter = useLibraryStore((s) => s.setCreatorFilter)
+  const setPublisherFilter = useLibraryStore((s) => s.setPublisherFilter)
+  const setUnattributedOnly = useLibraryStore((s) => s.setUnattributedOnly)
   const setDurationRange = useLibraryStore((s) => s.setDurationRange)
   const setUploadedRange = useLibraryStore((s) => s.setUploadedRange)
   const clearFilters = useLibraryStore((s) => s.clearFilters)
@@ -128,7 +134,10 @@ export default function FilterBar() {
     (categoryFilter ? 1 : 0) +
     (sourceFilter ? 1 : 0) +
     (minDuration !== null || maxDuration !== null ? 1 : 0) +
-    (uploadedAfter || uploadedBefore ? 1 : 0)
+    (uploadedAfter || uploadedBefore ? 1 : 0) +
+    (creatorFilter ? 1 : 0) +
+    (publisherFilter ? 1 : 0) +
+    (unattributedOnly ? 1 : 0)
   const anyActive = activeCount > 0 || Boolean(query.trim()) || Boolean(typeFilter)
 
   const durationLabel = () => {
@@ -236,6 +245,50 @@ export default function FilterBar() {
             </select>
           </div>
 
+          {/* M10. Both resolve through a clip's parent server-side, so filtering by
+              publisher returns the clips cut from an attributed video as well as the
+              video itself. Committed on blur or Enter rather than per keystroke: each
+              change reloads the library, and a request per character would be one
+              request per character. */}
+          <div>
+            <label className="label" htmlFor="filter-creator">
+              Creator
+            </label>
+            <CommitOnBlurInput
+              id="filter-creator"
+              value={creatorFilter ?? ''}
+              placeholder="Author, photographer, speaker"
+              onCommit={(value) => setCreatorFilter(value || null)}
+            />
+          </div>
+
+          <div>
+            <label className="label" htmlFor="filter-publisher">
+              Publisher
+            </label>
+            <CommitOnBlurInput
+              id="filter-publisher"
+              value={publisherFilter ?? ''}
+              placeholder="Outlet, channel, studio"
+              onCommit={(value) => setPublisherFilter(value || null)}
+            />
+          </div>
+
+          <div>
+            <span className="label">Attribution</span>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={unattributedOnly}
+                onChange={(e) => setUnattributedOnly(e.target.checked)}
+              />
+              Missing a source
+            </label>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              A clip showing its original's credit is not missing one.
+            </p>
+          </div>
+
           <div>
             <span className="label">Duration (seconds)</span>
             <div className="flex items-center gap-1.5" onBlur={applyRangeOnExit}>
@@ -320,6 +373,24 @@ export default function FilterBar() {
               onClear={() => setUploadedRange(null, null)}
             />
           )}
+          {creatorFilter && (
+            <ActiveChip
+              label={`Creator: ${creatorFilter}`}
+              onClear={() => setCreatorFilter(null)}
+            />
+          )}
+          {publisherFilter && (
+            <ActiveChip
+              label={`Publisher: ${publisherFilter}`}
+              onClear={() => setPublisherFilter(null)}
+            />
+          )}
+          {unattributedOnly && (
+            <ActiveChip
+              label="Missing a source"
+              onClear={() => setUnattributedOnly(false)}
+            />
+          )}
           <button
             type="button"
             onClick={clearFilters}
@@ -330,5 +401,52 @@ export default function FilterBar() {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A text input that commits on blur or Enter rather than on every keystroke.
+ *
+ * Every filter change reloads the library, so a plain controlled input bound straight to
+ * the store would fire one request per character typed. Debouncing would work too and is
+ * what SearchView does — but search is meant to narrow as you type, and a filter is
+ * meant to be set.
+ */
+function CommitOnBlurInput({
+  id,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  id: string
+  value: string
+  placeholder?: string
+  onCommit: (value: string) => void
+}) {
+  const [draft, setDraft] = useState(value)
+
+  // Re-seed when the store's value changes from elsewhere — clearing the chip, or
+  // "Clear all" — so the box does not keep showing a filter that is no longer applied.
+  useEffect(() => {
+    setDraft(value)
+  }, [value])
+
+  return (
+    <input
+      id={id}
+      className="input"
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft.trim() !== value) onCommit(draft.trim())
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          if (draft.trim() !== value) onCommit(draft.trim())
+        }
+      }}
+    />
   )
 }

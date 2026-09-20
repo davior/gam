@@ -21,6 +21,16 @@ interface Props {
   assetId: string
 }
 
+/** Field names as the Source tab labels them, so the two do not disagree. */
+const FIELD_LABELS: Record<string, string> = {
+  creator: 'Creator',
+  publisher: 'Publisher',
+  source_title: 'Source title',
+  published_date: 'Published',
+  source_url: 'Source URL',
+  license: 'Licence / rights',
+}
+
 export default function SuggestionPanel({ assetId }: Props) {
   // Autotag can also be run through "Generate all", which is a different action on
   // the same asset — this still has to notice that run ending, or accepted-looking
@@ -28,7 +38,10 @@ export default function SuggestionPanel({ assetId }: Props) {
   const job = useActivityStore((s) =>
     s.jobs.find(
       (j) =>
-        j.asset_id === assetId && (j.action === 'autotag' || j.action === 'generate_all')
+        j.asset_id === assetId &&
+        (j.action === 'autotag' ||
+          j.action === 'generate_all' ||
+          j.action === 'attribute')
     )
   )
   const refreshAsset = useLibraryStore((s) => s.refreshAsset)
@@ -97,6 +110,11 @@ export default function SuggestionPanel({ assetId }: Props) {
 
   const titles = suggestions.filter((s) => s.kind === 'title')
   const tags = suggestions.filter((s) => s.kind === 'tag')
+  // Skips any row the server could not decode — a malformed payload should cost its own
+  // suggestion, not the panel listing every other one beside it.
+  const attributions = suggestions.filter(
+    (s) => s.kind === 'attribution' && s.field && s.proposed_value
+  )
 
   if (suggestions.length === 0) {
     return error ? (
@@ -141,6 +159,32 @@ export default function SuggestionPanel({ assetId }: Props) {
         </div>
       ))}
 
+      {attributions.map((suggestion) => (
+        <div key={suggestion.id} className="space-y-1">
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            {FIELD_LABELS[suggestion.field ?? ''] ?? suggestion.field}
+          </p>
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">
+              {suggestion.proposed_value}
+            </span>
+            <Decide
+              suggestion={suggestion}
+              disabled={busy === suggestion.id || acceptingAll}
+              onDecide={decide}
+            />
+          </div>
+          {/* Shown rather than tucked away: attribution is the one enrichment that may
+              never write directly, and the evidence is what makes accepting a judgement
+              rather than a reflex. */}
+          {suggestion.evidence && (
+            <p className="text-[11px] italic text-gray-500 dark:text-gray-400">
+              “{suggestion.evidence}”
+            </p>
+          )}
+        </div>
+      ))}
+
       {tags.length > 0 && (
         <div className="space-y-1">
           <p className="text-[11px] text-gray-500 dark:text-gray-400">Tags</p>
@@ -176,12 +220,16 @@ function Decide({
   disabled: boolean
   onDecide: (s: Suggestion, accepted: boolean) => Promise<void>
 }) {
+  // An attribution row's `value` is the JSON payload the server encoded, so naming the
+  // button after it would read out a blob to a screen reader — and to anyone hovering.
+  const label = suggestion.proposed_value ?? suggestion.value
+
   return (
     <span className="flex shrink-0 items-center gap-0.5">
       <button
         type="button"
         className="rounded p-0.5 text-green-700 hover:bg-green-100 disabled:opacity-40 dark:text-green-400 dark:hover:bg-green-900/30"
-        aria-label={`Accept ${suggestion.value}`}
+        aria-label={`Accept ${label}`}
         disabled={disabled}
         onClick={() => void onDecide(suggestion, true)}
       >
@@ -190,7 +238,7 @@ function Decide({
       <button
         type="button"
         className="rounded p-0.5 text-gray-500 hover:bg-gray-200 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-700"
-        aria-label={`Dismiss ${suggestion.value}`}
+        aria-label={`Dismiss ${label}`}
         disabled={disabled}
         onClick={() => void onDecide(suggestion, false)}
       >

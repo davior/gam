@@ -11,6 +11,7 @@ import { tagsApi } from '@/api/tags'
 import { usageApi } from '@/api/usage'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
+import { noAttribution } from '@/test-fixtures'
 
 function asset(overrides: Partial<Asset> = {}): Asset {
   return {
@@ -18,6 +19,7 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     name: 'Giordano interview',
     description: null,
     summary: null,
+    ...noAttribution,
     asset_type: 'video',
     source: 'local_upload',
     parent_asset_id: null,
