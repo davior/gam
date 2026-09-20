@@ -308,6 +308,7 @@ Each is demoable on its own and ends in a draft PR on `claude/loving-mendel-x3xh
 | **M7** | **Clips & sub-videos** | In/out point editor; non-destructive clips; ffmpeg extraction; parent-delete guard with promote-to-sub-video. |
 | **M8** | **AI generation** | fal.ai image→image and image→video with multi-image bases; admin model catalog (`ModelCatalogEntry` pattern); generated assets through the standard ingest pipeline; regenerate-from-stored-prompt. |
 | **M9** | **GVC surface** | Documented read API; embeddable `/picker` route with `postMessage`; GN-4 links from Notes. |
+| **M10** | **Attribution** | Eight attribution fields on `Asset`; embedded metadata harvested at ingest (EXIF/ID3/mp4 tags/PDF Author); AI proposals through the existing suggestion flow, grounded in quoted evidence; clips inherit from the parent with per-field override; attribution in the keyword index and in the library filters. Specified in [`m10-attribution.md`](m10-attribution.md). Numbered after M9 but scheduled **before** M8 — see Status. |
 
 Phase 2 (out of scope, named so it is not accidentally designed out): cloud/R2 storage,
 checksum dedup (the `checksum_sha256` column is already there for it), asset versioning,
@@ -328,6 +329,7 @@ it was written in does not survive the session.
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
 | M6 AI enrichment | **Complete, all 8 steps** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`; [#17](https://github.com/davior/gam/pull/17) `autotag`, the suggestion model, and generated titles; [#18](https://github.com/davior/gam/pull/18) `describe`; [#19](https://github.com/davior/gam/pull/19) `UsageEvent`, the pricing table and the cost readout; [#20](https://github.com/davior/gam/pull/20) bulk enrichment over a selection, which also picked up the `SelectionBar` embed deferred from M5. Two gaps M6 did **not** close are recorded in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and below: `extract_text`, since built, and attribution, still undesigned. |
 | M7 Clips & sub-videos | **Complete** — [#26](https://github.com/davior/gam/pull/26). Non-destructive clips, ffmpeg sub-video extraction (fast stream-copy with an automatic re-encode fallback), and a parent-delete guard with a one-click promote path. Two bugs caught before shipping — a promoted clip almost kept its parent-relative `in_point`/`out_point`, and the delete guard's own state was briefly getting wiped by a store-driven remount — are recorded in [`m7-clips-and-subvideos.md`](m7-clips-and-subvideos.md), along with why the milestone's actual file layout diverges from this document's own architecture sketch. |
+| M10 Attribution | **Specified, not built** — [`m10-attribution.md`](m10-attribution.md). Scheduled ahead of M8 and M9 at the user's request, and the ordering is the point: M8 needs a fal.ai account and M9 needs GVC to exist, while this needs neither and gets more expensive every day it waits. Attribution captured at ingest costs a form field; attribution reconstructed later means opening every file by hand, and for material gathered from the open web the answer is often gone. Three decisions were taken with the user and are recorded with their rejected alternatives in that document: structured fields over a free-text credit, embedded metadata written directly while AI may only suggest, and clips inheriting from the parent with per-field override. |
 | **M8–M9** | **Not started.** Both need an external dependency M7 did not (fal.ai for M8, GVC itself for M9). |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
@@ -371,24 +373,22 @@ from a decision, which is the distinction PR bodies do not preserve.
     `.odt`, `.ods`, `.odp` are in `DOCUMENT_EXTENSIONS` and nothing reads them. The
     refusal says which format and what to do about it, rather than failing vaguely.
   - A scan is refused too, and always will be without OCR, which is its own project.
-- **Attribution is not modelled.** Raised by the user, recorded here so it is not
-  mistaken for a decision: an asset needs to carry where its content *came from* — a
-  website URL, the film or programme a clip is taken from, the news outlet and date of a
-  report — so it can be credited when it is used downstream in GVC. `Asset.source`
-  (`local_upload | url | ai_generated | gvc_export`) is **not** this: it records how the
-  file entered the library, not whose work it is. There is no field for a citation, no
-  UI for one, and nothing in M6-M9 that adds one. Deliberately undesigned so far; the
-  open questions are whether it is one free-text credit or structured fields, whether AI
-  enrichment may propose it from the content, and whether it belongs on the asset or on
-  each clip taken from it.
-- **No tag-management screen.** `tagsApi.create`/`recategorise`/`updateCategory` exist, and
-  `rename`/`remove`/`createCategory`/`removeCategory` are wired into `stores/tags.ts` — all
-  reachable from no component. A user can create a tag by typing it and can then never
-  rename, delete or categorise it. The recursive-CTE category tree M3 built is, from the UI,
-  read-only.
-- **Search ignores `asset_type` and `limit`.** The backend accepts both
-  (`routers/search.py:51-53`) and `api/search.ts` types them; `SearchView.tsx` passes
-  neither. Results cap at the server default of 30 with no way to page or filter by type.
+- **~~Attribution is not modelled.~~** Specified as **M10** — see
+  [`m10-attribution.md`](m10-attribution.md). The three questions this entry used to
+  leave open are now answered, with the rejected alternatives recorded: structured
+  fields rather than one free-text credit, embedded file metadata written directly
+  while an AI may only *suggest* (grounded in a quote it must supply), and clips
+  inheriting from the parent at read time with per-field override. Not yet built.
+- **~~No tag-management screen.~~** Built. `TagPanel.tsx` is mounted at
+  `views/SettingsView.tsx:513` and wires `rename`/`remove`/`recategorise` and the full
+  category CRUD. This entry outlived the component by several PRs, which is the failure
+  mode this list exists to prevent — check a claim here against the code before acting on
+  it.
+- **~~Search ignores `asset_type` and `limit`.~~** Built. `SearchView.tsx` passes both,
+  with `TypeFilterChips` and a load-more that raises `limit` toward `MAX_LIMIT`, and both
+  persist in the URL so a result set can be linked to. There is still no `offset`, so
+  this is a growing page rather than true pagination — deliberate at this scale, and the
+  module comment says so.
 - **~~No `/a/{id}` deep link.~~** Built in `cdcabbf`, so GN-4's Notes→GAM reference now
   resolves. It rendered as a floating dialog over an empty shell until the panel chrome
   moved into `DetailDock`; it is a full-width page now.
