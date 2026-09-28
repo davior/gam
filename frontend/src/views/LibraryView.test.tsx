@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   afterEach,
@@ -309,6 +309,109 @@ describe('LibraryView selection', () => {
     await user.click(screen.getByRole('button', { name: 'Images' }))
 
     expect(await screen.findByText('1 selected')).toBeInTheDocument()
+  })
+})
+
+describe('LibraryView add panel', () => {
+  // By role, not label: a role query skips what `hidden` hides, a label query does not.
+  const linkBox = () => screen.queryByRole('textbox', { name: 'Link to import' })
+
+  it('stays folded until + is pressed, and + folds it again', async () => {
+    const user = userEvent.setup()
+    render(<LibraryView />)
+    await card('First')
+
+    const add = screen.getByRole('button', { name: 'Add to library' })
+    expect(add).toHaveAttribute('aria-expanded', 'false')
+    expect(linkBox()).not.toBeInTheDocument()
+
+    await user.click(add)
+    expect(add).toHaveAttribute('aria-expanded', 'true')
+    expect(linkBox()).toBeVisible()
+    expect(screen.getByText(/drop files here/i)).toBeVisible()
+
+    await user.click(add)
+    expect(linkBox()).not.toBeInTheDocument()
+  })
+
+  it('closes with its ✕ and puts focus back on +', async () => {
+    /**
+     * The ✕ is hidden by its own click, and focus left on a hidden element drops to
+     * <body> — a keyboard user would be sent back to the top of the page.
+     */
+    const user = userEvent.setup()
+    render(<LibraryView />)
+    await card('First')
+    const add = screen.getByRole('button', { name: 'Add to library' })
+
+    await user.click(add)
+    await user.click(screen.getByRole('button', { name: 'Close add panel' }))
+
+    expect(linkBox()).not.toBeInTheDocument()
+    expect(add).toHaveFocus()
+  })
+
+  it('keeps a half-pasted link and its options through a close', async () => {
+    const user = userEvent.setup()
+    render(<LibraryView />)
+    await card('First')
+    const add = screen.getByRole('button', { name: 'Add to library' })
+
+    await user.click(add)
+    await user.type(
+      screen.getByRole('textbox', { name: 'Link to import' }),
+      'youtu.be/abc'
+    )
+    await user.click(screen.getByRole('checkbox', { name: 'Audio only' }))
+    await user.click(screen.getByRole('button', { name: 'Close add panel' }))
+    await user.click(add)
+
+    expect(linkBox()).toHaveValue('youtu.be/abc')
+    expect(screen.getByRole('checkbox', { name: 'Audio only' })).toBeChecked()
+  })
+
+  it('opens for files dragged over the library, and only for files', async () => {
+    /**
+     * Folded, the drop zone is not on screen to drop onto. Without this, hiding it would
+     * have quietly removed drag-and-drop.
+     */
+    render(<LibraryView />)
+    const tile = await card('First')
+
+    fireEvent.dragEnter(tile, { dataTransfer: { types: ['text/plain'] } })
+    expect(linkBox()).not.toBeInTheDocument()
+
+    fireEvent.dragEnter(tile, { dataTransfer: { types: ['Files'] } })
+    expect(linkBox()).toBeVisible()
+  })
+
+  it('shows an upload still running behind a closed panel on the +', async () => {
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useLibraryStore.setState({ uploading: true, uploadProgress: 0.45 }))
+
+    expect(screen.getByRole('button', { name: 'Add to library' })).toHaveTextContent(
+      '45%'
+    )
+  })
+
+  it('offers the panel from an empty library instead of pointing above it', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(assetsApi, 'list').mockResolvedValue({
+      data: [],
+      total: 0,
+      limit: 60,
+      offset: 0,
+    })
+    render(<LibraryView />)
+
+    await user.click(await screen.findByRole('button', { name: 'Add files or a link' }))
+
+    expect(linkBox()).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Add files or a link' })
+    ).not.toBeInTheDocument()
   })
 })
 
