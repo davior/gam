@@ -61,6 +61,7 @@ from the source that no person here has checked — the same standing as an EXIF
 | `backend/app/enrichment/transcribe.py::store_transcript` | The transcript writer, split out of the Deepgram job so captions and Deepgram store identically. |
 | `frontend/src/components/UrlImport.tsx` | The form under the drop zone. |
 | `frontend/src/views/LibraryView.tsx` | Adds a finished import (and its chapter clips) to the grid, on seeing its job go from running to done. |
+| `docker-compose.cookies.yml` | Opt-in overlay that mounts `secrets/` read-only and points the importer at the cookies file. See [YouTube cookies](#youtube-cookies). |
 
 `KIND_IMPORT_URL` is a library kind: the asset does not exist when the job is queued. The
 request rides in `EnrichmentJob.payload`, and the finished job adds `created_asset_id`
@@ -94,15 +95,138 @@ installs Deno from PyPI (manylinux wheels, x86_64 and aarch64, about 40 MB) and 
 `default` extra brings the `yt-dlp-ejs` solver scripts. The backend logs a warning at
 startup if `deno` is not on `PATH`.
 
-### "Sign in to confirm you're not a bot"
+### YouTube cookies
 
-YouTube shows this to many datacenter and VPS IP ranges; home connections usually never
-see it. Age-restricted videos need a signed-in session too. Export your browser's
-`youtube.com` cookies in Netscape format (the
-[yt-dlp FAQ](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp)
-covers how, and why a private window is best), mount the file read-only into the backend,
-and point `URL_IMPORT_COOKIES_FILE` at it. yt-dlp is given a *copy*, because it writes the
-jar back out when it finishes. Treat the file like a password: it is a signed-in session.
+An import that fails with *"The site wants this server to sign in first"* has hit
+YouTube's "Sign in to confirm you're not a bot" wall, which it shows to many VPS and
+datacenter IP ranges. Age-restricted and members-only videos need a signed-in session
+too. The fix is to give the importer one: a cookies file exported from a browser.
+
+Before starting:
+
+- **The file is a login.** Anyone holding it is signed in as that account. Keep it out of
+  chats and out of git — `/secrets/`, where it goes, is gitignored for this reason.
+- **Use a spare Google account.** An account used for automated downloading can get
+  flagged by YouTube, and a spare one keeps your main account out of that.
+
+The steps use Firefox, because its cookie store is not encrypted and yt-dlp reads it
+directly. Everything here assumes Linux.
+
+#### On your own computer
+
+1. **Install yt-dlp.** It is only used here for the export, so any recent version works:
+
+   ```bash
+   pipx install yt-dlp        # or your distro's yt-dlp package
+   ```
+
+2. **Make a Firefox profile just for this.** Open `about:profiles`, choose *Create a New
+   Profile* (call it `gam-youtube`), then *Launch profile in new browser*. In that window,
+   sign in to YouTube with the spare account and play any video. Then close the YouTube
+   tab and **quit Firefox completely**.
+
+   A separate profile, because YouTube rotates the cookies of a session left open in a
+   tab, which invalidates an exported copy within hours. A profile you never open YouTube
+   in again keeps them valid, and its export holds nothing else of yours. (yt-dlp's own
+   advice is a private window, but a private window's cookies are never written to disk,
+   so `--cookies-from-browser` cannot see them.)
+
+3. **Find the profile's folder.** In `about:profiles`, copy the new profile's **Root
+   Directory**. Its folder name is a random prefix plus the profile name, such as
+   `ab12cd34.gam-youtube`, under one of these depending on how Firefox is installed:
+
+   | Firefox install | Profiles live under |
+   |---|---|
+   | Snap (Ubuntu's default) | `~/snap/firefox/common/.mozilla/firefox/` |
+   | Flatpak | `~/.var/app/org.mozilla.firefox/.mozilla/firefox/` or `~/.var/app/org.mozilla.firefox/config/mozilla/firefox/` |
+   | Profiles created before Firefox 147 | `~/.mozilla/firefox/` |
+   | New installs of Firefox 147 or later | `~/.config/mozilla/firefox/` |
+
+4. **Export**, naming that folder explicitly (this example is the Snap location):
+
+   ```bash
+   yt-dlp --cookies-from-browser "firefox:$HOME/snap/firefox/common/.mozilla/firefox/ab12cd34.gam-youtube" \
+          --cookies cookies.txt
+   ```
+
+   It ends with `error: You must provide at least one URL.` That is expected and
+   harmless — the file was written before it. **Always give the path.** A bare
+   `--cookies-from-browser firefox` reads whichever profile was used most recently, which
+   is usually your everyday one: every site you are signed in to, and the wrong YouTube
+   session.
+
+5. **Keep only the YouTube lines**, then delete the full export:
+
+   ```bash
+   grep -E $'^(#|\\.?youtube\\.com\t)' cookies.txt > youtube-cookies.txt
+   rm cookies.txt
+   ```
+
+   The export holds every cookie in the profile, Google's own sign-in cookies included.
+   The importer needs only `youtube.com`'s.
+
+#### On the server
+
+1. **Put the file in `secrets/`**, beside `docker-compose.yml`:
+
+   ```bash
+   # on the server, in the gam checkout
+   mkdir -p secrets && chmod 700 secrets
+
+   # from your computer
+   scp youtube-cookies.txt you@your-server:/path/to/gam/secrets/
+
+   # on the server again
+   chmod 600 secrets/youtube-cookies.txt
+   ```
+
+2. **Add the cookies overlay to `COMPOSE_FILE`** in `.env`:
+
+   ```env
+   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.cookies.yml
+   ```
+
+   (Without the reverse-proxy overlay, `docker-compose.yml:docker-compose.cookies.yml`.)
+   `docker-compose.cookies.yml` mounts `secrets/` read-only at `/app/secrets` and points
+   `URL_IMPORT_COOKIES_FILE` at `/app/secrets/youtube-cookies.txt`. Set that variable in
+   `.env` only to use a different file name.
+
+3. **Apply it**, and check the container can see the file:
+
+   ```bash
+   docker compose up -d
+   docker compose exec backend ls -l /app/secrets/
+   ```
+
+   No rebuild is needed. Then retry the import that failed.
+
+**Not `docker-compose.override.yml`.** An earlier version of these docs said to put the
+mount there. Compose reads that file only when `COMPOSE_FILE` is unset, and this
+deployment sets `COMPOSE_FILE` for the reverse proxy — so the mount would be silently
+ignored. The overlay is named in `COMPOSE_FILE` explicitly for that reason.
+
+Each import hands yt-dlp a *copy* of the file, because yt-dlp writes the cookie jar back
+out when it finishes. The read-only mount is therefore fine, and your file is never
+rewritten.
+
+#### When it stops working
+
+The sign-in message coming back means YouTube has expired or revoked that session.
+Launch the `gam-youtube` profile, sign in again if asked, play a video, close the tab and
+quit Firefox. Then repeat steps 4 and 5 on your computer and copy the new file over the
+old one on the server. No restart: the directory is mounted, not the file, so the next
+import reads the new one.
+
+If every import instead fails with *"URL_IMPORT_COOKIES_FILE is set to …, but there is no
+file there"*, the overlay is on but `secrets/youtube-cookies.txt` is missing or named
+differently.
+
+#### Other browsers
+
+`--cookies-from-browser` also accepts `chrome`, `chromium`, `brave` and `edge`. On Linux
+those encrypt their cookie store with the desktop keyring, and yt-dlp may need the keyring
+named — `chrome+gnomekeyring`, for instance; `yt-dlp --help` lists the choices. Firefox
+needs none of that.
 
 ### Disk
 
@@ -116,7 +240,7 @@ size free while that happens.
 |---|---|---|
 | `URL_IMPORT_MAX_HEIGHT` | `1080` | Tallest video fetched. |
 | `URL_IMPORT_MAX_PLAYLIST_ITEMS` | `200` | Most videos one playlist or channel link may queue. |
-| `URL_IMPORT_COOKIES_FILE` | empty | See above. |
+| `URL_IMPORT_COOKIES_FILE` | empty | Set for you by `docker-compose.cookies.yml` — see [YouTube cookies](#youtube-cookies). |
 
 ---
 

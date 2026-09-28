@@ -247,3 +247,7 @@ data/media/
 
 # Backup service secrets (SSH private key, known_hosts) — never commit these.
 ops/backup/secrets/
+
+# Signed-in session cookies for the URL importer (docker-compose.cookies.yml mounts this
+# directory). A cookies file is a login: committing one publishes the account.
+/secrets/

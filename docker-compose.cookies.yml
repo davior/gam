@@ -1,0 +1,27 @@
+# Overlay giving the URL importer a signed-in YouTube session (a cookies file).
+#
+# Only needed when YouTube answers imports with "Sign in to confirm you're not a bot"
+# (common on VPS/datacenter IPs), or for age-restricted videos. How to export the cookies
+# from Firefox, and what they are, is in docs/url-import.md#youtube-cookies.
+#
+# Activate by adding it to COMPOSE_FILE in .env, after whatever is already there:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.cookies.yml
+#
+# Not docker-compose.override.yml, which is the usual home for a local addition like
+# this: Compose reads that file only when COMPOSE_FILE is unset, and every deployment of
+# this app sets COMPOSE_FILE for the reverse-proxy overlay. An override file would be
+# ignored without a word.
+
+services:
+  backend:
+    volumes:
+      # The directory, not the file. A single-file bind mount pins the file's inode at
+      # container start, so a refreshed cookies file written as a new file (rsync, most
+      # editors) would stay invisible until the container was recreated; and if the file
+      # were missing, Docker would create an empty *directory* in its place. With the
+      # directory mounted, dropping in a new file takes effect on the next import.
+      - ./secrets:/app/secrets:ro
+    environment:
+      # A default rather than a fixed value, so an explicit URL_IMPORT_COOKIES_FILE in
+      # .env still wins.
+      - URL_IMPORT_COOKIES_FILE=${URL_IMPORT_COOKIES_FILE:-/app/secrets/youtube-cookies.txt}

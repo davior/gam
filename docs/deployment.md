@@ -135,6 +135,25 @@ Changing the model later does not invalidate what is stored — vectors record t
 that produced them and only matching ones are searched — so a switch quietly shrinks
 the searchable set until the affected assets are embedded again.
 
+## Importing from YouTube
+
+Nothing to configure unless YouTube refuses the server. Many VPS and datacenter IP ranges
+get *"Sign in to confirm you're not a bot"*, and age-restricted videos always need a
+signed-in session. For either, export a cookies file from a Firefox profile made for the
+purpose, put it at `secrets/youtube-cookies.txt`, and add `docker-compose.cookies.yml` to
+`COMPOSE_FILE`:
+
+```env
+COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml:docker-compose.cookies.yml
+```
+
+The full steps — the Firefox export, keeping only YouTube's cookies, and why a spare
+account — are in [`url-import.md` → YouTube cookies](url-import.md#youtube-cookies).
+Not `docker-compose.override.yml`: with `COMPOSE_FILE` set, Compose never reads it.
+
+When imports start failing across the board, YouTube has changed under yt-dlp: bump its
+pin in `backend/requirements.txt` and rebuild.
+
 ## Updating
 
 ```bash
