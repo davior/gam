@@ -29,11 +29,13 @@ from app.enrichment.extract_subvideo import run as run_extract_subvideo
 from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
 from app.enrichment.generate_all import run as run_generate_all
+from app.enrichment.import_url import run as run_import_url
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.subvideo import SubvideoExtractionError
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
+from app.ingest.ytdlp import UrlImportError
 from app.providers.base import ProviderError
 from app.jobs.runner import (
     ACTIVE_STATUSES,
@@ -55,6 +57,7 @@ from app.models.job import (
     KIND_EXTRACT_SUBVIDEO,
     KIND_EXTRACT_TEXT,
     KIND_GENERATE_ALL,
+    KIND_IMPORT_URL,
     KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
     LIBRARY_KINDS,
@@ -129,13 +132,16 @@ def submit_library(
     *,
     model: str = "",
     payload: Optional[str] = None,
+    asset_name: str = "",
 ) -> EnrichmentJob:
-    """Queue a job that is about the whole library rather than one asset.
+    """Queue a job that is not about one existing asset.
 
-    `asset_id` stays null and `asset_name` empty; the activity row reads "Your whole
-    library" on the client side. `model` is recorded at submit time so the row says
-    which model it is filling, the same reason a transcript records the model that
-    produced it.
+    `asset_id` stays null. `asset_name` is usually empty too, and the activity row then
+    reads "Your whole library" on the client side — right for a backfill, wrong for a URL
+    import, which is about one thing that simply does not exist yet. That caller passes
+    the URL, and the job replaces it with the title once it knows one. `model` is
+    recorded at submit time so the row says which model it is filling, the same reason a
+    transcript records the model that produced it.
     """
     job = EnrichmentJob(
         user_id=user_id,
@@ -143,7 +149,7 @@ def submit_library(
         kind=kind,
         status="queued",
         stage="Queued",
-        asset_name="",
+        asset_name=asset_name,
         model=model,
         payload=payload,
     )
@@ -233,6 +239,10 @@ def _run_job(job_id: str) -> None:
             session.add(asset)
             session.commit()
 
+        # An import that stored the site's captions as a transcript, to embed afterwards
+        # the same way a finished transcription is.
+        captioned: Optional[Asset] = None
+
         try:
             if job.kind == KIND_TRANSCRIBE:
                 count = run_transcribe(session, asset, progress)
@@ -278,6 +288,16 @@ def _run_job(job_id: str) -> None:
                     # Surfaced rather than swallowed: a run that quietly skipped three
                     # assets looks identical to one that embedded everything.
                     detail += f", {result.failed} failed"
+            elif job.kind == KIND_IMPORT_URL:
+                imported = run_import_url(session, job, progress)
+                detail = imported.detail
+                captioned = imported.captioned_asset
+                if imported.created_asset_id:
+                    # Merged into the request rather than replacing it, unlike the
+                    # sub-video branch above: the URL and options stay readable on a
+                    # finished row, which is the first thing to look at when an import
+                    # produced something unexpected.
+                    job.payload = _with_created_asset(job.payload, imported.created_asset_id)
             elif job.kind == KIND_HARVEST_ATTRIBUTION:
                 harvested = run_harvest_attribution(session, job.user_id, progress)
                 detail = (
@@ -306,6 +326,8 @@ def _run_job(job_id: str) -> None:
                 # work and put a row in the activity feed saying so. It belongs here the
                 # day page bodies are embedded — see the search gap in plan-of-attack.
                 _chain_embedding(session, asset)
+            elif captioned is not None:
+                _chain_embedding(session, captioned)
 
         except JobCancelled:
             _mark_asset_failed(session, asset, job, status=None)
@@ -348,6 +370,11 @@ def _run_job(job_id: str) -> None:
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
+        except UrlImportError as exc:
+            message = str(exc)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
+
         except TranscriptionError as exc:
             message = str(exc)
             _mark_asset_failed(session, asset, job)
@@ -387,6 +414,18 @@ def _chain_embedding(session: Session, asset: Asset) -> None:
         # The whole body, not just the submit: reading the provider config parses stored
         # values, and a bad one must not turn a finished transcription into a failed job.
         logger.warning("Could not queue embedding for asset %s", asset.id, exc_info=True)
+
+
+def _with_created_asset(payload: Optional[str], asset_id: str) -> str:
+    """The job's payload with the asset it produced added, for `registry._result_asset_id`."""
+    try:
+        data = json.loads(payload or "{}")
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data["created_asset_id"] = asset_id
+    return json.dumps(data, sort_keys=True)
 
 
 def _mark_asset_failed(session, asset: Optional[Asset], job: EnrichmentJob, status: str | None = "error") -> None:

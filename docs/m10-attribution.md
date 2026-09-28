@@ -285,8 +285,10 @@ instance of it.
 
 - **No fetching metadata from `source_url`.** OpenGraph/oEmbed lookup against a
   user-supplied URL is an outbound request to an arbitrary host; it needs `safe_url.py`,
-  a job, and a rate-limit story. Worth doing, and it belongs with URL import, which is its
-  own outstanding item.
+  a job, and a rate-limit story. Worth doing, and it belongs with URL import — which has
+  since been built ([`url-import.md`](url-import.md)) and fills attribution for whatever
+  it imports, including `retrieved_at`. Looking up metadata for a file that was
+  *uploaded* with a `source_url` typed beside it is still not done.
 - **No rights-clearance workflow.** `license` records what is known. Whether something may
   be used is a judgement, not a column.
 - **No credits-roll export.** That is GVC's job, and this milestone exists to give it

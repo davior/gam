@@ -98,6 +98,18 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
     # not still land a transcript afterwards.
     progress("Storing", 90, f"{len(transcript.segments)} segments")
 
+    return store_transcript(session, asset, transcript)
+
+
+def store_transcript(session: Session, asset: Asset, transcript: deepgram.Transcript) -> int:
+    """Write a transcript, index it, and mark the asset transcribed.
+
+    Split out of `run` because Deepgram is no longer the only source: a URL import with
+    no Deepgram key stores the platform's captions through here (`ingest/captions.py`).
+    One writer means captions get the same edited-segment protection, the same keyword
+    indexing and the same header fields — and a later Deepgram run replaces them exactly
+    the way it would replace an earlier Deepgram transcript.
+    """
     stored = _store_segments(session, asset, transcript)
 
     # Index what was said, so it is findable the moment the job finishes rather than

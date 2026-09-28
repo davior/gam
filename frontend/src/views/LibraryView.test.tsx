@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   afterEach,
@@ -12,9 +12,11 @@ import {
 import LibraryView from '@/views/LibraryView'
 import { assetsApi, type Asset, type AssetPage } from '@/api/assets'
 import { tagsApi, type Tag } from '@/api/tags'
-import { activityApi, transcriptsApi } from '@/api/transcripts'
+import { activityApi, transcriptsApi, type ActivityJob } from '@/api/transcripts'
+import { clipsApi } from '@/api/clips'
 import { enrichmentApi } from '@/api/enrichment'
 import { usageApi } from '@/api/usage'
+import { useActivityStore } from '@/stores/activity'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { noAttribution } from '@/test-fixtures'
@@ -92,6 +94,9 @@ beforeEach(() => {
   })
   useLibraryStore.getState().reset()
   useTagStore.getState().reset()
+  // Here rather than in afterEach: the view subscribes to this store, and resetting it
+  // while the last test's view is still mounted is a render outside act().
+  useActivityStore.getState().reset()
 })
 
 afterEach(() => {
@@ -304,5 +309,82 @@ describe('LibraryView selection', () => {
     await user.click(screen.getByRole('button', { name: 'Images' }))
 
     expect(await screen.findByText('1 selected')).toBeInTheDocument()
+  })
+})
+
+describe('LibraryView URL imports', () => {
+  function importJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
+    return {
+      id: 'imp1',
+      kind: 'enrichment',
+      action: 'import_url',
+      status: 'processing',
+      stalled: false,
+      stage: 'Downloading video',
+      progress: 40,
+      detail: '',
+      asset_id: null,
+      asset_name: 'A lecture',
+      model: '',
+      result_asset_id: null,
+      error_message: null,
+      created_at: '2026-09-28T10:00:00Z',
+      updated_at: '2026-09-28T10:00:00Z',
+      ...overrides,
+    }
+  }
+
+  it('adds an import, and its chapter clips, when its job finishes', async () => {
+    const imported = { ...makeAsset('new', 'A lecture'), source: 'url' }
+    const chapter = {
+      ...makeAsset('clip1', 'Opening — A lecture'),
+      source: 'clip',
+      parent_asset_id: 'new',
+    }
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(imported)
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([chapter])
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [importJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [importJob({ status: 'done', result_asset_id: 'new' })],
+      })
+    )
+
+    expect(await screen.findByText('A lecture')).toBeInTheDocument()
+    expect(await screen.findByText('Opening — A lecture')).toBeInTheDocument()
+    expect(await screen.findByText('5 assets')).toBeInTheDocument()
+  })
+
+  it('leaves alone imports that had already finished before the library opened', async () => {
+    /**
+     * The activity feed on mount holds imports finished days ago. Treating "done" alone
+     * as the signal would pull every one of them to the top of the grid on each visit.
+     */
+    const get = vi.spyOn(assetsApi, 'get')
+    useActivityStore.setState({
+      jobs: [importJob({ status: 'done', result_asset_id: 'old' })],
+    })
+    render(<LibraryView />)
+    await card('First')
+
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('adds nothing for an import that failed', async () => {
+    const get = vi.spyOn(assetsApi, 'get')
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [importJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [importJob({ status: 'error', error_message: 'Private video' })],
+      })
+    )
+
+    expect(get).not.toHaveBeenCalled()
   })
 })

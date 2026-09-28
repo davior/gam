@@ -7,6 +7,8 @@ import DetailDock from '@/components/DetailDock'
 import FilterBar from '@/components/FilterBar'
 import SelectionBar from '@/components/SelectionBar'
 import UploadZone from '@/components/UploadZone'
+import UrlImport from '@/components/UrlImport'
+import { isActive, useActivityStore } from '@/stores/activity'
 import { useLibraryStore } from '@/stores/library'
 
 export default function LibraryView() {
@@ -25,6 +27,8 @@ export default function LibraryView() {
   const load = useLibraryStore((s) => s.load)
   const loadMore = useLibraryStore((s) => s.loadMore)
   const dismissRejections = useLibraryStore((s) => s.dismissRejections)
+  const addImported = useLibraryStore((s) => s.addImported)
+  const jobs = useActivityStore((s) => s.jobs)
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -54,6 +58,24 @@ export default function LibraryView() {
     observer.observe(sentinel)
     return () => observer.disconnect()
   }, [loadMore])
+
+  // A URL import finishes in the background, so nothing else would put its asset in
+  // the grid. Keyed on seeing a job go from running to done rather than on "done" alone:
+  // the activity feed on mount already holds imports finished days ago, and prepending
+  // those would shuffle old assets to the top of the library on every visit.
+  const runningImports = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    for (const job of jobs) {
+      if (job.action !== 'import_url') continue
+      if (isActive(job)) {
+        runningImports.current.add(job.id)
+      } else if (runningImports.current.delete(job.id)) {
+        if (job.status === 'done' && job.result_asset_id) {
+          void addImported(job.result_asset_id)
+        }
+      }
+    }
+  }, [jobs, addImported])
 
   // Drop ids that are no longer on screen — a filter change can retire half a
   // selection, and bulk-tagging rows the user can no longer see is not what they asked
@@ -142,6 +164,7 @@ export default function LibraryView() {
             stops describing that the moment the panel is open and drag-resizable. */}
         <div className="@container space-y-4 px-4 py-4">
           <UploadZone />
+          <UrlImport />
 
           {rejections.length > 0 && (
             <div className="flex items-start justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs dark:border-amber-800 dark:bg-amber-950/30">
@@ -249,7 +272,7 @@ function EmptyState({ filtering }: { filtering: boolean }) {
       <p className="max-w-sm text-sm text-gray-600 dark:text-gray-400">
         {filtering
           ? 'Try a different search, or clear the filters.'
-          : 'Drop some files above to get started. You can name and describe them later.'}
+          : 'Drop some files or paste a link above to get started. You can name and describe them later.'}
       </p>
     </div>
   )

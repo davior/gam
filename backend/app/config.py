@@ -70,6 +70,19 @@ class Settings(BaseSettings):
     # long upload, both of which contend with serving the API from the same container.
     enrichment_concurrency: int = 1
 
+    # ─── import from URL ─────────────────────────────────────────────────────
+    # The tallest video an import will fetch. 1080p is where YouTube stops offering
+    # H.264, which is the codec every browser (Safari included) plays without a
+    # re-encode — and a ninety-minute interview is ~1-2 GB here against 4-8 GB at 4K.
+    url_import_max_height: int = 1080
+    # A channel's "videos" tab is a playlist too, and can hold thousands. One paste
+    # should not be able to queue a week of downloads.
+    url_import_max_playlist_items: int = 200
+    # A Netscape-format cookies.txt, as a path inside the container. Empty by default.
+    # For YouTube's "confirm you're not a bot" wall on datacenter IPs, and for
+    # age-restricted or members-only videos; mount the file read-only and point here.
+    url_import_cookies_file: str = ""
+
     # ─── development ─────────────────────────────────────────────────────────
     # Bypasses token verification and acts as this user id. Refused unless
     # `environment` is "development", so it cannot be switched on in production by

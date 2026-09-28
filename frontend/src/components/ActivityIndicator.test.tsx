@@ -65,6 +65,18 @@ describe('ActivityIndicator', () => {
     expect(screen.getByText('Your whole library')).toBeInTheDocument()
   })
 
+  it('names an import by what it is fetching', async () => {
+    // Queued before the asset exists, so the row carries the link — then the title.
+    renderWith([
+      job({ action: 'import_url', asset_id: null, asset_name: 'Giordano lecture' }),
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: /1 job running/i }))
+
+    expect(screen.getByText('Importing')).toBeInTheDocument()
+    expect(screen.getByText('Giordano lecture')).toBeInTheDocument()
+  })
+
   it('keeps a failed job visible with its reason', async () => {
     renderWith([job({ status: 'error', error_message: 'provider says no' })])
 

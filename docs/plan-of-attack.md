@@ -349,12 +349,14 @@ Found by auditing the code against this document rather than trusting it. None b
 numbered milestone, and none is deliberate — they are here so a later session can tell a gap
 from a decision, which is the distinction PR bodies do not preserve.
 
-- **URL import (M1) was specified and never built.** No endpoint — though the SSRF guard
-  it needs now exists as `backend/app/safe_url.py`, added for M6's provider base URLs and
-  written to be reusable from here. The tell is `SOURCE_URL` in
-  `ingest/filetypes.py`, declared with no writer — as are `SOURCE_AI` and `SOURCE_GVC`, which
-  are legitimately waiting on M8 and M9. `FilterBar` offers an "AI generated" source filter,
-  wired end to end and tested, over a value nothing can currently set.
+- **~~URL import (M1) was specified and never built.~~** Built, and wider than M1 asked:
+  paste a YouTube link — or one from any of the ~1,800 sites yt-dlp names — and a job
+  downloads it and fills in title, description, attribution, tags, chapter clips and, with
+  no Deepgram key, the captions as transcript. Playlists fan out one job per video.
+  Specified, with its decisions, operating notes and known limitations, in
+  [`url-import.md`](url-import.md). `SOURCE_URL` now has its writer; `SOURCE_AI` and
+  `SOURCE_GVC` are still legitimately waiting on M8 and M9, and `FilterBar`'s "AI
+  generated" filter is still over a value nothing can set.
 - **~~`extract_text` was specified and never built.~~** Built. PDF, `.docx`, `.pptx`,
   `.xlsx`, `.txt`/`.md`/`.csv`, one `DocumentPage` row per natural unit, and a
   `FROM_DOCUMENT` branch in `enrichment/source.py` placed **above** the poster branch —

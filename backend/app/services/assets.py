@@ -1,8 +1,8 @@
 """Turning an upload into a catalogued asset, and reading one back out.
 
 Kept out of the router so the pipeline can be tested without HTTP and reused by the
-later milestones that create assets without an upload — an extracted sub-video (M7) and
-an AI generation (M8) both land here.
+later milestones that create assets without an upload — an extracted sub-video (M7), a
+URL import, and an AI generation (M8) all land here.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+from pathlib import Path
 from typing import Any, AsyncIterator, Iterable, Optional
 
 from sqlalchemy import and_, func, not_, or_
@@ -74,22 +75,85 @@ async def ingest_upload(
     or is slow leaves a poorer asset, never a lost one. This is FR 6.1.2 and 6.1.3:
     nothing blocks ingestion.
     """
+    asset_type = _require_supported(filename)
+    stored = await storage.write_stream(new_key(user_id, extension_of(filename)), chunks)
+    return _catalogue(
+        session,
+        storage,
+        stored,
+        user_id=user_id,
+        filename=filename,
+        asset_type=asset_type,
+        source=source,
+        content_type=content_type,
+    )
+
+
+def ingest_file(
+    session: Session,
+    storage: LocalStorage,
+    *,
+    user_id: str,
+    source_path: Path,
+    filename: str,
+    name: Optional[str] = None,
+    source: str = SOURCE_UPLOAD,
+    content_type: Optional[str] = None,
+) -> Asset:
+    """`ingest_upload` for bytes that are already a file on disk.
+
+    A worker thread's version: a URL import downloads to a temp directory first (yt-dlp
+    has to, to merge separate audio and video streams), and has no async iterator to
+    offer. Everything after the bytes land is `_catalogue`, shared, so an import is
+    probed, thumbnailed, harvested, indexed and queued for transcription by exactly the
+    code an upload is — not by a second copy of it that drifts.
+
+    `name` overrides the filename-derived default. An import knows the real title, and
+    deriving it back out of a filename would lose anything the filename could not hold.
+    """
+    asset_type = _require_supported(filename)
+    stored = storage.write_file(new_key(user_id, extension_of(filename)), source_path)
+    return _catalogue(
+        session,
+        storage,
+        stored,
+        user_id=user_id,
+        filename=filename,
+        asset_type=asset_type,
+        source=source,
+        content_type=content_type,
+        name=name,
+    )
+
+
+def _require_supported(filename: str) -> str:
     asset_type = asset_type_for(filename)
     if asset_type is None:
         raise UnsupportedFile(filename)
+    return asset_type
 
+
+def _catalogue(
+    session: Session,
+    storage: LocalStorage,
+    stored: StoredFile,
+    *,
+    user_id: str,
+    filename: str,
+    asset_type: str,
+    source: str,
+    content_type: Optional[str],
+    name: Optional[str] = None,
+) -> Asset:
+    """Everything that happens once the bytes are safely stored."""
     extension = extension_of(filename)
-    key = new_key(user_id, extension)
-    stored = await storage.write_stream(key, chunks)
-
-    original_name = sanitize_original_name(filename)
     asset = Asset(
         user_id=user_id,
-        name=display_name_from(filename),
+        name=(name or "").strip()[:255] or display_name_from(filename),
         asset_type=asset_type,
         source=source,
         storage_key=stored.key,
-        original_name=original_name,
+        original_name=sanitize_original_name(filename),
         mime_type=content_type or mimetypes.guess_type(filename)[0],
         file_format=extension.lstrip(".") or None,
         size_bytes=stored.size_bytes,

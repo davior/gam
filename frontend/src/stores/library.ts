@@ -7,6 +7,7 @@ import {
   type ListAssetsParams,
   type UploadRejection,
 } from '@/api/assets'
+import { clipsApi } from '@/api/clips'
 import { tagsApi, type Tag } from '@/api/tags'
 import { useTagStore } from '@/stores/tags'
 import { apiErrorMessage } from '@/api/client'
@@ -80,6 +81,8 @@ interface LibraryState {
    *  changed it — an enrichment job writing a summary, for instance. */
   refreshAsset: (id: string) => Promise<void>
   openById: (id: string) => Promise<Asset>
+  /** Put a finished URL import — and the chapter clips it made — at the top of the grid. */
+  addImported: (id: string) => Promise<void>
   applyTags: (assetIds: string[], add: string[], remove: string[]) => Promise<void>
   dismissRejections: () => void
   reset: () => void
@@ -330,6 +333,32 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         : [fresh, ...state.assets],
     }))
     return fresh
+  },
+
+  async addImported(id) {
+    // Prepended regardless of the active filters, the same as `upload`: this is what the
+    // user just asked for, and it appearing where they are looking is the confirmation.
+    //
+    // Its chapter clips are fetched too. They are assets in their own right and the
+    // server lists them, so leaving them out would make the grid disagree with the next
+    // reload. Newest first, as the server orders them: the clips were cut after the
+    // parent existed, so they sit above it.
+    //
+    // Guarded like `load`: a filter change or a sign-out in the meantime supersedes this,
+    // and the load that follows either includes it or correctly does not.
+    const token = requestToken
+    try {
+      const [asset, children] = await Promise.all([assetsApi.get(id), clipsApi.list(id)])
+      if (token !== requestToken) return
+      const clips = children.filter((c) => c.source === 'clip')
+      set((state) => {
+        const present = new Set(state.assets.map((a) => a.id))
+        const fresh = [...clips, asset].filter((a) => !present.has(a.id))
+        return { assets: [...fresh, ...state.assets], total: state.total + fresh.length }
+      })
+    } catch {
+      /* the next load will pick it up */
+    }
   },
 
   async refreshAsset(id) {

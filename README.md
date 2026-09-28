@@ -36,6 +36,10 @@ user row. The changes that makes possible are specified in
 
 - **Ingest with no friction** — drop files in with a name and nothing else. Everything
   beyond that is optional and can be filled in later, by hand or by AI.
+- **Import from a link** — paste a YouTube (or Rumble, Odysee, Vimeo…) URL and it arrives
+  titled, attributed, tagged and split into its chapters, with the site's captions as a
+  transcript when there is no Deepgram key. Playlists too. See
+  [`docs/url-import.md`](docs/url-import.md).
 - **Find the moment** — full-text search over names, descriptions, summaries, tags and
   transcripts, fused with semantic search so half-remembered wording still lands. Hits
   in audio and video come back with a timestamp you can jump straight to.

@@ -34,3 +34,14 @@ pypdfium2==4.30.0
 python-docx==1.2.0
 python-pptx==1.0.2
 openpyxl==3.1.5
+# Importing video from YouTube and the ~1,800 other sites it knows (docs/url-import.md).
+#
+# `default` pulls yt-dlp-ejs, the scripts that solve YouTube's JavaScript challenges, and
+# `deno` installs the runtime that runs them — since late 2025 YouTube serves almost no
+# downloadable formats to a client that cannot. Both ship manylinux wheels for x86_64
+# and aarch64, so nothing compiles on the pinned 3.13.
+#
+# Pinned like everything else here, with one difference worth knowing: YouTube changes
+# under yt-dlp every few weeks, so this pin *will* start failing on its own schedule. The
+# fix is always the same — bump it to the latest release and `docker compose up --build`.
+yt-dlp[default,deno]==2026.8.19
