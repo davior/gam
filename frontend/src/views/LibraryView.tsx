@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Library, X } from 'lucide-react'
+import { Library, Loader2, Plus, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
+import AddPanel, { ADD_PANEL_ID } from '@/components/AddPanel'
 import AssetCard from '@/components/AssetCard'
 import AssetDetail from '@/components/AssetDetail'
 import DetailDock from '@/components/DetailDock'
 import FilterBar from '@/components/FilterBar'
 import SelectionBar from '@/components/SelectionBar'
-import UploadZone from '@/components/UploadZone'
-import UrlImport from '@/components/UrlImport'
 import { isActive, useActivityStore } from '@/stores/activity'
 import { useLibraryStore } from '@/stores/library'
 
@@ -23,6 +22,8 @@ export default function LibraryView() {
   const categoryFilter = useLibraryStore((s) => s.categoryFilter)
   const sourceFilter = useLibraryStore((s) => s.sourceFilter)
   const rejections = useLibraryStore((s) => s.rejections)
+  const uploading = useLibraryStore((s) => s.uploading)
+  const uploadProgress = useLibraryStore((s) => s.uploadProgress)
 
   const load = useLibraryStore((s) => s.load)
   const loadMore = useLibraryStore((s) => s.loadMore)
@@ -31,6 +32,10 @@ export default function LibraryView() {
   const jobs = useActivityStore((s) => s.jobs)
 
   const [openId, setOpenId] = useState<string | null>(null)
+  // Folded by default: the drop zone and link box are used in bursts, and left open
+  // they push the grid down by both their heights on every visit in between.
+  const [addOpen, setAddOpen] = useState(false)
+  const addButtonRef = useRef<HTMLButtonElement>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // Where a Shift-click range starts. Held in a ref: it steers the next click but
   // nothing renders from it.
@@ -146,6 +151,21 @@ export default function LibraryView() {
     anchorRef.current = null
   }, [])
 
+  // Back to the + that opened it. The ✕ is about to be hidden, and focus left on a
+  // hidden element drops to <body>, putting a keyboard user back at the top of the page.
+  const closeAddPanel = useCallback(() => {
+    setAddOpen(false)
+    addButtonRef.current?.focus()
+  }, [])
+
+  // Folding the drop zone away must not make dropping impossible, or the panel has
+  // traded a feature for the space. Files dragged over the library open it, so the zone
+  // is there by the time the pointer reaches it. Other drags — text, a link, a
+  // thumbnail — are left alone.
+  const openForFiles = useCallback((event: React.DragEvent) => {
+    if (Array.from(event.dataTransfer?.types ?? []).includes('Files')) setAddOpen(true)
+  }, [])
+
   // Read from the live list so an edit made in the panel is reflected behind it.
   const openAsset = useMemo(
     () => assets.find((a) => a.id === openId) ?? null,
@@ -156,15 +176,48 @@ export default function LibraryView() {
     query.trim() || typeFilter || tagFilter.length > 0 || categoryFilter || sourceFilter
   )
 
+  // Shown on the + while the panel is shut, since closing it mid-upload hides the bar
+  // but not the upload.
+  const uploadingOutOfSight = uploading && !addOpen
+  const uploadPercent = `${Math.round(uploadProgress * 100)}%`
+
   return (
     <div className="flex h-full min-h-0">
-      <div className="min-w-0 flex-1 overflow-auto">
+      <div className="min-w-0 flex-1 overflow-auto" onDragEnter={openForFiles}>
         {/* A container query context rather than a max width. What the grid has to
             work with is whatever is left beside the detail panel, and the viewport
             stops describing that the moment the panel is open and drag-resizable. */}
         <div className="@container space-y-4 px-4 py-4">
-          <UploadZone />
-          <UrlImport />
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <FilterBar />
+            </div>
+            {/* border-transparent makes it exactly the search box's height, which has a
+                1px border the button otherwise lacks. */}
+            <button
+              ref={addButtonRef}
+              type="button"
+              onClick={() => setAddOpen((open) => !open)}
+              aria-expanded={addOpen}
+              aria-controls={ADD_PANEL_ID}
+              aria-label="Add to library"
+              title={
+                uploadingOutOfSight
+                  ? `Uploading… ${uploadPercent}`
+                  : 'Add files or a link'
+              }
+              className="btn btn-primary shrink-0 border border-transparent px-3 aria-expanded:bg-blue-800"
+            >
+              {uploadingOutOfSight ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="h-4 w-4" />
+              )}
+              {uploadingOutOfSight ? uploadPercent : 'Add'}
+            </button>
+          </div>
+
+          <AddPanel open={addOpen} onClose={closeAddPanel} />
 
           {rejections.length > 0 && (
             <div className="flex items-start justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs dark:border-amber-800 dark:bg-amber-950/30">
@@ -199,8 +252,6 @@ export default function LibraryView() {
             </p>
           )}
 
-          <FilterBar />
-
           {selected.size > 0 && (
             <SelectionBar
               selected={selected}
@@ -215,7 +266,10 @@ export default function LibraryView() {
               Loading…
             </p>
           ) : assets.length === 0 ? (
-            <EmptyState filtering={filtering} />
+            <EmptyState
+              filtering={filtering}
+              onAdd={addOpen ? undefined : () => setAddOpen(true)}
+            />
           ) : (
             <>
               <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -262,7 +316,11 @@ export default function LibraryView() {
   )
 }
 
-function EmptyState({ filtering }: { filtering: boolean }) {
+/**
+ * `onAdd` is passed only while the add panel is shut. A new user's first screen would
+ * otherwise say "above" about a drop zone that is folded out of sight.
+ */
+function EmptyState({ filtering, onAdd }: { filtering: boolean; onAdd?: () => void }) {
   return (
     <div className="flex flex-col items-center gap-2 py-16 text-center">
       <Library className="h-9 w-9 text-gray-400 dark:text-gray-500" />
@@ -272,8 +330,16 @@ function EmptyState({ filtering }: { filtering: boolean }) {
       <p className="max-w-sm text-sm text-gray-600 dark:text-gray-400">
         {filtering
           ? 'Try a different search, or clear the filters.'
-          : 'Drop some files or paste a link above to get started. You can name and describe them later.'}
+          : onAdd
+            ? 'Add some files or a link to get started. You can name and describe them later.'
+            : 'Drop some files or paste a link above to get started. You can name and describe them later.'}
       </p>
+      {!filtering && onAdd && (
+        <button type="button" onClick={onAdd} className="btn btn-primary mt-2">
+          <Plus className="h-4 w-4" />
+          Add files or a link
+        </button>
+      )}
     </div>
   )
 }
