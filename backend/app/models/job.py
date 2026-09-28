@@ -54,6 +54,12 @@ KIND_ATTRIBUTE = "attribute"
 # `ENRICHMENT_KINDS` for the same reason as the two above: it calls no provider and
 # costs nothing.
 KIND_HARVEST_ATTRIBUTION = "harvest_attribution"
+# Downloading a video (or a playlist's worth) from a URL with yt-dlp. A library kind
+# rather than a per-asset one because the asset does not exist until the job has run —
+# the URL and options ride in `payload`, and the asset it made comes back as
+# `created_asset_id` there, exactly as an "extract" sub-video's does. Outside
+# `ENRICHMENT_KINDS`: it calls no paid provider. See docs/url-import.md.
+KIND_IMPORT_URL = "import_url"
 
 # Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(
@@ -74,7 +80,7 @@ ENRICHMENT_KINDS = frozenset(
 # change to the dispatch. A bulk run over a selection is here too: it has many assets,
 # which for the purposes of `asset_id` is the same as having none.
 LIBRARY_KINDS = frozenset(
-    {KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH, KIND_HARVEST_ATTRIBUTION}
+    {KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH, KIND_HARVEST_ATTRIBUTION, KIND_IMPORT_URL}
 )
 
 

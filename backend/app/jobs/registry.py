@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from sqlmodel import Session, col, select
 
 from app.jobs.runner import ACTIVE_STATUSES, JobQueue, is_stale
-from app.models.job import KIND_EXTRACT_SUBVIDEO, EnrichmentJob
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, EnrichmentJob
 from app.schemas_jobs import ActivityJobRead
 
 
@@ -41,14 +41,20 @@ class JobKind:
         self.queue_for = queue_for
 
 
+# Kinds whose finished payload names the asset they made. Both create a row that did
+# not exist when the job was queued, so `asset_id` cannot carry it: for an extraction it
+# stays pointed at the source, and an import has no asset at all until it is done.
+_CREATES_AN_ASSET = frozenset({KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL})
+
+
 def _result_asset_id(job: EnrichmentJob) -> Optional[str]:
-    """The asset a `KIND_EXTRACT_SUBVIDEO` "extract" job created, once it has.
+    """The asset an "extract" sub-video job or a URL import created, once it has.
 
     Best-effort, the same defensive shape `routers/transcripts.py::_words_of` uses to
     read a JSON-as-TEXT column that might be empty, or — for every other kind, whose
     payload means something else entirely — simply not have this key.
     """
-    if job.kind != KIND_EXTRACT_SUBVIDEO or not job.payload:
+    if job.kind not in _CREATES_AN_ASSET or not job.payload:
         return None
     try:
         data = json.loads(job.payload)

@@ -7,6 +7,7 @@ exactly when it declares that it is.
 
 import logging
 import os
+import shutil
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -27,6 +28,7 @@ from app.routers import assets as assets_router
 from app.routers import clips as clips_router
 from app.routers import embeddings as embeddings_router
 from app.routers import enrichment as enrichment_router
+from app.routers import imports as imports_router
 from app.routers import media as media_router
 from app.routers import providers as providers_router
 from app.routers import search as search_router
@@ -50,6 +52,14 @@ async def lifespan(_app: FastAPI):
         logger.warning(
             "ffmpeg/ffprobe not found on PATH. Media probing, thumbnails and clip "
             "extraction will be unavailable."
+        )
+    # Warned about rather than refused: every other feature works without it. Without
+    # a JavaScript runtime yt-dlp gets almost nothing out of YouTube, and the failure
+    # otherwise surfaces as a vague "format not available" on the first import.
+    if shutil.which("deno") is None:
+        logger.warning(
+            "deno not found on PATH. Importing from YouTube needs it; reinstall "
+            "backend/requirements.txt, which brings it in through yt-dlp[deno]."
         )
     # Before the job runner, which queries tables of its own: if the schema is behind,
     # one line here beats the same fact arriving as a three-hundred-line traceback on
@@ -162,6 +172,7 @@ app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
 app.include_router(transcripts_router.router, prefix="/api/assets", tags=["transcripts"])
 app.include_router(enrichment_router.router, prefix="/api/assets", tags=["enrichment"])
 app.include_router(clips_router.router, prefix="/api/assets", tags=["clips"])
+app.include_router(imports_router.router, prefix="/api/assets", tags=["imports"])
 app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])
 app.include_router(search_router.router, prefix="/api/search", tags=["search"])
 app.include_router(embeddings_router.router, prefix="/api/embeddings", tags=["embeddings"])
