@@ -15,8 +15,8 @@ import EnrichmentButton from '@/components/EnrichmentButton'
  * A "dumb panel" like `TranscriptPanel`: it receives `currentTime` and calls `onSeek`
  * rather than holding a ref to the player itself, the pattern `AssetDetail` already
  * uses everywhere else. Only ever mounted for an asset that owns a file — `AssetDetail`
- * hides this tab for a clip, since M7 does not support clipping a clip (`promote`
- * already covers "turn this clip into a real file").
+ * hides this tab for a clip, since M7 does not support clipping a clip. Turning a saved
+ * clip into a real file is `promote`, offered on each live-clip row below.
  */
 
 interface Props {
@@ -216,6 +216,21 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
                       </p>
                     )}
                   </div>
+                  {isLiveClip && (
+                    // In place: the row stops being a live clip and becomes a file of its
+                    // own, so reload on finish for the list to show it as one.
+                    <EnrichmentButton
+                      assetId={clip.id}
+                      action="extract_subvideo"
+                      icon={Scissors}
+                      label="Extract as file"
+                      runningLabel="Extracting…"
+                      start={clipsApi.promote}
+                      failureMessage="Could not start extracting"
+                      onFinish={() => void load()}
+                      iconOnly
+                    />
+                  )}
                 </li>
               )
             })}
