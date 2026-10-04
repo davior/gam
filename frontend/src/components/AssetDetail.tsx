@@ -469,6 +469,17 @@ export default function AssetDetail({
 
   const info = (
     <div className="min-h-0 flex-1 space-y-3 overflow-auto p-4">
+      {ownsNoFile(asset) && (
+        <EnrichmentButton
+          assetId={asset.id}
+          action="extract_subvideo"
+          icon={Scissors}
+          label="Extract as file"
+          runningLabel="Extracting…"
+          start={clipsApi.promote}
+          failureMessage="Could not start extracting"
+        />
+      )}
       {asset.asset_type === TEXT_TYPE && (
         <EnrichmentButton
           assetId={asset.id}
@@ -590,7 +601,7 @@ export default function AssetDetail({
 
   // Neither applies to a clip: it has no transcript of its own (only the parent does,
   // for the whole recording rather than this range), and clipping a clip is out of
-  // scope for M7 — `promote` already covers "turn this clip into a real file".
+  // scope for M7 — "Extract as file" (`promote`) turns a clip into a real file instead.
   const clippable = SPEECH_TYPES.has(asset.asset_type) && !ownsNoFile(asset)
 
   const tabs: TabSpec[] = [

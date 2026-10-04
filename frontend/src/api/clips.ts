@@ -50,7 +50,8 @@ export const clipsApi = {
   },
 
   /** Turns a live clip into a standalone sub-video, in place — the delete guard's
-   *  one-click path. `clipId` is the clip's own id, not its parent's. */
+   *  one-click path, and the Clip tab's per-row "Extract as file". `clipId` is the
+   *  clip's own id, not its parent's. */
   promote(clipId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${clipId}/promote`)
