@@ -1,9 +1,11 @@
 # M8 — AI generation
 
-**Status:** specified; being built on `claude/keen-fermi-2rffhr`. This document is the
-contract the backend and frontend are built against in parallel, so the API section is
-exact rather than illustrative. It is updated with what the build actually did once it
-lands.
+**Status:** built on `claude/keen-fermi-2rffhr` (backend and frontend in parallel,
+integrated in one branch); not yet run against a live fal.ai host. This document was the
+contract the two halves were built against, so the API section is exact rather than
+illustrative. Where the build settled something the contract left open, or deliberately
+did otherwise, the section concerned says so, and [As built](#as-built) collects every
+such point in one place.
 
 M8 adds three ways to make new media with fal.ai — **text → image**, **image → image**
 from one or more base images, and **image → video** from a start frame (and, where the
@@ -129,7 +131,7 @@ bases. New nullable columns on `Asset`:
 | `ai_model` | the endpoint id |
 | `ai_generation_type` | `text_to_image` / `image_to_image` / `image_to_video` |
 | `ai_prompt` | the prompt as sent |
-| `ai_parameters` | JSON — the request body exactly as sent, minus `prompt` and the image fields (catalogue defaults included, so a regeneration is reproducible after the catalogue changes) |
+| `ai_parameters` | JSON — the request body exactly as sent, minus `prompt` and the image fields (catalogue defaults included, so a regeneration is reproducible after the catalogue changes). Keys are fal's: the number of outputs is `num_images`, present only for an image row whose `max_outputs` is above 1 |
 | `ai_source_assets` | JSON list of `{"asset_id", "role": "base" \| "end_frame", "name"}` — `name` is a snapshot so a deleted base still reads as something |
 | `ai_seed` | the seed fal reports back, when it reports one |
 | `ai_generated_at` | naive UTC, from `app.clock.utcnow` |
@@ -237,12 +239,22 @@ Envelopes and errors follow the house contract (`{"data": …}`,
 - `POST /api/generate/models` *(admin)* → `201`, `GenerationModelRead`.
   `409 endpoint_exists` on a duplicate `endpoint_id`.
 - `PATCH /api/generate/models/{id}` *(admin)* → updates exactly the fields present in
-  the body; an explicit `null` clears a nullable field.
+  the body; an explicit `null` clears a nullable field. `null` on `note`, `options` or
+  `extra_params` resets it to its default (`""`, `{}`, `{}`); `null` on any other
+  non-nullable field is `422 invalid_model_entry`. The merged row is validated as a
+  whole, so changing `kind` alone can be refused for a field it leaves behind.
 - `DELETE /api/generate/models/{id}` *(admin)* → `204`.
 - Validation (`422 invalid_model_entry`): `kind` in the three values; `max_images` 0 and
   no `image_field` for text → image, `max_images ≥ 1` and an `image_field` otherwise;
   `end_image_field` only for image → video; `max_outputs` 1–4 (1 for video); `options`
-  and `extra_params` are objects.
+  and `extra_params` are objects. As built, also: `endpoint_id` must look like a fal id
+  (two or more `/`-separated segments of `[A-Za-z0-9._-]`, so no `..` or query string,
+  since it becomes a URL path); `image_field` / `end_image_field` must be plain request
+  field names; `max_images > 1` requires `image_field_is_list`; `options` refuses unknown
+  keys (a typo such as `duration` would otherwise save and do nothing), its lists hold
+  only strings or numbers and its flags only booleans; `price_unit` is one of
+  `image` / `megapixel` / `second` / `video`; `unit_price` is not negative. The admin
+  form repeats the rules a person is likely to trip over before sending.
 
 ### The fal key
 `GET /api/settings/generation` → `{"data": {"fal_key_configured": bool}}`.
@@ -279,12 +291,20 @@ stays the first.
 
 `POST /api/generate/{asset_id}/regenerate` → `202 {"data": ActivityJobRead}`, body
 `{"prompt": null, "reuse_seed": false}`. Re-submits the stored endpoint, parameters and
-sources (optionally with a new prompt, and with `ai_seed` as `seed` when `reuse_seed` and
-the model supports seeds).
-- `404` when the asset is not owned.
+sources (optionally with a new prompt), through the endpoint's *current* catalogue row
+for its field names and row id. The stored parameters are not re-checked against the
+row's current option lists. A stored `seed` is dropped, so plain Regenerate gets a new
+picture; with `reuse_seed`, and a row that supports seeds, `seed` is `ai_seed` — or, for
+an endpoint that reports none back, the `seed` the request originally asked for.
+In this order:
+- `404 asset_not_found` when the asset is not owned.
 - `409 not_generated` when the asset has no stored generation.
-- `409 model_unavailable` when no active catalogue row has that endpoint id.
+- `400 fal_key_missing` — no key stored.
+- `409 model_unavailable` when no active catalogue row has that endpoint id, or the
+  active row is now of a different kind.
 - `409 source_asset_missing` when a base was deleted, naming it.
+- `422 invalid_generation` for a new prompt that is empty or too long, or stored bases
+  that no longer fit the row; `422 invalid_base` for a base that can no longer be read.
 
 ### Asset read model
 `AssetRead` gains `generation` — `null`, or:
@@ -293,6 +313,8 @@ the model supports seeds).
  "parameters": {…}, "sources": [{"asset_id": "…", "role": "base", "name": "…"}],
  "seed": 1234, "generated_at": "…"}
 ```
+`seed` and `generated_at` are nullable: the columns are read leniently, so a row edited
+by hand reads with gaps rather than failing the whole asset.
 
 ### Activity
 Action `generate`. Stages, in order: `Preparing the base images`, `Submitting to fal.ai`,
@@ -362,3 +384,68 @@ comes from the URL path when it is a known media type, else from `Content-Type`,
   sooner needs fal's payload-deletion API and a billing-scoped key.
 - Cost is reconciled against nothing after the fact; fal's billing-events API would give
   the discounted final amount and is the natural follow-up.
+- A cancel that lands after fal finished but while the output is still downloading
+  writes no usage row for a request fal did bill: the cost is recorded after saving.
+- A job cancelled through the API whose process dies before the worker reaches its next
+  checkpoint never sends `PUT {cancel_url}` — `recover_pending` skips cancelled rows —
+  so that fal request runs to completion.
+- An admin who adds `sync_mode` to a row's `extra_params` gets results back as inline
+  `data:` URIs, which are accepted but then sit in the job payload, megabytes and all.
+- A generation started from an asset's own page (`/a/{id}`) is not added to any grid,
+  since only `LibraryView` watches jobs; its outputs appear on the next library load, as
+  a URL import's already do.
+
+---
+
+## As built
+
+What the build settled that the contract above left open, or did differently on
+purpose. The API sections above have been brought into line with each.
+
+**Backend**
+- Catalogue validation is stricter than the original list, and `PATCH` with `null` on a
+  non-nullable field resets or refuses (both now in the Catalogue section).
+- A body field of the wrong *type* (`"max_images": "abc"`, `"seed": "x"`) gets FastAPI's
+  own 422 list, not the house `{code, message}`, as everywhere else in the app. A
+  missing `endpoint_id` / `kind` / `label`, or an empty or missing `prompt` / `model_id`,
+  does get the house code, because those fields are optional in the schemas and checked
+  by hand.
+- Plain Regenerate drops the stored seed; Regenerate also answers `fal_key_missing`,
+  `invalid_generation` and `invalid_base` (now in the Generating section).
+- `num_images` is sent, and stored, only for image rows that declare `max_outputs > 1`;
+  a video request never carries it.
+- The job's `asset_name` and the asset's `name` are the prompt cut at a word boundary to
+  at most 80 characters, ending in `…` when cut.
+- A fal 401/403 whose body mentions a balance is reported in fal's own words
+  (`fal.ai refused the request: …`) rather than as a bad key, so an exhausted balance
+  does not send the user off to re-check a key that is fine.
+- A status check that fails transiently (429, 5xx, a dropped connection) is retried until
+  the deadline rather than failing the job. The queue detail reads `Next in line` or
+  `Position N in the queue`.
+- `estimated` in the usage totals is now true when *any* priced row is an estimate (it
+  was `all()`, which called a total mixing a bill and an estimate exact). The asset's
+  "AI cost (est.)" and the usage panel's caveat follow it.
+
+**Frontend**
+- The four option lists, and the matching `params`, are `string | number` end to end, so
+  a value goes back exactly as the row declared it.
+- Edit and generate reads the number of outputs from `parameters.num_images` and fetches
+  each source first, naming one that has gone instead of leaving it to
+  `source_asset_missing`; plain Regenerate shows the server's message as it is.
+- "Regenerate with the same seed" shows when there is a seed to send — `seed`, or the
+  `parameters.seed` the server falls back to — and the active row does not declare
+  `supports_seed: false`.
+- An admin's edit sends every field in the `PATCH`, with `null` for the fields the kind
+  cannot use, so switching a row's kind clears what no longer fits; toggling active sends
+  only `is_active`.
+- Whether an asset can be a base is checked in the browser by type and file alone (an
+  image, not a clip, not missing, with a `file_url`); the avif/heic/svg refusal is the
+  server's `invalid_base`.
+- The provenance block's Cost is the asset's `/api/usage/assets/{id}` total, marked
+  `(est.)` while it is one.
+
+**Still unverified**, because no fal host was reachable from the build: whether the
+queue result carries `x-fal-billable-units`, whether the pricing API accepts an ordinary
+key, and whether every seeded model accepts data-URI bases. gecko-notes' own comment that
+fal rejects `data:` URIs for *audio* inputs makes the third a real risk; CDN upload is
+still the fallback. The first real generation answers all three.

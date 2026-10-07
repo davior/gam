@@ -199,7 +199,7 @@ const NUMERIC = /^-?\d+(\.\d+)?$/
  * A list of endpoint values as one line of text, and back.
  *
  * The values keep their type through the round trip, because the endpoints do not agree
- * on one: Kling's durations are `"5"`, Hailuo's are `6`. A bare number is a number; a
+ * on one: Kling's durations are `"5"`, Wan's are `6`. A bare number is a number; a
  * quoted one is text; anything else (`8s`, `16:9`) is text without needing the quotes.
  * So `"5"` shows quoted, `6` bare, and saving either back changes nothing.
  */
@@ -282,6 +282,10 @@ function toInput(form: ModelForm): GenerationModelInput | string {
   }
   if (max_images === null || (takesImages && max_images < 1)) {
     return 'Maximum base images must be at least 1'
+  }
+  // The server's rule too: a field that holds one image cannot be sent two.
+  if (max_images > 1 && !form.image_field_is_list) {
+    return 'A model that takes more than one base image must take them as a list'
   }
 
   const max_outputs = wholeNumber(form.max_outputs)

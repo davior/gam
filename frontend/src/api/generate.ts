@@ -29,7 +29,7 @@ export const KIND_LABELS: Record<GenerationKind, string> = {
 
 /**
  * A choice exactly as the endpoint takes it. Not normalised to a string: fal's endpoints
- * disagree on the type of the same idea — Kling wants `"5"`, Veo `"8s"`, Hailuo `6` — and
+ * disagree on the type of the same idea — Kling wants `"5"`, Veo `"8s"`, Wan `6` — and
  * the server checks a submitted value against the row's list verbatim, so a value that
  * changed type on its way through the form would be refused as "not offered".
  */
@@ -129,9 +129,12 @@ export interface AssetGeneration {
    *  included, so it still describes the run after the catalogue changes. */
   parameters: Record<string, unknown>
   sources: GenerationSource[]
-  /** What fal reported back, when it reported one. */
+  /** What fal reported back, when it reported one. A seed the request asked for but fal
+   *  did not echo is in `parameters.seed` instead. */
   seed: number | null
-  generated_at: string
+  /** Null only for a row whose `ai_*` columns were written by hand — the server reads
+   *  them leniently rather than refusing the asset. */
+  generated_at: string | null
 }
 
 interface DataResponse<T> {

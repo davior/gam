@@ -50,12 +50,19 @@ export default function GenerateTab({ asset, usage }: Props) {
   const row = generation
     ? catalogue.find((m) => m.endpoint_id === generation.model)
     : undefined
+  // The seed `reuse_seed` would send: fal's report, or — for an endpoint that does not
+  // echo one, like nano-banana-2 — the seed the request asked for, which the server falls
+  // back to in the same order.
+  const seedToReuse =
+    generation === null
+      ? null
+      : (generation.seed ??
+        (typeof generation.parameters.seed === 'number'
+          ? generation.parameters.seed
+          : null))
   // Hidden only when the catalogue says the model takes no seed: the server would drop
   // the seed silently, and a button promising the same seed would then be a lie.
-  const canReuseSeed =
-    generation !== null &&
-    generation.seed !== null &&
-    row?.options.supports_seed !== false
+  const canReuseSeed = seedToReuse !== null && row?.options.supports_seed !== false
 
   const regenerate = async (reuseSeed: boolean) => {
     if (!generation) return
@@ -268,7 +275,9 @@ function Provenance({
         </Fact>
         <Fact label="Kind">{KIND_LABELS[generation.kind] ?? generation.kind}</Fact>
         {generation.seed !== null && <Fact label="Seed">{generation.seed}</Fact>}
-        <Fact label="Generated">{formatDate(generation.generated_at)}</Fact>
+        {generation.generated_at && (
+          <Fact label="Generated">{formatDate(generation.generated_at)}</Fact>
+        )}
         {usage && usage.total_events > 0 && (
           <Fact label="Cost">
             {usage.priced_events > 0

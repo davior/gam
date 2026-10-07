@@ -554,6 +554,33 @@ describe('generation (M8)', () => {
     ).toBeNull()
   })
 
+  it('offers a same-seed run from the seed it asked for when fal echoed none', async () => {
+    // nano-banana-2 takes a seed but reports none back; the server's reuse_seed falls
+    // back to the one stored in the parameters, so the button has something to send.
+    const regenerate = vi.spyOn(generateApi, 'regenerate').mockResolvedValue(queued())
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(
+      generated({ seed: null, parameters: { aspect_ratio: '16:9', seed: 42 } })
+    )
+    await openGenerateTab()
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Regenerate with the same seed' })
+    )
+
+    await waitFor(() =>
+      expect(regenerate).toHaveBeenCalledWith('g1', { prompt: null, reuse_seed: true })
+    )
+  })
+
+  it('leaves out the date of a generation that has none', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(generated({ generated_at: null }))
+    await openGenerateTab()
+
+    const record = within(screen.getByRole('region', { name: 'How this was made' }))
+    expect(record.getByText('Model')).toBeInTheDocument()
+    expect(record.queryByText('Generated')).toBeNull()
+  })
+
   it('says what the server said when a base has gone', async () => {
     const error = new AxiosError('Conflict')
     error.response = {

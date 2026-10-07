@@ -465,7 +465,8 @@ describe('SettingsView generation (M8)', () => {
     await user.type(editor.getByLabelText('Sort order'), '20')
     await user.type(editor.getByLabelText('Image field'), 'image_url')
     await user.type(editor.getByLabelText('End-frame field'), 'end_image_url')
-    // A quoted value stays text, a bare number goes as a number — Hailuo wants `6`.
+    // A quoted value stays text, a bare number goes as a number. Mixed here to cover
+    // both; Hailuo's real list is all text, as the seeded row has it.
     await user.type(editor.getByLabelText('Durations'), '6, "10"')
     await user.type(editor.getByLabelText('Resolutions'), '512P, 768P')
     await user.click(editor.getByLabelText('Takes a negative prompt'))
@@ -524,6 +525,47 @@ describe('SettingsView generation (M8)', () => {
       await generation.findByText(/extra parameters must be a json object/i)
     ).toBeInTheDocument()
     expect(create).not.toHaveBeenCalled()
+  })
+
+  it('refuses several bases for an image field that holds one', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    const create = vi.spyOn(generateApi, 'createModel').mockResolvedValue(
+      makeGenerationModel({
+        id: 'nb-edit',
+        endpoint_id: 'fal-ai/nano-banana/edit',
+        kind: 'image_to_image',
+        label: 'Nano Banana edit',
+        image_field: 'image_urls',
+        image_field_is_list: true,
+        max_images: 3,
+      })
+    )
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Add a model' }))
+    const editor = within(generation.getByRole('group', { name: 'New model' }))
+    await user.type(editor.getByLabelText('Endpoint id'), 'fal-ai/nano-banana/edit')
+    await user.selectOptions(editor.getByLabelText('Kind'), 'image_to_image')
+    await user.type(editor.getByLabelText('Label'), 'Nano Banana edit')
+    await user.type(editor.getByLabelText('Image field'), 'image_urls')
+    await user.clear(editor.getByLabelText('Maximum base images'))
+    await user.type(editor.getByLabelText('Maximum base images'), '3')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    // The server refuses the same row with invalid_model_entry; this says so first.
+    expect(await generation.findByText(/must take them as a list/)).toBeInTheDocument()
+    expect(create).not.toHaveBeenCalled()
+
+    await user.click(editor.getByLabelText('The image field takes a list'))
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0][0]).toMatchObject({
+      image_field: 'image_urls',
+      image_field_is_list: true,
+      max_images: 3,
+    })
   })
 
   it('edits a row without changing the type of its values', async () => {

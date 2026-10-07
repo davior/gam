@@ -320,20 +320,20 @@ describe('GenerateForm: submitting', () => {
   })
 
   it('keeps a value the type the endpoint declared it as', async () => {
-    // Hailuo wants `6`, Kling wants `"5"`: the server compares against the row's list
+    // Wan wants `6`, Kling wants `"5"`: the server compares against the row's list
     // verbatim, so a number that came back as a string would be refused.
     const user = userEvent.setup()
-    const hailuo = makeGenerationModel({
-      id: 'hailuo',
+    const wan = makeGenerationModel({
+      id: 'wan',
       kind: 'image_to_video',
-      label: 'Hailuo',
+      label: 'Wan',
       image_field: 'image_url',
       max_images: 1,
       options: { durations: [6, 10] },
     })
     const start = vi.spyOn(generateApi, 'start').mockResolvedValue(queuedJob())
     vi.spyOn(activityApi, 'list').mockResolvedValue([])
-    renderForm({ bases: [image('b1')] }, [hailuo])
+    renderForm({ bases: [image('b1')] }, [wan])
 
     await user.click(screen.getByRole('radio', { name: 'Image → video' }))
     await user.selectOptions(screen.getByLabelText('Duration'), '6')
