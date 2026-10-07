@@ -11,7 +11,7 @@ import json
 import logging
 import mimetypes
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterable, Optional
+from typing import Any, AsyncIterator, Iterable, Optional, Sequence
 
 from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import aliased
@@ -358,12 +358,55 @@ def blocking_clips(session: Session, asset_id: str) -> list[Asset]:
     )
 
 
-def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
-    """Remove the row, everything that hangs off it, and the bytes it owns.
+def _delete_dependents(session: Session, asset_id: str) -> None:
+    """The rows hanging off one asset that must go before it does (see `delete_asset`).
+
+    Does not commit: the caller deletes the asset itself in the same transaction, and a
+    commit here would leave a half-stripped row behind if that delete then failed.
+    """
+    tags.detach_all_from_asset(session, asset_id)
+    session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
+    session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
+    session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
+
+
+def _still_referenced(session: Session, user_id: str, key: str) -> bool:
+    """Whether any surviving row still points at this storage object.
+
+    A key is not owned by exactly one row. A clip's `thumb_key` is a copy of its
+    parent's (`create_clip`), every chapter clip of a URL import copies the site
+    thumbnail written over that same key (`import_url._apply_thumbnail`), and a promote
+    whose own thumbnail failed keeps the copy (`promote_clip`). So "this row is gone,
+    unlink its keys" deleted the poster the parent and every sibling clip were still
+    showing — or, deleting the parent, the poster of a sub-video it had just let go.
+
+    Asked per key rather than special-casing clips as owning no keys, because that
+    rule is wrong the other way round: the promoted survivor above is not a clip, and
+    it is the parent's delete that has to leave the file alone. Scoped by `user_id`
+    because keys are per-user-prefixed and that column is indexed; neither key column
+    is.
+    """
+    return bool(
+        session.exec(
+            select(func.count())
+            .select_from(Asset)
+            .where(
+                Asset.user_id == user_id,
+                or_(col(Asset.storage_key) == key, col(Asset.thumb_key) == key),
+            )
+        ).one()
+    )
+
+
+def delete_asset(
+    session: Session, storage: LocalStorage, asset: Asset, *, clips: Sequence[Asset] = ()
+) -> None:
+    """Remove the row, everything that hangs off it, and the bytes only it was using.
 
     The row goes first. If the unlink fails the asset is still gone from the user's
     view, and an orphaned file is recoverable by a sweep; the reverse — a row pointing
-    at nothing — is what produces broken images.
+    at nothing — is what produces broken images. "Only it was using" is
+    `_still_referenced`: a poster is routinely shared between a parent and its clips.
 
     The dependent rows have to go before it, for two different reasons. Tag
     attachments are a hard constraint: `AssetTag.asset_id` is a foreign key with no
@@ -381,15 +424,25 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     expected to have already called `blocking_clips` and refused the delete if any
     *live* clip depends on this asset, but a survivor's mere breadcrumb still has to be
     cleared, or the same foreign key raises on it the moment this row is gone.
-    """
-    storage_key, thumb_key = asset.storage_key, asset.thumb_key
 
+    `clips` are live clips of `asset` to delete along with it — the guard's "Delete
+    clips too". They go in the same transaction, and *first*: their `parent_asset_id`
+    is the foreign key that would otherwise refuse the parent's delete. A bulk statement
+    rather than `session.delete` per row, because nothing tells the unit of work that
+    rows of one table depend on each other, so it is free to flush the parent first.
+    The router only ever passes `blocking_clips(asset)`, so a promoted or extracted
+    child is never among them; those keep their bytes and only lose the breadcrumb, as
+    before.
+    """
+    doomed = [*clips, asset]
+    doomed_ids = [row.id for row in doomed]
+    keys = {key for row in doomed for key in (row.storage_key, row.thumb_key) if key}
     asset_id, user_id = asset.id, asset.user_id
 
-    tags.detach_all_from_asset(session, asset_id)
-    session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
-    session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
-    session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
+    for row_id in doomed_ids:
+        _delete_dependents(session, row_id)
+    if clips:
+        session.exec(delete(Asset).where(col(Asset.id).in_([clip.id for clip in clips])))
     session.exec(update(Asset).where(col(Asset.parent_asset_id) == asset_id).values(parent_asset_id=None))
     session.delete(asset)
     session.commit()
@@ -398,21 +451,31 @@ def delete_asset(session: Session, storage: LocalStorage, asset: Asset) -> None:
     # is already gone, so raising here would abort the rest of the cleanup and leave
     # more behind than it removed. A stale index entry is recoverable; a half-finished
     # delete is the thing this function exists to avoid.
-    try:
-        # Drops its own transaction and invalidates the per-user vector cache, which
-        # must not happen while the asset could still come back.
-        vectors.remove_for_asset(session, user_id, asset_id)
-    except Exception:  # noqa: BLE001 - see above
-        logger.warning("Could not drop embeddings for asset %s", asset_id, exc_info=True)
+    for row_id in doomed_ids:
+        try:
+            # Drops its own transaction and invalidates the per-user vector cache, which
+            # must not happen while the asset could still come back.
+            vectors.remove_for_asset(session, user_id, row_id)
+        except Exception:  # noqa: BLE001 - see above
+            logger.warning("Could not drop embeddings for asset %s", row_id, exc_info=True)
 
-    try:
-        fts.remove_asset(session, asset_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("Could not un-index asset %s", asset_id, exc_info=True)
+        try:
+            fts.remove_asset(session, row_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not un-index asset %s", row_id, exc_info=True)
 
-    for key in (storage_key, thumb_key):
-        if key:
-            storage.delete(key)
+    # After the commit, so the check sees the rows that survived and not the ones just
+    # deleted — a poster only these rows shared goes, one a survivor still shows stays.
+    # A check that cannot run keeps the file: an orphan is what a sweep is for, and an
+    # unlinked file that something still shows is not recoverable at all.
+    for key in keys:
+        try:
+            if _still_referenced(session, user_id, key):
+                continue
+        except Exception:  # noqa: BLE001 - see above
+            logger.warning("Could not check whether %s is still in use", key, exc_info=True)
+            continue
+        storage.delete(key)
 
 
 def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:

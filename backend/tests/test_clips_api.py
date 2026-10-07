@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.enrichment import source
@@ -11,7 +12,10 @@ from app.ingest.probe import ProbeResult
 from app.jobs import enrichment as enrichment_jobs
 from app.models.asset import Asset
 from app.models.job import EnrichmentJob, KIND_EXTRACT_SUBVIDEO
+from app.models.tag import AssetTag
+from app.search import fts
 from app.services import assets as asset_service
+from app.storage import thumb_key_for
 from app.storage.base import StoredFile
 from app.media_tools import ffmpeg_available
 
@@ -47,6 +51,36 @@ def _fake_stored(key: str = "user-under-test/fake-subvideo.mp4") -> StoredFile:
 
 def _fake_probe(duration: float = 9.0) -> ProbeResult:
     return ProbeResult(duration_seconds=duration, width=320, height=240, codec="h264")
+
+
+def _clip(client, parent_id: str, in_point: float = 0.0, out_point: float = 0.5, **fields):
+    return client.post(
+        f"/api/assets/{parent_id}/clips",
+        json={"in_point": in_point, "out_point": out_point, **fields},
+    ).json()["data"]
+
+
+def _files(media_dir) -> set[str]:
+    return {str(p.relative_to(media_dir)) for p in Path(media_dir).rglob("*") if p.is_file()}
+
+
+def _give_a_poster(session, media_dir, asset_id: str) -> Path:
+    """Put a poster on disk for this asset, so clips cut afterwards copy its key.
+
+    By hand, so the shared-key path runs whether or not ffmpeg is on PATH — the same
+    reason `test_clip_inherits_the_parents_thumbnail` sets one. Written at the key the
+    upload's own poster uses, not a made-up one: a poster ffmpeg did generate is then
+    overwritten rather than orphaned beside it, where a "nothing left on disk"
+    assertion would trip over it.
+    """
+    row = session.get(Asset, asset_id)
+    row.thumb_key = thumb_key_for(row.storage_key)
+    path = Path(media_dir) / row.thumb_key
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xd8poster")
+    session.add(row)
+    session.commit()
+    return path
 
 
 # ─── creating a clip (synchronous, no ffmpeg needed) ──────────────────────────
@@ -388,7 +422,15 @@ def test_delete_message_counts_more_than_one_clip(library):
     library.post(f"/api/assets/{parent['id']}/clips", json={"in_point": 0.3, "out_point": 0.5})
 
     body = library.delete(f"/api/assets/{parent['id']}").json()["detail"]
-    assert "2" in body["message"]
+    assert "2 clips depend on" in body["message"]
+
+
+def test_delete_message_says_depends_for_one_clip(library):
+    parent = _upload_video(library)
+    _clip(library, parent["id"])
+
+    body = library.delete(f"/api/assets/{parent['id']}").json()["detail"]
+    assert "1 clip depends on" in body["message"]
 
 
 def test_delete_succeeds_with_no_clips(library):
@@ -436,6 +478,196 @@ def test_delete_still_blocked_if_only_some_clips_are_promoted(library, session):
     response = library.delete(f"/api/assets/{parent['id']}")
     assert response.status_code == 409
     assert "1" in response.json()["detail"]["message"]
+
+
+def test_deleting_a_parent_keeps_its_promoted_childs_poster(library, session, media_dir):
+    """A promote whose own thumbnail failed keeps the parent's key (`promote_clip`'s
+    fallback), so the survivor's poster is the parent's file. Deleting the parent used
+    to unlink it, leaving the sub-video it just let through showing nothing."""
+    parent = _upload_video(library)
+    poster = _give_a_poster(session, media_dir, parent["id"])
+    promoted = _clip(library, parent["id"])
+    asset_service.promote_clip(
+        session,
+        session.get(Asset, promoted["id"]),
+        stored=_fake_stored(),
+        thumb_key=None,
+        probe_result=_fake_probe(),
+    )
+
+    assert library.delete(f"/api/assets/{parent['id']}").status_code == 204
+
+    assert poster.exists()
+    survivor = library.get(f"/api/assets/{promoted['id']}").json()["data"]
+    assert poster.name in survivor["thumb_url"]
+
+
+# ─── deleting a parent with its clips ─────────────────────────────────────────
+
+
+def test_delete_with_clips_takes_the_live_clips_and_the_parent(library, session, media_dir):
+    parent = _upload_video(library)
+    _give_a_poster(session, media_dir, parent["id"])
+    first = _clip(library, parent["id"], 0.0, 0.5)
+    second = _clip(library, parent["id"], 0.5, 1.0)
+    # Tagged, because `AssetTag` is a foreign key: a clip deleted without its tags
+    # detached first is a 500, not a 204.
+    library.post(f"/api/assets/{first['id']}/tags", json={"names": ["chapter"]})
+
+    response = library.delete(f"/api/assets/{parent['id']}", params={"with_clips": "true"})
+    assert response.status_code == 204
+
+    for row in (parent, first, second):
+        assert library.get(f"/api/assets/{row['id']}").status_code == 404
+    # The file and the shared poster both went: once the parent and every clip were
+    # gone, nothing referenced either.
+    assert _files(media_dir) == set()
+
+
+def test_delete_with_clips_keeps_a_promoted_child(library, session, media_dir):
+    """`with_clips` deletes exactly what `blocking_clips` returns. A promoted child owns
+    its own bytes and only loses the breadcrumb — and keeps the poster it shares."""
+    parent = _upload_video(library)
+    poster = _give_a_poster(session, media_dir, parent["id"])
+    live = _clip(library, parent["id"], 0.0, 0.5)
+    promoted = _clip(library, parent["id"], 0.5, 1.0)
+    asset_service.promote_clip(
+        session,
+        session.get(Asset, promoted["id"]),
+        stored=_fake_stored(),
+        thumb_key=None,
+        probe_result=_fake_probe(),
+    )
+
+    response = library.delete(f"/api/assets/{parent['id']}", params={"with_clips": "true"})
+    assert response.status_code == 204
+
+    assert library.get(f"/api/assets/{live['id']}").status_code == 404
+    session.expire_all()
+    survivor = session.get(Asset, promoted["id"])
+    assert survivor is not None
+    assert survivor.parent_asset_id is None
+    assert survivor.source == "sub_video"
+    assert poster.exists()
+
+
+def test_delete_with_clips_is_a_plain_delete_when_there_are_none(library):
+    asset = _upload_video(library)
+
+    response = library.delete(f"/api/assets/{asset['id']}", params={"with_clips": "true"})
+    assert response.status_code == 204
+    assert library.get(f"/api/assets/{asset['id']}").status_code == 404
+
+
+def test_delete_with_clips_is_refused_while_one_is_being_promoted(library):
+    """A promote that finished into a deleted row would write a file nothing points at.
+    Refused whole: the parent and both clips are still there afterwards."""
+    parent = _upload_video(library)
+    first = _clip(library, parent["id"], 0.0, 0.5)
+    second = _clip(library, parent["id"], 0.5, 1.0)
+    # Stays queued: the autouse `no_background_workers` fixture keeps the worker off.
+    assert library.post(f"/api/assets/{first['id']}/promote").status_code == 202
+
+    response = library.delete(f"/api/assets/{parent['id']}", params={"with_clips": "true"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "extraction_in_progress"
+
+    for row in (parent, first, second):
+        assert library.get(f"/api/assets/{row['id']}").status_code == 200
+
+
+def test_delete_is_refused_while_a_sub_video_is_being_cut_from_it(library):
+    asset = _upload_video(library)
+    library.post(f"/api/assets/{asset['id']}/subvideo", json={"in_point": 0.0, "out_point": 0.5})
+
+    response = library.delete(f"/api/assets/{asset['id']}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "extraction_in_progress"
+    assert library.get(f"/api/assets/{asset['id']}").status_code == 200
+
+
+def test_delete_with_clips_of_someone_elses_asset_is_a_404(library, session):
+    other = Asset(user_id="somebody-else", name="Theirs", asset_type="video", source="local_upload")
+    session.add(other)
+    session.commit()
+    their_clip = Asset(
+        user_id="somebody-else",
+        name="Their clip",
+        asset_type="video",
+        source="clip",
+        parent_asset_id=other.id,
+        in_point=0.0,
+        out_point=1.0,
+    )
+    session.add(their_clip)
+    session.commit()
+
+    response = library.delete(f"/api/assets/{other.id}", params={"with_clips": "true"})
+    assert response.status_code == 404
+    assert session.get(Asset, other.id) is not None
+    assert session.get(Asset, their_clip.id) is not None
+
+
+# ─── deleting a clip ───────────────────────────────────────────────────────────
+
+
+def test_deleting_a_clip_removes_only_the_clip(library, session, media_dir):
+    """A clip owns no bytes, and the poster it shows is its parent's: `create_clip`
+    copies the key. Deleting one used to unlink that key, blanking the poster of the
+    parent and of every sibling clip with it."""
+    parent = _upload_video(library)
+    poster = _give_a_poster(session, media_dir, parent["id"])
+    doomed = _clip(library, parent["id"], 0.0, 0.5)
+    sibling = _clip(library, parent["id"], 0.5, 1.0)
+    library.post(f"/api/assets/{doomed['id']}/tags", json={"names": ["chapter"]})
+    before = _files(media_dir)
+
+    assert library.delete(f"/api/assets/{doomed['id']}").status_code == 204
+
+    assert library.get(f"/api/assets/{doomed['id']}").status_code == 404
+    assert library.get(f"/api/assets/{parent['id']}").status_code == 200
+    assert not session.exec(select(AssetTag).where(AssetTag.asset_id == doomed["id"])).all()
+    # Nothing on disk changed: the parent's file and its poster are both still there.
+    assert _files(media_dir) == before
+    fetched = library.get(f"/api/assets/{sibling['id']}").json()["data"]
+    assert poster.name in fetched["thumb_url"]
+    assert poster.exists()
+
+
+def test_deleting_the_last_clip_unblocks_the_parent(library):
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"])
+    assert library.delete(f"/api/assets/{parent['id']}").status_code == 409
+
+    assert library.delete(f"/api/assets/{clip['id']}").status_code == 204
+    assert library.delete(f"/api/assets/{parent['id']}").status_code == 204
+
+
+def test_delete_is_refused_while_the_clip_is_being_promoted(library):
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"])
+    assert library.post(f"/api/assets/{clip['id']}/promote").status_code == 202
+
+    response = library.delete(f"/api/assets/{clip['id']}")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "extraction_in_progress"
+    assert library.get(f"/api/assets/{clip['id']}").status_code == 200
+
+
+def test_a_deleted_clip_leaves_search(library, session):
+    """Asserted on the index itself, not only on the results: search already drops a
+    hit whose asset cannot be loaded, so a stale entry would not show there."""
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"], name="The nano weapons moment")
+    hits = library.get("/api/search", params={"q": "nano weapons"}).json()["data"]
+    assert clip["id"] in {hit["asset"]["id"] for hit in hits}
+
+    assert library.delete(f"/api/assets/{clip['id']}").status_code == 204
+
+    indexed = session.execute(
+        text(f"SELECT count(*) FROM {fts.ASSET_FTS} WHERE asset_id = :id"), {"id": clip["id"]}
+    ).one()[0]
+    assert indexed == 0
 
 
 # ─── the gather() guard (M6 enrichment must refuse a clip) ────────────────────
