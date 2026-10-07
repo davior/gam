@@ -20,6 +20,7 @@ from app.embeddings.openai import DEFAULT_MODEL as OPENAI_DEFAULT_MODEL
 from app.enrichment.deepgram import DEFAULT_MODEL
 from app.safe_url import require_safe_external_url
 from app.schemas import DataResponse
+from app.schemas_generate import GenerationSettings, GenerationSettingsUpdate
 from app.settings_store import (
     DEEPGRAM_API_KEY,
     DEEPGRAM_MODEL,
@@ -27,6 +28,7 @@ from app.settings_store import (
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
     EMBEDDING_PROVIDER,
+    FAL_API_KEY,
     OLLAMA_BASE_URL,
     OPENAI_API_KEY,
     clear_setting,
@@ -86,6 +88,35 @@ def write_speech_settings(
         set_setting(session, user.id, DEEPGRAM_MODEL, payload.deepgram_model)
 
     return read_speech_settings(user, session)
+
+
+# ─── generation (M8) ─────────────────────────────────────────────────────────
+#
+# Just the key. The model catalogue is global and lives at /api/generate/models; what
+# each user brings is the account fal bills.
+
+
+@router.get("/generation", response_model=DataResponse[GenerationSettings])
+def read_generation_settings(
+    user: CurrentUser, session: Session = Depends(get_session)
+) -> DataResponse[GenerationSettings]:
+    return DataResponse(
+        data=GenerationSettings(fal_key_configured=has_setting(session, user.id, FAL_API_KEY))
+    )
+
+
+@router.put("/generation", response_model=DataResponse[GenerationSettings])
+def write_generation_settings(
+    payload: GenerationSettingsUpdate,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[GenerationSettings]:
+    if payload.fal_api_key is not None:
+        if payload.fal_api_key.strip():
+            set_setting(session, user.id, FAL_API_KEY, payload.fal_api_key.strip())
+        else:
+            clear_setting(session, user.id, FAL_API_KEY)
+    return read_generation_settings(user, session)
 
 
 # ─── embeddings ──────────────────────────────────────────────────────────────

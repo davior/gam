@@ -135,6 +135,27 @@ Changing the model later does not invalidate what is stored — vectors record t
 that produced them and only matching ones are searched — so a switch quietly shrinks
 the searchable set until the affected assets are embedded again.
 
+## Administrators
+
+Gecko Notes' token says who someone is, not whether they are an admin, so GAM is told
+in `.env`:
+
+```env
+ADMIN_USERS=davior            # Notes usernames or user ids, comma-separated
+```
+
+Usernames match case-insensitively; ids exactly. An admin is the only one who can edit
+the AI generation model catalogue (Settings → Generation); everyone else uses it as it
+stands. Left empty, nobody can edit it and the catalogue the migration seeded is what
+everyone gets — which works, until fal retires one of those endpoints.
+
+## AI generation
+
+Per user, like transcription: each person adds their own fal.ai key at **Settings →
+Generation**, and fal bills that account. Nothing to configure at deploy time beyond
+`ADMIN_USERS` above. The `GENERATION_*` settings in `.env.example` tune concurrency,
+the timeout and the size limits; the defaults suit one host.
+
 ## Importing from YouTube
 
 Nothing to configure unless YouTube refuses the server. Many VPS and datacenter IP ranges

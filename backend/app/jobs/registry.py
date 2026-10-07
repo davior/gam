@@ -21,19 +21,22 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from sqlmodel import Session, col, select
 
 from app.jobs.runner import ACTIVE_STATUSES, JobQueue, is_stale
-from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, EnrichmentJob
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_GENERATE, KIND_IMPORT_URL, EnrichmentJob
 from app.schemas_jobs import ActivityJobRead
 
 
 class JobKind:
-    """One row in the union: a table, a serialiser, and the queue that can stop it."""
+    """One row in the union: a table, a serialiser, and the queue that can stop it.
+
+    `queue_for` is handed the row, since which queue runs it can depend on the row.
+    """
 
     def __init__(
         self,
         key: str,
         model: Type[Any],
         to_activity: Callable[[Any], ActivityJobRead],
-        queue_for: Callable[[], Optional[JobQueue]],
+        queue_for: Callable[[Any], Optional[JobQueue]],
     ) -> None:
         self.key = key
         self.model = model
@@ -41,30 +44,41 @@ class JobKind:
         self.queue_for = queue_for
 
 
-# Kinds whose finished payload names the asset they made. Both create a row that did
-# not exist when the job was queued, so `asset_id` cannot carry it: for an extraction it
-# stays pointed at the source, and an import has no asset at all until it is done.
-_CREATES_AN_ASSET = frozenset({KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL})
+# Kinds whose payload names the asset(s) they made. Each creates rows that did not exist
+# when the job was queued, so `asset_id` cannot carry them: for an extraction it stays
+# pointed at the source, and an import or a generation has no asset at all until it is
+# done.
+_CREATES_AN_ASSET = frozenset({KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, KIND_GENERATE})
 
 
-def _result_asset_id(job: EnrichmentJob) -> Optional[str]:
-    """The asset an "extract" sub-video job or a URL import created, once it has.
+def _result_asset_ids(job: EnrichmentJob) -> List[str]:
+    """Every asset the job created, in the order it created them.
+
+    An extraction or an import makes one and records it as `created_asset_id`; a
+    generation can make up to four and records `created_asset_ids`, appended as each is
+    saved — so a running generation already reports the ones it has.
 
     Best-effort, the same defensive shape `routers/transcripts.py::_words_of` uses to
     read a JSON-as-TEXT column that might be empty, or — for every other kind, whose
     payload means something else entirely — simply not have this key.
     """
     if job.kind not in _CREATES_AN_ASSET or not job.payload:
-        return None
+        return []
     try:
         data = json.loads(job.payload)
     except ValueError:
-        return None
-    value = data.get("created_asset_id") if isinstance(data, dict) else None
-    return value if isinstance(value, str) else None
+        return []
+    if not isinstance(data, dict):
+        return []
+    many = data.get("created_asset_ids")
+    if isinstance(many, list):
+        return [value for value in many if isinstance(value, str)]
+    one = data.get("created_asset_id")
+    return [one] if isinstance(one, str) else []
 
 
 def _enrichment_to_activity(job: EnrichmentJob) -> ActivityJobRead:
+    created = _result_asset_ids(job)
     return ActivityJobRead(
         id=job.id,
         kind="enrichment",
@@ -80,19 +94,22 @@ def _enrichment_to_activity(job: EnrichmentJob) -> ActivityJobRead:
         asset_id=job.asset_id,
         asset_name=job.asset_name or "",
         model=job.model or "",
-        result_asset_id=_result_asset_id(job),
+        result_asset_id=created[0] if created else None,
+        result_asset_ids=created,
         error_message=job.error_message,
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
 
 
-def _enrichment_queue() -> Optional[JobQueue]:
+def _enrichment_queue(job: EnrichmentJob) -> Optional[JobQueue]:
     # Imported lazily: the worker pulls in ffmpeg helpers and the Deepgram client, and
     # the activity API has no reason to load either just to list a row.
     from app.jobs import enrichment
 
-    return enrichment.queue()
+    # By the row's kind, because one table now feeds two queues and a cancel sent to
+    # the one not running the job would be silently ignored.
+    return enrichment.queue_for(job.kind)
 
 
 KINDS: Dict[str, JobKind] = {
@@ -162,7 +179,7 @@ def cancel_job(session: Session, user_id: str, kind_key: str, job_id: str) -> Op
         return None
 
     if row.status in ACTIVE_STATUSES:
-        queue = kind.queue_for()
+        queue = kind.queue_for(row)
         if queue is not None:
             queue.cancel(job_id)
         set_fields(session, row, status="cancelled", stage="", detail="Cancelled")

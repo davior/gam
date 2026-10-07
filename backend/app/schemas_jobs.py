@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ActivityJobRead(BaseModel):
@@ -37,6 +37,10 @@ class ActivityJobRead(BaseModel):
     # job's life, so this is the one place the frontend can learn the result's id —
     # there is nowhere else to put it in a deliberately flat, kind-agnostic shape.
     result_asset_id: Optional[str] = None
+    # M8. Every asset the job created, in output order — a generation can make up to
+    # four. `result_asset_id` stays, as the first of these, so nothing that already
+    # reads it has to change.
+    result_asset_ids: List[str] = Field(default_factory=list)
 
     error_message: Optional[str] = None
     created_at: datetime

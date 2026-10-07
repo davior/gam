@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # A whole year, a year and month, or a full date. Months 01-12 and days 01-31 are
 # enforced here so the string column cannot hold "2019-13" and sort between "2019-12"
@@ -75,9 +75,36 @@ class AssetRead(BaseModel):
     # their own tags is sixty queries that grow with the page.
     tags: List["AssetTagRead"] = Field(default_factory=list)
 
+    # M8. How this asset was made, when fal.ai made it; null for everything else.
+    generation: Optional["AssetGenerationRead"] = None
+
     upload_date: datetime
     modified_date: datetime
     metadata_modified_date: datetime
+
+
+class AssetGenerationSource(BaseModel):
+    """One image a generation was made from."""
+
+    asset_id: str
+    role: str  # "base" | "end_frame"
+    # A snapshot from when it was generated, so a base deleted since still reads as
+    # something rather than as a bare id.
+    name: str = ""
+
+
+class AssetGenerationRead(BaseModel):
+    """The `ai_*` columns, decoded. Enough to show the provenance and to regenerate."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model: str  # the fal endpoint id
+    kind: str   # text_to_image | image_to_image | image_to_video
+    prompt: str
+    parameters: dict = Field(default_factory=dict)
+    sources: List[AssetGenerationSource] = Field(default_factory=list)
+    seed: Optional[int] = None
+    generated_at: Optional[datetime] = None
 
 
 class AssetTagRead(BaseModel):

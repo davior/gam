@@ -76,15 +76,8 @@ def post_json(
     an HTTP error status is returned as-is, because only the caller knows how to read
     its body. `sleep` is injected so tests do not spend the backoff.
     """
-    client_timeout = httpx.Timeout(
-        timeout,
-        connect=min(timeout, 10.0),
-        write=min(timeout, 30.0),
-        pool=min(timeout, 10.0),
-    )
-
     try:
-        with httpx.Client(timeout=client_timeout) as client:
+        with httpx.Client(timeout=_split_timeout(timeout)) as client:
             for attempt in range(MAX_ATTEMPTS):
                 response = client.post(url, headers=dict(headers or {}), json=dict(json_body))
                 if response.status_code not in RETRY_STATUS_CODES:
@@ -109,6 +102,42 @@ def post_json(
         # The exception type, not its text: a RequestError's message can carry the full
         # URL, and a `custom` provider's URL is user-supplied.
         raise ProviderError(f"Could not reach {label} ({type(exc).__name__})") from exc
+
+
+def request(
+    method: str,
+    url: str,
+    *,
+    headers: Optional[Mapping[str, str]] = None,
+    params: Optional[Mapping[str, str]] = None,
+    timeout: float,
+    label: str,
+) -> httpx.Response:
+    """One call with headers and no retry, for anything that is not a POST of JSON.
+
+    fal's queue (M8) is the reason: its status, result and cancel calls are a GET and a
+    PUT that carry the key in a header, which `get_json` cannot send. Not retried —
+    a status poll is retried by being polled again, and a cancel is best-effort — but
+    connection failures read the same way `post_json`'s do.
+    """
+    try:
+        with httpx.Client(timeout=_split_timeout(timeout)) as client:
+            return client.request(
+                method, url, headers=dict(headers or {}), params=dict(params or {})
+            )
+    except httpx.TimeoutException as exc:
+        raise ProviderError(f"{label} did not respond in time") from exc
+    except httpx.RequestError as exc:
+        raise ProviderError(f"Could not reach {label} ({type(exc).__name__})") from exc
+
+
+def _split_timeout(timeout: float) -> httpx.Timeout:
+    return httpx.Timeout(
+        timeout,
+        connect=min(timeout, 10.0),
+        write=min(timeout, 30.0),
+        pool=min(timeout, 10.0),
+    )
 
 
 def get_json(url: str, *, timeout: float, label: str) -> httpx.Response:

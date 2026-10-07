@@ -215,6 +215,92 @@ def test_add_clip_columns_survives_real_foreign_key_references(alembic_config):
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
+def test_the_generation_catalogue_is_seeded(alembic_config):
+    """M8 ships with three models per kind, so a fresh install can generate before
+    anybody has been made an admin. Each seeded row must also pass the catalogue's own
+    validation: a seed the admin editor would refuse to save is a seed that sends fal
+    something it refuses."""
+    import json
+
+    from app.generation import catalogue
+
+    config, db_path = alembic_config
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = [dict(r) for r in conn.execute("SELECT * FROM generationmodel")]
+
+    by_endpoint = {row["endpoint_id"]: row for row in rows}
+    assert set(by_endpoint) == {
+        "fal-ai/flux/schnell",
+        "fal-ai/flux/dev",
+        "fal-ai/nano-banana-2",
+        "fal-ai/nano-banana/edit",
+        "fal-ai/bytedance/seedream/v4.5/edit",
+        "fal-ai/flux-pro/kontext",
+        "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
+        "fal-ai/minimax/hailuo-02/standard/image-to-video",
+        "fal-ai/veo3.1/fast/image-to-video",
+    }
+    kinds = [row["kind"] for row in rows]
+    assert {kind: kinds.count(kind) for kind in set(kinds)} == {
+        "text_to_image": 3,
+        "image_to_image": 3,
+        "image_to_video": 3,
+    }
+
+    for row in rows:
+        entry = {
+            **row,
+            "image_field_is_list": bool(row["image_field_is_list"]),
+            "is_active": bool(row["is_active"]),
+            "options": json.loads(row["options"]),
+            "extra_params": json.loads(row["extra_params"]),
+        }
+        catalogue.validate(entry)
+        assert row["is_active"] == 1
+        assert row["price_currency"] == "USD"
+        assert row["unit_price"] > 0
+
+    seedream = by_endpoint["fal-ai/bytedance/seedream/v4.5/edit"]
+    assert seedream["max_images"] == 10 and seedream["image_field"] == "image_urls"
+    kling = by_endpoint["fal-ai/kling-video/v2.5-turbo/pro/image-to-video"]
+    assert kling["end_image_field"] == "tail_image_url"
+    assert json.loads(kling["options"])["durations"] == ["5", "10"]
+    veo = by_endpoint["fal-ai/veo3.1/fast/image-to-video"]
+    assert json.loads(veo["extra_params"]) == {"generate_audio": False}
+    assert json.loads(veo["options"])["durations"] == ["4s", "6s", "8s"]
+
+
+def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_config):
+    """Dropping the `ai_*` columns recreates `asset`, the operation `7d4b9c1a6f28` found
+    SQLite refuses while `assettag` rows reference it. Proven against a populated table
+    for the reason that test gives: an empty one cannot fail this way."""
+    config, db_path = alembic_config
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key, size_bytes,"
+            " field_provenance, upload_date, modified_date, metadata_modified_date, ai_model)"
+            " VALUES ('a1', 'u', 'Fox', 'image', 'ai_generated', 'k1', 100, '{}',"
+            " '2026-01-01', '2026-01-01', '2026-01-01', 'fal-ai/flux/dev')"
+        )
+        conn.execute("INSERT INTO tag (id, user_id, name, created_at) VALUES ('t1', 'u', 'Fox', '2026-01-01')")
+        conn.execute("INSERT INTO assettag (asset_id, tag_id, created_at) VALUES ('a1', 't1', '2026-01-01')")
+        conn.commit()
+
+    command.downgrade(config, "9c2e08b4a1f7")
+
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(asset)")}
+        assert not any(name.startswith("ai_") for name in columns)
+        assert conn.execute("SELECT id FROM asset WHERE id = 'a1'").fetchone() is not None
+        assert conn.execute("SELECT * FROM assettag WHERE asset_id = 'a1'").fetchone() is not None
+        assert "generationmodel" not in _tables(db_path)
+
+
 def test_asset_fts_rebuild_preserves_the_existing_index(alembic_config):
     """`9c2e08b4a1f7` drops and recreates asset_fts, which throws away its contents.
 

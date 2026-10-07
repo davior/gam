@@ -23,6 +23,7 @@ from app.clock import utcnow
 from app.config import settings
 from app.ingest import embedded_metadata, thumbnails
 from app.ingest.filetypes import (
+    SOURCE_AI,
     SOURCE_CLIP,
     SOURCE_SUBVIDEO,
     SOURCE_UPLOAD,
@@ -44,7 +45,12 @@ from app.models.asset import (
 from app.models.suggestion import Suggestion
 from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
-from app.schemas_assets import AssetRead, AssetTagRead
+from app.schemas_assets import (
+    AssetGenerationRead,
+    AssetGenerationSource,
+    AssetRead,
+    AssetTagRead,
+)
 from app.search import fts, vectors
 from app.services import tags
 from app.storage import LocalStorage, StorageError, StoredFile, new_key, thumb_key_for
@@ -282,6 +288,12 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
     from app.settings_store import load_deepgram_key
 
     if not can_transcribe(asset):
+        return
+
+    # Not a generated video (M8). Most of what fal makes is silent or music, so this
+    # would bill Deepgram for every one to transcribe nothing. The Transcribe button
+    # still works on one by hand.
+    if asset.source == SOURCE_AI:
         return
 
     try:
@@ -886,10 +898,50 @@ def to_read_model(
             AssetTagRead(id=t.id, name=t.name, category_id=t.category_id)
             for t in (asset_tags or [])
         ],
+        generation=generation_of(asset),
         upload_date=asset.upload_date,
         modified_date=asset.modified_date,
         metadata_modified_date=asset.metadata_modified_date,
     )
+
+
+def generation_of(asset: Asset) -> Optional[AssetGenerationRead]:
+    """The `ai_*` columns as the API returns them, or None for anything not generated.
+
+    Decoded defensively, the way every JSON-as-TEXT column here is read: a value that
+    will not parse reads as empty rather than making the asset unreadable.
+    """
+    if not asset.ai_model:
+        return None
+
+    sources = []
+    for entry in _json_or(asset.ai_source_assets, []):
+        if isinstance(entry, dict) and isinstance(entry.get("asset_id"), str):
+            sources.append(
+                AssetGenerationSource(
+                    asset_id=entry["asset_id"],
+                    role=str(entry.get("role") or "base"),
+                    name=str(entry.get("name") or ""),
+                )
+            )
+
+    return AssetGenerationRead(
+        model=asset.ai_model,
+        kind=asset.ai_generation_type or "",
+        prompt=asset.ai_prompt or "",
+        parameters=_json_or(asset.ai_parameters, {}),
+        sources=sources,
+        seed=asset.ai_seed,
+        generated_at=asset.ai_generated_at,
+    )
+
+
+def _json_or(text: Optional[str], default: Any) -> Any:
+    try:
+        value = json.loads(text) if text else default
+    except ValueError:
+        return default
+    return value if isinstance(value, type(default)) else default
 
 
 def _signed_url(key: Optional[str]) -> Optional[str]:

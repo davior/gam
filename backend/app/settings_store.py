@@ -34,8 +34,13 @@ OPENAI_API_KEY = "openai_api_key"
 EMBEDDING_BASE_URL = "embedding_base_url"
 OLLAMA_BASE_URL = "ollama_base_url"
 
+# M8. One key, used for generation and for fal's pricing API alike. gecko-notes keeps a
+# second "admin" fal key for billing scope; GAM reads only list prices, which an ordinary
+# key is documented to reach, and a second credential nobody needs is one more to leak.
+FAL_API_KEY = "fal_api_key"
+
 # Keys whose value is encrypted at rest. Anything not in here is stored as plain JSON.
-SECRET_KEYS = frozenset({DEEPGRAM_API_KEY, OPENAI_API_KEY})
+SECRET_KEYS = frozenset({DEEPGRAM_API_KEY, OPENAI_API_KEY, FAL_API_KEY})
 
 
 def get_setting(session: Session, user_id: str, key: str, default: Any = None) -> Any:
@@ -106,3 +111,7 @@ def load_deepgram_key(session: Session, user_id: str) -> Optional[str]:
 
 def load_openai_key(session: Session, user_id: str) -> Optional[str]:
     return get_setting(session, user_id, OPENAI_API_KEY) or None
+
+
+def load_fal_key(session: Session, user_id: str) -> Optional[str]:
+    return get_setting(session, user_id, FAL_API_KEY) or None
