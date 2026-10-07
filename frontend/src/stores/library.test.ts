@@ -386,3 +386,101 @@ describe('refreshAsset', () => {
     expect(useLibraryStore.getState().error).toBeNull()
   })
 })
+
+describe('remove', () => {
+  it('puts the server total back, not the loaded count, when a delete fails', async () => {
+    // Two rows loaded of five hundred: restoring `assets.length` would report 2.
+    useLibraryStore.setState({ assets: [makeAsset('a1'), makeAsset('a2')], total: 500 })
+    vi.spyOn(assetsApi, 'remove').mockRejectedValue(new Error('nope'))
+
+    await expect(useLibraryStore.getState().remove('a1')).rejects.toThrow()
+
+    expect(useLibraryStore.getState().total).toBe(500)
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a1', 'a2'])
+  })
+
+  it('does not change the count for an id that was never loaded', async () => {
+    // A clip deleted from the Clip tab while filtered out of the grid, or on a page
+    // that has not been fetched.
+    useLibraryStore.setState({ assets: [makeAsset('a1')], total: 40 })
+    vi.spyOn(assetsApi, 'remove').mockResolvedValue(undefined)
+
+    await useLibraryStore.getState().remove('clip-not-in-the-grid')
+
+    expect(useLibraryStore.getState().total).toBe(40)
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a1'])
+  })
+})
+
+describe('removeWithClips', () => {
+  it('waits for the server before dropping anything', async () => {
+    useLibraryStore.setState({
+      assets: [makeAsset('c1'), makeAsset('c2'), makeAsset('a1'), makeAsset('a2')],
+      total: 100,
+    })
+    let resolve: () => void = () => {}
+    const remove = vi.spyOn(assetsApi, 'remove').mockReturnValue(
+      new Promise<void>((r) => {
+        resolve = r
+      })
+    )
+
+    const pending = useLibraryStore.getState().removeWithClips('a1', ['c1', 'c2'])
+
+    // Still on screen while the request is in flight: dropping the parent now would
+    // unmount the panel whose guard has to report a failure.
+    expect(useLibraryStore.getState().assets).toHaveLength(4)
+    expect(remove).toHaveBeenCalledWith('a1', { withClips: true })
+
+    resolve()
+    await pending
+
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a2'])
+    expect(useLibraryStore.getState().total).toBe(97)
+  })
+
+  it('counts down only the rows that were actually loaded', async () => {
+    useLibraryStore.setState({ assets: [makeAsset('a1'), makeAsset('a2')], total: 100 })
+    vi.spyOn(assetsApi, 'remove').mockResolvedValue(undefined)
+
+    await useLibraryStore.getState().removeWithClips('a1', ['c-unloaded'])
+
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a2'])
+    expect(useLibraryStore.getState().total).toBe(99)
+  })
+
+  it('leaves every row in place and rethrows when the delete fails', async () => {
+    const original = [makeAsset('c1'), makeAsset('a1')]
+    useLibraryStore.setState({ assets: original, total: 2 })
+    vi.spyOn(assetsApi, 'remove').mockRejectedValue(new Error('nope'))
+
+    await expect(
+      useLibraryStore.getState().removeWithClips('a1', ['c1'])
+    ).rejects.toThrow('nope')
+
+    expect(useLibraryStore.getState().assets).toEqual(original)
+    expect(useLibraryStore.getState().total).toBe(2)
+    // The guard shows the message where it was asked; a banner as well would say it twice.
+    expect(useLibraryStore.getState().error).toBeNull()
+  })
+})
+
+describe('prepend', () => {
+  it('puts the asset at the top and counts it', () => {
+    useLibraryStore.setState({ assets: [makeAsset('a1')], total: 10 })
+
+    useLibraryStore.getState().prepend(makeAsset('c1'))
+
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['c1', 'a1'])
+    expect(useLibraryStore.getState().total).toBe(11)
+  })
+
+  it('does nothing for an asset already in the grid', () => {
+    useLibraryStore.setState({ assets: [makeAsset('a1')], total: 10 })
+
+    useLibraryStore.getState().prepend(makeAsset('a1'))
+
+    expect(useLibraryStore.getState().assets).toHaveLength(1)
+    expect(useLibraryStore.getState().total).toBe(10)
+  })
+})

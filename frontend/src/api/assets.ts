@@ -201,8 +201,17 @@ export const assetsApi = {
       .then((r) => r.data.data)
   },
 
-  remove(id: string): Promise<void> {
-    return client.delete(`/assets/${id}`).then(() => undefined)
+  /**
+   * `withClips` also deletes the live clips cut from this asset, in the same
+   * transaction: the delete guard's "Delete clips too". Without it, a parent with live
+   * clips is refused with `asset_has_dependent_clips`.
+   */
+  remove(id: string, options: { withClips?: boolean } = {}): Promise<void> {
+    return client
+      .delete(`/assets/${id}`, {
+        params: options.withClips ? { with_clips: true } : undefined,
+      })
+      .then(() => undefined)
   },
 
   /**

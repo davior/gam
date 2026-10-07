@@ -255,6 +255,93 @@ describe('clips (M7)', () => {
     expect(guard.getByText('Clip two')).toBeInTheDocument()
     expect(removeAsset).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Promote and delete' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete clips too' })).toBeInTheDocument()
+  })
+
+  it('says "depends" for a single clip', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([clip()])
+
+    renderAt('/a/a1')
+    await screen.findByRole('heading', { name: 'Giordano interview' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(await screen.findByText(/^1 clip depends on this asset/i)).toBeInTheDocument()
+  })
+
+  it('offers to delete the clips along with the asset', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
+    const removeAsset = vi.spyOn(assetsApi, 'remove').mockResolvedValue(undefined)
+    const promote = vi.spyOn(clipsApi, 'promote')
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([
+      clip({ id: 'clip1', name: 'Clip one' }),
+      clip({ id: 'clip2', name: 'Clip two' }),
+    ])
+
+    renderAt('/a/a1')
+    await screen.findByRole('heading', { name: 'Giordano interview' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete clips too' }))
+
+    // One request: the server deletes the clips and the asset in one transaction.
+    expect(removeAsset).toHaveBeenCalledTimes(1)
+    expect(removeAsset).toHaveBeenCalledWith('a1', { withClips: true })
+    expect(promote).not.toHaveBeenCalled()
+    expect(await screen.findByText('The library')).toBeInTheDocument()
+  })
+
+  it('keeps the guard open and says why when deleting with clips fails', async () => {
+    // The store waits for the server before dropping anything, so a failure leaves this
+    // very panel mounted to say so. An optimistic drop would unmount it and mount a
+    // fresh one with no guard and no message — the remount bug M7 already hit once.
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
+    vi.spyOn(assetsApi, 'remove').mockRejectedValue(new Error('The server fell over'))
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([clip()])
+
+    renderAt('/a/a1')
+    await screen.findByRole('heading', { name: 'Giordano interview' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete clips too' }))
+
+    expect(await screen.findByText('The server fell over')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete clips too' })).toBeEnabled()
+    expect(
+      screen.getByRole('heading', { name: 'Giordano interview' })
+    ).toBeInTheDocument()
+    expect(screen.queryByText('The library')).not.toBeInTheDocument()
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual(['a1'])
+  })
+
+  it('talks about a clip, not a file, when deleting a clip', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(clip())
+    const removeAsset = vi.spyOn(assetsApi, 'remove').mockResolvedValue(undefined)
+    const listClips = vi.spyOn(clipsApi, 'list')
+
+    renderAt('/a/clip1')
+    await screen.findByRole('heading', { name: /clip of giordano/i })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(screen.getByText(/delete this clip\?/i)).toBeInTheDocument()
+    expect(screen.getByText(/video it was cut from is not affected/i)).toBeInTheDocument()
+    expect(screen.queryByText(/and its file/i)).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(removeAsset).toHaveBeenCalledWith('clip1')
+    // A clip cannot have clips of its own, so there is nothing for the guard to ask.
+    expect(listClips).not.toHaveBeenCalled()
+    expect(await screen.findByText('The library')).toBeInTheDocument()
   })
 
   it('promoting every dependent clip retries the delete, which then succeeds', async () => {

@@ -7,6 +7,10 @@ sandbox had none at first; `apt-get install ffmpeg` got real coverage instead of
 on the `needs_ffmpeg` skip marker, and it caught two test bugs the skip would have
 hidden — see "What real ffmpeg caught" below).
 
+A follow-up made clips deletable where they actually appear — per row in the Clip tab,
+and together with their parent from the delete guard — and fixed the bug that made
+deleting one unsafe in the first place; see "A third bug" below.
+
 Two research passes preceded the code: a read-only survey of the actual codebase (not
 `docs/plan-of-attack.md`'s aspirational file sketch, which turned out to be stale in
 three places — see "Where this diverges from the plan doc" below), and an independent
@@ -75,6 +79,11 @@ too, the same reason `AssetTag`/`Suggestion` rows are already cleared first. Thi
 manifests once the promote flow is actually used, which is exactly the kind of gap that
 ships clean and breaks in the field — it's covered by
 `test_delete_after_promoting_succeeds`-shaped tests in `test_clips_api.py`.
+
+The guard's "Delete clips too" (`DELETE /api/assets/{id}?with_clips=true`) deletes
+exactly `blocking_clips`, by the same physical test — never a promoted or extracted
+child. Those own their bytes, so they survive the parent's delete exactly as they do a
+plain one: breadcrumb cleared, file and poster kept.
 
 For the constraint to exist at all, the migration needed an explicit
 `batch_op.create_foreign_key(...)`, not just `add_column` — a bare nullable column gets
@@ -173,6 +182,58 @@ created between the check and the delete, vanishingly unlikely for anything but 
 multi-tab session) falls back to the plain "could not delete" path rather than the
 promote UI, which is an acceptable edge case for something this rare.
 
+### A third bug: deleting a clip deleted its parent's poster
+
+Shipped with M7, and found while making clips deletable from the places they are
+listed. A storage key is not owned by exactly one row. `create_clip` copies its parent's
+`thumb_key` rather than resolving it later (see its comment — that is what lets a clip's
+thumbnail sign like any other asset's); a URL import's `_apply_thumbnail` writes the
+site's thumbnail over the generated poster *at the same key* precisely so the chapter
+clips made next copy it; and `promote_clip` keeps the copied key when thumbnailing the
+freshly extracted file fails (`thumb_key or clip.thumb_key`). `delete_asset`, though,
+unlinked whatever `storage_key` and `thumb_key` the deleted row held, unconditionally.
+
+So deleting one clip deleted the poster file the parent and every sibling clip were
+still pointing at. Each kept signing a `thumb_url` for it — the grid fell back to an
+icon on the 404, the player lost its `poster` — and for a URL import it was the site
+thumbnail, which nothing regenerates. The same bug ran the other way: deleting a parent
+whose promoted child had kept the copied key took the survivor's poster with it, on the
+very delete the promote existed to let through. Nothing caught it because nothing had
+deleted a clip with a poster: the UI only offered it from the clip's own Info tab, which
+a freshly saved clip had no way into short of a search hit or a library reload, and no
+test deleted a clip at all. Two now do (`test_deleting_a_clip_removes_only_the_clip`,
+`test_deleting_a_parent_keeps_its_promoted_childs_poster`); both failed against the old
+code before the fix.
+
+The fix is per key, after the commit: `_still_referenced` asks whether any surviving row
+of the same user still names the key in either column, and only an unreferenced key is
+unlinked. Deliberately not "a clip owns no keys, so skip it" — that special case fixes
+the clip direction and leaves the promoted survivor broken, because there it is the
+*parent's* delete that has to leave the file alone. A check that cannot run keeps the
+file: an orphan is what a sweep is for; an unlinked file something still shows is not
+recoverable.
+
+Two smaller pieces went in with it:
+
+- **`?with_clips=true`.** The guard's third answer, beside promote and cancel. The live
+  clips are deleted in the same transaction as the parent and *before* it — their
+  `parent_asset_id` is the foreign key that would otherwise refuse the parent's delete —
+  as one bulk statement, since nothing tells the unit of work that rows of one table
+  depend on each other. It fails safe: FastAPI ignores an undeclared query parameter, so
+  a newer frontend against an older backend gets the 409, never a silent cascade.
+- **`extraction_in_progress`.** A delete is refused with a 409 while any row it would
+  remove has a queued or running `extract_subvideo` job. A promote finishing into a
+  deleted clip updates nothing, and an extract finishing into a deleted parent trips the
+  foreign key on insert — either way after ffmpeg has written a file nothing will ever
+  reference.
+
+On the frontend, `stores/library.ts`'s `removeWithClips` is **not** optimistic, for
+exactly the reason the second bug above records: dropping the parent before the server
+answers unmounts `AssetDetail`, and a failure would then remount a fresh one with no
+guard and no message. It waits, then drops the parent and the clips the guard listed. The
+Clip tab's per-row delete does use the optimistic `remove` — the id it drops is the
+clip's, while the panel it lives in renders the parent, so nothing unmounts beneath it.
+
 ### The ffmpeg fallback heuristic, verified against real output
 
 `enrichment/subvideo.py`'s two strategies: input-side seek + stream copy
@@ -225,6 +286,14 @@ under `self.root`.
   promoted.
 - AI enrichment (describe/summarize/autotag/generate_all) is unavailable on clips —
   see the `gather()` guard above.
+- **No bulk delete from the selection bar.** There is none for any asset type yet; it
+  needs its own ownership-filtered endpoint (the shape of `/tags/bulk`) and a per-row
+  answer for a guarded parent. A general library feature, not a clip fix — "Delete
+  clips too" already covers the twenty-chapter import that made deleting clips matter.
+- **No "delete every clip, keep the video"** in the Clip tab. It would be
+  `DELETE /api/assets/{id}/clips`: `blocking_clips`, the same dependents loop and the
+  same reference-checked unlink. Deferred until someone asks; per-row delete covers a
+  handful.
 
 ---
 
@@ -258,6 +327,17 @@ than reimplementing its running/error/polling states), `components/AssetDetail.t
 test file, it's exercised through the view that renders it, matching the existing
 convention for that component).
 
+**Deleting clips (follow-up):** `services/assets.py` (`_delete_dependents`,
+`_still_referenced`, `delete_asset`'s `clips`), `routers/assets.py` (`with_clips`,
+`extraction_in_progress`, the 409's grammar); `api/assets.ts` (`remove`'s `withClips`),
+`stores/library.ts` (`removeWithClips`, `prepend`, and `remove` restoring the server's
+total and only counting down a row it had), `components/ClipEditor.tsx` (each row's name
+links to `/a/{id}`, a live clip's trash button with an inline confirm, a saved clip
+prepended to the grid), `components/AssetDetail.tsx` ("Delete clips too", clip wording
+in the Info-tab confirm). Tests in `test_clips_api.py`'s delete-guard, with-clips and
+deleting-a-clip sections, `components/ClipEditor.test.tsx`, the `clips (M7)` block and
+`stores/library.test.ts`.
+
 ---
 
 ## Verification
@@ -271,3 +351,10 @@ convention for that component).
   the same range as a sub-video, confirm the file is standalone and the parent is
   untouched; attempt to delete a parent with clips, confirm the guard fires with the
   dependent list, and the promote path clears it and lets the delete through.
+- The clip-delete follow-up: `pytest -q` — 1038 passed (twelve new in
+  `test_clips_api.py`); `npm run format:check && npm run lint && npm test && npm run
+  build` — 318 passed (seventeen new), clean.
+- Still to run by hand for the follow-up, in a real dev environment: delete one clip
+  from the Clip tab and confirm the parent's poster and file are untouched and the
+  sibling clips still show it; delete a parent with clips via **Delete clips too** and
+  confirm neither its file nor its poster is left on disk.
