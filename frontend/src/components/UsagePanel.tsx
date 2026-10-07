@@ -10,7 +10,8 @@ import { formatCost, usageApi, type UsageSummary } from '@/api/usage'
  * from the pricing table is a published list price rather than a bill, and that GAM must
  * not show one without saying so — the tests that used to assert this panel showed *no*
  * price were protecting exactly that, back when there was no pricing table to be honest
- * about.
+ * about. M8 added the first exact figures (fal.ai's billing header), so the caveat now
+ * follows `estimated` rather than being said of everything.
  */
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -20,6 +21,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   ollama: 'Ollama',
   custom: 'Custom endpoint',
   deepgram: 'Deepgram',
+  'fal.ai': 'fal.ai',
   unknown: 'Unattributed',
 }
 
@@ -59,7 +61,8 @@ export default function UsagePanel() {
 
       {totals && totals.total_events === 0 && (
         <p className="text-xs text-gray-600 dark:text-gray-400">
-          Nothing yet. Describing, summarising and tagging are what spend money here.
+          Nothing yet. Describing, summarising, tagging and generating are what spend
+          money here.
         </p>
       )}
 
@@ -69,11 +72,20 @@ export default function UsagePanel() {
             <p className="text-2xl font-semibold text-gray-900 dark:text-gray-100">
               {formatCost(totals.cost, totals.currency)}
             </p>
-            <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
-              An estimate from published list prices, not a bill. Providers change prices
-              and offer discounts this does not model — check your provider dashboard for
-              what you were actually charged.
-            </p>
+            {/* Only while it is one. fal.ai reports what it billed for each generation,
+                and a total made of nothing but those is a bill — calling it an estimate
+                would undersell the one figure here that is exact. */}
+            {totals.estimated ? (
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                An estimate from published list prices, not a bill. Providers change
+                prices and offer discounts this does not model — check your provider
+                dashboard for what you were actually charged.
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                As billed by the provider for each call.
+              </p>
+            )}
           </div>
 
           <dl className="space-y-1 border-t border-gray-100 pt-3 text-xs dark:border-gray-800">

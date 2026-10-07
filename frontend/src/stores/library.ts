@@ -88,7 +88,9 @@ interface LibraryState {
    *  changed it — an enrichment job writing a summary, for instance. */
   refreshAsset: (id: string) => Promise<void>
   openById: (id: string) => Promise<Asset>
-  /** Put a finished URL import — and the chapter clips it made — at the top of the grid. */
+  /** Put a finished URL import — and the chapter clips it made — at the top of the grid.
+   *  Also each output of a finished generation, which has no clips but loses nothing by
+   *  the check. */
   addImported: (id: string) => Promise<void>
   applyTags: (assetIds: string[], add: string[], remove: string[]) => Promise<void>
   dismissRejections: () => void

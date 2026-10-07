@@ -40,10 +40,13 @@ export interface ActivityJob {
   asset_id: string | null
   asset_name: string
   model: string
-  /** M7 only: set once a `extract_subvideo` "extract" job finishes, to the asset it
-   *  created. `asset_id` stays pointed at the source throughout, so this is the only
-   *  place to learn the result's id. */
+  /** Set once a job that creates an asset finishes — M7's `extract_subvideo`, a URL
+   *  import, a generation — to the asset it created. `asset_id` stays pointed at the
+   *  source throughout, so this is the only place to learn the result's id. */
   result_asset_id: string | null
+  /** Every asset the job created, in order — a generation can make up to four.
+   *  `result_asset_id` stays the first of them. */
+  result_asset_ids: string[]
   error_message: string | null
   created_at: string
   updated_at: string

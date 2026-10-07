@@ -1,12 +1,14 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SelectionBar from '@/components/SelectionBar'
 import { enrichmentApi } from '@/api/enrichment'
+import { generateApi } from '@/api/generate'
 import { tagsApi } from '@/api/tags'
 import { useActivityStore } from '@/stores/activity'
+import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import type { Asset } from '@/api/assets'
@@ -57,6 +59,7 @@ function job(overrides: Partial<ActivityJob> = {}): ActivityJob {
     asset_name: '',
     model: '',
     result_asset_id: null,
+    result_asset_ids: [],
     error_message: null,
     created_at: '2026-09-15T00:00:00Z',
     updated_at: '2026-09-15T00:00:00Z',
@@ -184,5 +187,81 @@ describe('SelectionBar enrichment', () => {
     renderBar()
 
     expect(screen.getByRole('button', { name: /summarise/i })).toBeEnabled()
+  })
+})
+
+describe('SelectionBar generation (M8)', () => {
+  function image(id: string, overrides: Partial<Asset> = {}): Asset {
+    return {
+      ...asset(id),
+      asset_type: 'image',
+      file_url: `/media/u/${id}.jpg`,
+      thumb_url: `/media/u/${id}.thumb.jpg`,
+      ...overrides,
+    }
+  }
+
+  function renderSelection(order: string[], assets: Asset[]) {
+    return render(
+      <MemoryRouter>
+        <SelectionBar
+          selected={new Set(order)}
+          assets={assets}
+          onSelectAll={() => {}}
+          onClear={() => {}}
+        />
+      </MemoryRouter>
+    )
+  }
+
+  const button = () => screen.queryByRole('button', { name: 'Generate from these' })
+
+  beforeEach(() => {
+    useGenerationStore.getState().reset()
+    vi.spyOn(generateApi, 'models').mockResolvedValue([])
+  })
+
+  it('is offered when every selected asset is an image with a file', () => {
+    renderSelection(['a1', 'a2'], [image('a1'), image('a2')])
+
+    expect(button()).toBeInTheDocument()
+  })
+
+  it('is not offered when one of them is not an image', () => {
+    // All or nothing: quietly dropping the video would generate from something other
+    // than what is highlighted.
+    renderSelection(['a1', 'a2'], [image('a1'), asset('a2')])
+
+    expect(button()).toBeNull()
+  })
+
+  it('is not offered for an image whose file is missing', () => {
+    renderSelection(['a1', 'a2'], [image('a1'), image('a2', { missing: true })])
+
+    expect(button()).toBeNull()
+  })
+
+  it('is not offered for an image with no file of its own', () => {
+    renderSelection(['a1'], [image('a1', { file_url: null })])
+
+    expect(button()).toBeNull()
+  })
+
+  it('opens the form with the selection as bases, in the order it was picked', async () => {
+    useGenerationStore.setState({ loaded: true })
+    // Grid order a1, a2; picked a2 first.
+    renderSelection(
+      ['a2', 'a1'],
+      [image('a1', { name: 'Grid first' }), image('a2', { name: 'Picked first' })]
+    )
+
+    expect(screen.queryByRole('form', { name: 'Generate from these' })).toBeNull()
+    await userEvent.click(button()!)
+
+    const form = screen.getByRole('form', { name: 'Generate from these' })
+    const bases = within(within(form).getByRole('list', { name: 'Base images' }))
+      .getAllByRole('listitem')
+      .map((item) => item.textContent)
+    expect(bases).toEqual(['Base 1Picked first', 'Base 2Grid first'])
   })
 })

@@ -1,11 +1,22 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Eye, FileText, ScanSearch, ScanText, Sparkles, Tags, X } from 'lucide-react'
+import {
+  Eye,
+  FileText,
+  ScanSearch,
+  ScanText,
+  Sparkles,
+  Tags,
+  WandSparkles,
+  X,
+} from 'lucide-react'
 import { apiErrorCode, apiErrorMessage } from '@/api/client'
 import { enrichmentApi, type BulkAction } from '@/api/enrichment'
+import { canBeBase } from '@/api/generate'
 import { isActive, useActivityStore } from '@/stores/activity'
 import type { Asset } from '@/api/assets'
 import type { Tag } from '@/api/tags'
+import GenerateForm from '@/components/GenerateForm'
 import TagInput from '@/components/TagInput'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
@@ -20,6 +31,9 @@ import { useTagStore } from '@/stores/tags'
  * The enrichment row is one job for the whole selection rather than one per asset, so
  * there is one progress bar and one Cancel. It is also where M5's deferred
  * "embed this selection" finally lands.
+ *
+ * A selection of images is also M8's way to pick several bases for one generation —
+ * there is no picker of its own until M9's.
  */
 
 const ENRICHMENTS: Array<{
@@ -54,6 +68,18 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
   const [unavailable, setUnavailable] = useState(false)
 
   const ids = useMemo(() => [...selected], [selected])
+
+  // In the order they were picked, not grid order: for a video the first is the start
+  // frame and the second the end frame, and clicking them in that order is how anyone
+  // would say so. A Set iterates in insertion order, which is exactly that.
+  const picked = useMemo(() => {
+    const byId = new Map(assets.map((a) => [a.id, a]))
+    return ids.map((id) => byId.get(id)).filter((a): a is Asset => a !== undefined)
+  }, [assets, ids])
+  // All or nothing. Quietly dropping the clip or the PDF from a mixed selection would
+  // generate from something other than what is highlighted.
+  const generatable = picked.length === ids.length && picked.every(canBeBase)
+  const [generating, setGenerating] = useState(false)
 
   /** Tags present on at least one selected asset, with how many carry each. */
   const onSelection = useMemo(() => {
@@ -206,6 +232,31 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
           <p className="text-xs text-red-700 dark:text-red-400">{bulkError}</p>
         )}
       </div>
+
+      {generatable && (
+        <div className="space-y-2 border-t border-blue-200 pt-2 dark:border-blue-900">
+          <button
+            type="button"
+            className="btn btn-ghost px-2.5 py-1 text-xs"
+            aria-expanded={generating}
+            onClick={() => setGenerating((open) => !open)}
+          >
+            <WandSparkles className="mr-1 h-3.5 w-3.5" />
+            Generate from these
+          </button>
+          {/* Capped and scrolled: this bar is sticky, and a form taller than the
+              screen pinned over the grid would leave nothing to scroll to. */}
+          {generating && (
+            <div className="max-h-[60vh] overflow-auto rounded-lg bg-white dark:bg-gray-800">
+              <GenerateForm
+                title="Generate from these"
+                bases={picked}
+                onCancel={() => setGenerating(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

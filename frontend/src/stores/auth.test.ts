@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AxiosError } from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
+import { makeGenerationModel } from '@/test-fixtures'
 import * as auth from '@/api/auth'
 import { authApi } from '@/api/auth'
 
@@ -57,7 +59,11 @@ describe('auth store bootstrap', () => {
   })
 
   it('authenticates when the session is valid', async () => {
-    vi.spyOn(authApi, 'me').mockResolvedValue({ id: 'u1', username: 'davior' })
+    vi.spyOn(authApi, 'me').mockResolvedValue({
+      id: 'u1',
+      username: 'davior',
+      is_admin: false,
+    })
 
     await useAuthStore.getState().bootstrap()
 
@@ -97,7 +103,7 @@ describe('auth store bootstrap', () => {
       .mockImplementation(
         () =>
           new Promise((resolve) =>
-            setTimeout(() => resolve({ id: 'u1', username: 'a' }), 10)
+            setTimeout(() => resolve({ id: 'u1', username: 'a', is_admin: false }), 10)
           )
       )
 
@@ -126,6 +132,7 @@ describe('signing out', () => {
       categories: [{ id: 'c1', name: 'People', parent_category_id: null }],
       loaded: true,
     })
+    useGenerationStore.setState({ models: [makeGenerationModel()], loaded: true })
 
     useAuthStore.getState().signOut()
 
@@ -136,5 +143,9 @@ describe('signing out', () => {
     // `loaded` too, or the next person's catalogue is never fetched and their tag box
     // silently offers nothing.
     expect(useTagStore.getState().loaded).toBe(false)
+    // The generation catalogue is global, but it was fetched as this person — and left
+    // `loaded`, it would never be fetched as the next one.
+    expect(useGenerationStore.getState().models).toEqual([])
+    expect(useGenerationStore.getState().loaded).toBe(false)
   })
 })

@@ -54,7 +54,10 @@ describe('RequireAuth', () => {
   })
 
   it('renders children once authenticated', () => {
-    renderGate({ status: 'authenticated', user: { id: 'u1', username: 'davior' } })
+    renderGate({
+      status: 'authenticated',
+      user: { id: 'u1', username: 'davior', is_admin: false },
+    })
     expect(screen.getByText('protected content')).toBeInTheDocument()
   })
 

@@ -6,12 +6,16 @@ import { AxiosError, AxiosHeaders } from 'axios'
 import AssetView from '@/views/AssetView'
 import { assetsApi, type Asset } from '@/api/assets'
 import { clipsApi } from '@/api/clips'
-import { activityApi, type ActivityJob } from '@/api/transcripts'
+import { enrichmentApi } from '@/api/enrichment'
+import { generateApi, type AssetGeneration } from '@/api/generate'
+import { activityApi, transcriptsApi, type ActivityJob } from '@/api/transcripts'
 import { tagsApi } from '@/api/tags'
 import { usageApi } from '@/api/usage'
+import { useActivityStore } from '@/stores/activity'
+import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
-import { noAttribution } from '@/test-fixtures'
+import { makeGenerationModel, noAttribution } from '@/test-fixtures'
 
 function asset(overrides: Partial<Asset> = {}): Asset {
   return {
@@ -70,6 +74,7 @@ function activityJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
     asset_name: 'Clip of Giordano interview',
     model: '',
     result_asset_id: null,
+    result_asset_ids: [],
     error_message: null,
     created_at: '2026-09-18T00:00:00Z',
     updated_at: '2026-09-18T00:00:00Z',
@@ -416,5 +421,230 @@ describe('clips (M7)', () => {
     video!.dispatchEvent(new Event('timeupdate'))
 
     expect(pause).toHaveBeenCalled()
+  })
+})
+
+describe('generation (M8)', () => {
+  function made(overrides: Partial<AssetGeneration> = {}): AssetGeneration {
+    return {
+      model: 'fal-ai/flux-pro/kontext',
+      kind: 'image_to_image',
+      prompt: 'the same fox, at dusk',
+      parameters: { aspect_ratio: '16:9', num_images: 1, enable_safety_checker: true },
+      sources: [{ asset_id: 'base1', role: 'base', name: 'Fox photo' }],
+      seed: 1234,
+      generated_at: '2026-10-07T10:00:00',
+      ...overrides,
+    }
+  }
+
+  function generated(overrides: Partial<AssetGeneration> = {}): Asset {
+    return asset({
+      id: 'g1',
+      name: 'the same fox, at dusk',
+      asset_type: 'image',
+      source: 'ai_generated',
+      original_name: 'output.png',
+      mime_type: 'image/png',
+      file_format: 'png',
+      duration_seconds: null,
+      codec: null,
+      file_url: '/media/u/g1.png?exp=1&sig=x',
+      thumb_url: '/media/u/g1.thumb.jpg?exp=1&sig=x',
+      generation: made(overrides),
+    })
+  }
+
+  const base = () =>
+    asset({
+      id: 'base1',
+      name: 'Fox photo',
+      asset_type: 'image',
+      file_url: '/media/u/base1.jpg',
+      thumb_url: '/media/u/base1.thumb.jpg',
+    })
+
+  const KONTEXT = makeGenerationModel({
+    id: 'kontext',
+    endpoint_id: 'fal-ai/flux-pro/kontext',
+    kind: 'image_to_image',
+    label: 'FLUX.1 Kontext [pro]',
+    image_field: 'image_url',
+    max_images: 1,
+    options: { aspect_ratios: ['1:1', '16:9'], supports_seed: true },
+  })
+
+  function queued(): ActivityJob {
+    return activityJob({
+      id: 'regen1',
+      action: 'generate',
+      status: 'queued',
+      asset_id: null,
+      asset_name: 'the same fox, at dusk',
+    })
+  }
+
+  async function openGenerateTab(path = '/a/g1') {
+    renderAt(path)
+    await userEvent.click(await screen.findByRole('tab', { name: 'Generate' }))
+  }
+
+  beforeEach(() => {
+    useActivityStore.getState().reset()
+    useGenerationStore.getState().reset()
+    vi.spyOn(generateApi, 'models').mockResolvedValue([KONTEXT])
+    vi.spyOn(activityApi, 'list').mockResolvedValue([])
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([])
+    vi.spyOn(assetsApi, 'get').mockImplementation(async (id) =>
+      id === 'base1' ? base() : generated()
+    )
+  })
+
+  it('leads with how it was made', async () => {
+    await openGenerateTab()
+
+    const record = within(screen.getByRole('region', { name: 'How this was made' }))
+    expect(await record.findByText('FLUX.1 Kontext [pro]')).toBeInTheDocument()
+    expect(record.getByText('fal-ai/flux-pro/kontext')).toBeInTheDocument()
+    expect(record.getByText('Image → image')).toBeInTheDocument()
+    expect(record.getByText('the same fox, at dusk')).toBeInTheDocument()
+    expect(record.getByText('1234')).toBeInTheDocument()
+    expect(record.getByRole('link', { name: 'Fox photo' })).toHaveAttribute(
+      'href',
+      '/a/base1'
+    )
+    // The parameters as sent, catalogue defaults included.
+    expect(record.getByText('aspect_ratio')).toBeInTheDocument()
+    expect(record.getByText('16:9')).toBeInTheDocument()
+    expect(record.getByText('enable_safety_checker')).toBeInTheDocument()
+  })
+
+  it('regenerates it as it was', async () => {
+    const regenerate = vi.spyOn(generateApi, 'regenerate').mockResolvedValue(queued())
+    await openGenerateTab()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+
+    await waitFor(() =>
+      expect(regenerate).toHaveBeenCalledWith('g1', { prompt: null, reuse_seed: false })
+    )
+    expect(await screen.findByText(/follow it under background activity/)).toBeVisible()
+  })
+
+  it('regenerates it with the seed fal reported', async () => {
+    const regenerate = vi.spyOn(generateApi, 'regenerate').mockResolvedValue(queued())
+    await openGenerateTab()
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Regenerate with the same seed' })
+    )
+
+    await waitFor(() =>
+      expect(regenerate).toHaveBeenCalledWith('g1', { prompt: null, reuse_seed: true })
+    )
+  })
+
+  it('offers no same-seed run when fal reported no seed', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(generated({ seed: null }))
+    await openGenerateTab()
+
+    expect(screen.getByRole('button', { name: 'Regenerate' })).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Regenerate with the same seed' })
+    ).toBeNull()
+  })
+
+  it('says what the server said when a base has gone', async () => {
+    const error = new AxiosError('Conflict')
+    error.response = {
+      status: 409,
+      statusText: 'Conflict',
+      data: {
+        detail: {
+          code: 'source_asset_missing',
+          message: '“Fox photo” was deleted, so this cannot be regenerated',
+        },
+      },
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+    }
+    vi.spyOn(generateApi, 'regenerate').mockRejectedValue(error)
+    await openGenerateTab()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '“Fox photo” was deleted, so this cannot be regenerated'
+    )
+  })
+
+  it('opens the form pre-filled for Edit and generate', async () => {
+    await openGenerateTab()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit and generate' }))
+
+    const form = await screen.findByRole('form', { name: 'Edit and generate' })
+    expect(within(form).getByLabelText('Prompt')).toHaveValue('the same fox, at dusk')
+    expect(within(form).getByLabelText('Model')).toHaveValue('kontext')
+    expect(within(form).getByLabelText('Aspect ratio')).toHaveValue('16:9')
+    expect(within(form).getByText('Fox photo')).toBeInTheDocument()
+    // One form at a time: the "from this image" one steps aside while editing.
+    expect(screen.queryByRole('form', { name: 'Generate from this image' })).toBeNull()
+  })
+
+  it('names the base that can no longer be opened', async () => {
+    vi.spyOn(assetsApi, 'get').mockImplementation(async (id) => {
+      if (id === 'base1') throw new Error('Not Found')
+      return generated()
+    })
+    await openGenerateTab()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Edit and generate' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Fox photo/)
+    expect(screen.queryByRole('form', { name: 'Edit and generate' })).toBeNull()
+  })
+
+  it('offers an ordinary image as a base', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(base())
+    await openGenerateTab('/a/base1')
+
+    const form = screen.getByRole('form', { name: 'Generate from this image' })
+    expect(within(form).getByText('Base image')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'How this was made' })).toBeNull()
+  })
+
+  it('has no Generate tab for a video nobody generated', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
+    // A video mounts the transcript and clip tabs, which load on mount.
+    vi.spyOn(transcriptsApi, 'get').mockResolvedValue({
+      asset_id: 'a1',
+      status: null,
+      model: null,
+      language: null,
+      segments: [],
+    })
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    renderAt('/a/a1')
+    await screen.findByRole('heading', { name: 'Giordano interview' })
+
+    expect(screen.queryByRole('tab', { name: 'Generate' })).toBeNull()
+  })
+
+  it('drops "(est.)" from the cost once it is a provider’s own bill', async () => {
+    vi.spyOn(usageApi, 'forAsset').mockResolvedValue({
+      total_events: 1,
+      priced_events: 1,
+      cost: 0.04,
+      currency: 'USD',
+      estimated: false,
+      tokens: 0,
+      seconds: 0,
+    })
+    renderAt('/a/g1')
+    await userEvent.click(await screen.findByRole('tab', { name: 'Info' }))
+
+    expect(await screen.findByText('AI cost')).toBeInTheDocument()
+    expect(screen.queryByText('AI cost (est.)')).toBeNull()
   })
 })

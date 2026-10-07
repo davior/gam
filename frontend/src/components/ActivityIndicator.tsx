@@ -20,6 +20,7 @@ const LABELS: Record<string, string> = {
   autotag: 'Suggesting tags',
   extract_text: 'Reading text',
   import_url: 'Importing',
+  generate: 'Generating',
 }
 
 function subject(job: ActivityJob): string {

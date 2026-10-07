@@ -21,6 +21,7 @@ function queuedJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
     asset_name: 'https://youtu.be/abc123',
     model: '',
     result_asset_id: null,
+    result_asset_ids: [],
     error_message: null,
     created_at: '2026-09-28T10:00:00Z',
     updated_at: '2026-09-28T10:00:00Z',

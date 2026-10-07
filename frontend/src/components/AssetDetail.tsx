@@ -12,11 +12,13 @@ import {
   Tags as TagsIcon,
   Trash2,
   Wand2,
+  WandSparkles,
   X,
 } from 'lucide-react'
 import type { Asset, AssetUpdate } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
+import { canBeBase } from '@/api/generate'
 import { clipsApi } from '@/api/clips'
 import { activityApi } from '@/api/transcripts'
 import { formatCost, usageApi, type UsageTotals } from '@/api/usage'
@@ -31,6 +33,7 @@ import ClipEditor from '@/components/ClipEditor'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
+import GenerateTab from '@/components/GenerateTab'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
@@ -540,7 +543,9 @@ export default function AssetDetail({
         <Fact label="Added" value={formatDate(asset.upload_date)} />
         {usage && usage.total_events > 0 && (
           <Fact
-            label="AI cost (est.)"
+            // "(est.)" only while it is one. A fal generation is costed from fal's own
+            // billing header, and calling a provider's bill an estimate undersells it.
+            label={usage.estimated ? 'AI cost (est.)' : 'AI cost'}
             value={
               usage.priced_events > 0
                 ? formatCost(usage.cost, usage.currency)
@@ -675,6 +680,18 @@ export default function AssetDetail({
             label: 'Text',
             icon: FileText,
             content: <DocumentTextPanel assetId={asset.id} />,
+          },
+        ]
+      : []),
+    // M8. An image that can be a base, or anything fal made — a generated video has no
+    // form here but still has its provenance and its Regenerate.
+    ...(canBeBase(asset) || asset.generation
+      ? [
+          {
+            id: 'generate',
+            label: 'Generate',
+            icon: WandSparkles,
+            content: <GenerateTab key={asset.id} asset={asset} usage={usage} />,
           },
         ]
       : []),
