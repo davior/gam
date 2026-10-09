@@ -60,6 +60,18 @@ function notFound(): AxiosError {
   return error
 }
 
+function refused(status: number, code: string, message: string): AxiosError {
+  const error = new AxiosError(message)
+  error.response = {
+    status,
+    statusText: '',
+    data: { detail: { code, message } },
+    headers: {},
+    config: { headers: new AxiosHeaders() },
+  }
+  return error
+}
+
 function activityJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
   return {
     id: 'j1',
@@ -343,10 +355,35 @@ describe('clips (M7)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
-    expect(removeAsset).toHaveBeenCalledWith('clip1')
+    expect(removeAsset).toHaveBeenCalledWith('clip1', { withClips: false })
     // A clip cannot have clips of its own, so there is nothing for the guard to ask.
     expect(listClips).not.toHaveBeenCalled()
     expect(await screen.findByText('The library')).toBeInTheDocument()
+  })
+
+  it("says why, on the clip's own page, when the server refuses to delete it", async () => {
+    // A clip being extracted as a file cannot be deleted mid-way. The reason used to
+    // vanish: the optimistic delete unmounted this page and the refusal remounted it.
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(clip())
+    vi.spyOn(assetsApi, 'remove').mockRejectedValue(
+      refused(
+        409,
+        'extraction_in_progress',
+        'An extraction is still running on this asset.'
+      )
+    )
+
+    renderAt('/a/clip1')
+    await screen.findByRole('heading', { name: /clip of giordano/i })
+    await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(
+      await screen.findByText('An extraction is still running on this asset.')
+    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /clip of giordano/i })).toBeInTheDocument()
+    expect(useLibraryStore.getState().error).toBeNull()
   })
 
   it('promoting every dependent clip retries the delete, which then succeeds', async () => {

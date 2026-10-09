@@ -184,7 +184,7 @@ describe('ClipEditor, deleting a clip', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Delete clip' }))
 
-    expect(remove).toHaveBeenCalledWith('c1')
+    expect(remove).toHaveBeenCalledWith('c1', { withClips: false })
     await waitFor(() => expect(screen.queryByText('Live clip')).not.toBeInTheDocument())
     expect(screen.getByText('Standalone cut')).toBeInTheDocument()
     expect(useLibraryStore.getState().assets).toEqual([])

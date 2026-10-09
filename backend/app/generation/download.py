@@ -14,6 +14,15 @@ change between the check and the connect.
 
 No credentials go with it. fal's output URLs are public CDN links, and the fal key sent
 to wherever a result happened to point would be a key handed to that host.
+
+The body is asked for, and accepted, only uncompressed. httpx decodes gzip and brotli
+transparently and with no output limit, so a few hundred bytes of brotli can become
+gigabytes in memory before the first byte is counted — the cap would protect the disk
+and not the worker. Media is already compressed; nothing is lost by refusing it.
+
+A failure to fetch is retried a few times before it fails the job. By the time this
+runs fal has finished, and billed, and keeps the file for days: one CDN hiccup should
+not cost a second generation.
 """
 
 from __future__ import annotations
@@ -22,6 +31,7 @@ import base64
 import binascii
 import logging
 import mimetypes
+import time
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urljoin, urlsplit
@@ -36,11 +46,15 @@ from app.safe_url import require_safe_external_url
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SIZE = 1024 * 1024
 MAX_REDIRECTS = 3
-# Per read, not per file: a large video can take minutes in total, but a CDN that sends
-# nothing at all for a minute has stopped.
+# Per read. A CDN that sends nothing at all for a minute has stopped; one that keeps
+# sending a trickle is caught by `max_seconds` instead, which covers the whole file.
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
+ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 2.0
+# Looked up at call time, so a test makes the wait between attempts instant.
+sleep = time.sleep
+monotonic = time.monotonic
 
 MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 
@@ -57,6 +71,7 @@ def download(
     default_extension: str,
     content_type_hint: Optional[str] = None,
     on_progress: Optional[Progress] = None,
+    max_seconds: Optional[float] = None,
 ) -> Path:
     """Fetch `url` into `workdir/<stem><ext>` and return the path.
 
@@ -75,8 +90,44 @@ def download(
             url, workdir, stem, max_bytes=max_bytes, default_extension=default_extension
         )
 
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            return _fetch(
+                url,
+                workdir,
+                stem,
+                max_bytes=max_bytes,
+                default_extension=default_extension,
+                content_type_hint=content_type_hint,
+                report=report,
+                max_seconds=max_seconds,
+            )
+        except _Transient as exc:
+            if attempt == ATTEMPTS:
+                raise GenerationError(str(exc)) from exc
+            logger.info("Download attempt %d failed (%s); trying again", attempt, exc)
+            sleep(RETRY_DELAY_SECONDS * attempt)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+class _Transient(GenerationError):
+    """A failure that says nothing about the file: worth another attempt."""
+
+
+def _fetch(
+    url: str,
+    workdir: Path,
+    stem: str,
+    *,
+    max_bytes: int,
+    default_extension: str,
+    content_type_hint: Optional[str],
+    report: Progress,
+    max_seconds: Optional[float],
+) -> Path:
     target = url
-    with httpx.Client(timeout=TIMEOUT, follow_redirects=False) as client:
+    headers = {"Accept-Encoding": "identity"}
+    with httpx.Client(timeout=TIMEOUT, follow_redirects=False, headers=headers) as client:
         for _hop in range(MAX_REDIRECTS + 1):
             _require_safe(target)
             try:
@@ -85,9 +136,21 @@ def download(
                     if response.is_redirect:
                         target = urljoin(target, response.headers["location"])
                         continue
+                    if response.status_code == 429 or response.status_code >= 500:
+                        raise _Transient(
+                            f"Could not download the generated file (HTTP {response.status_code})"
+                        )
                     if response.status_code >= 400:
                         raise GenerationError(
                             f"Could not download the generated file (HTTP {response.status_code})"
+                        )
+
+                    # Asked for identity; a server that compresses anyway is refused
+                    # rather than decoded — see the module docstring.
+                    encoding = response.headers.get("content-encoding", "").strip().lower()
+                    if encoding not in ("", "identity"):
+                        raise GenerationError(
+                            "Could not download the generated file (it was sent compressed)"
                         )
 
                     total = _content_length(response)
@@ -102,14 +165,19 @@ def download(
                     )
                     destination = workdir / f"{stem}{extension}"
                     _stream_to(
-                        response, destination, max_bytes=max_bytes, total=total, report=report
+                        response,
+                        destination,
+                        max_bytes=max_bytes,
+                        total=total,
+                        report=report,
+                        max_seconds=max_seconds,
                     )
                     return destination
             except httpx.TimeoutException as exc:
-                raise GenerationError("The generated file did not download in time") from exc
+                raise _Transient("The generated file did not download in time") from exc
             except httpx.RequestError as exc:
                 # The type, not the text: a RequestError's message carries the full URL.
-                raise GenerationError(
+                raise _Transient(
                     f"Could not download the generated file ({type(exc).__name__})"
                 ) from exc
 
@@ -132,15 +200,23 @@ def _stream_to(
     max_bytes: int,
     total: Optional[int],
     report: Progress,
+    max_seconds: Optional[float],
 ) -> None:
     received = 0
+    started = monotonic()
     try:
         with open(destination, "wb") as handle:
-            for chunk in response.iter_bytes(CHUNK_SIZE):
+            # As each read arrives, unbuffered: a chunk per read means the deadline and
+            # the cancel checkpoint in `report` are reached even when the server sends a
+            # trickle that would never fill a buffer. Decoding is identity by now — any
+            # other encoding was refused above.
+            for chunk in response.iter_bytes():
                 received += len(chunk)
                 # Counted, not trusted: Content-Length may be absent, or wrong.
                 if received > max_bytes:
                     raise _too_large(max_bytes)
+                if max_seconds is not None and monotonic() - started > max_seconds:
+                    raise GenerationError("The generated file did not download in time")
                 handle.write(chunk)
                 report(received, total)
     except BaseException:

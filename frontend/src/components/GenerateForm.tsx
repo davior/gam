@@ -147,9 +147,10 @@ export default function GenerateForm({ title, bases = [], preset, onCancel }: Pr
     const value = preset?.parameters.negative_prompt
     return typeof value === 'string' ? value : ''
   })
-  // Null until touched, which sends null and leaves the catalogue's default standing —
-  // Veo's row sets `generate_audio: false` because audio raises its price by half, and
-  // an untouched box must not quietly override that.
+  // Null until touched, and shown as the row's own default until then. What is sent is
+  // always what the box shows: sending null instead would leave it to the endpoint,
+  // whose default is audio *on* for Veo and Kling v3 — at half again the price — while
+  // the box said off for any row an admin added without pinning `generate_audio`.
   const [audio, setAudio] = useState<boolean | null>(() => {
     const value = preset?.parameters.generate_audio
     return typeof value === 'boolean' ? value : null
@@ -238,7 +239,9 @@ export default function GenerateForm({ title, bases = [], preset, onCancel }: Pr
           model.options.supports_negative_prompt && negative.trim()
             ? negative.trim()
             : null,
-        generate_audio: model.options.supports_audio ? audio : null,
+        generate_audio: model.options.supports_audio
+          ? (audio ?? model.extra_params.generate_audio === true)
+          : null,
         num_outputs: Math.min(Math.max(1, outputs), maxOutputs),
       },
     }

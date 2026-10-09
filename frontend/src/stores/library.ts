@@ -30,6 +30,11 @@ const PAGE_SIZE = 60
  */
 const BULK_CHUNK = 500
 
+interface RemoveOptions {
+  withClips?: boolean
+  clipIds?: string[]
+}
+
 interface LibraryState {
   assets: Asset[]
   total: number
@@ -74,11 +79,11 @@ interface LibraryState {
   clearFilters: () => void
   upload: (files: File[]) => Promise<void>
   update: (id: string, changes: AssetUpdate) => Promise<void>
-  remove: (id: string) => Promise<void>
-  /** Delete an asset together with the live clips cut from it — the delete guard's
-   *  "Delete clips too". `clipIds` are the clips the guard listed, dropped from the
-   *  grid alongside it. */
-  removeWithClips: (id: string, clipIds: string[]) => Promise<void>
+  /** Delete an asset once the server agrees, then drop it from the grid. `withClips`
+   *  is the delete guard's "Delete clips too"; `clipIds` are the clips it listed,
+   *  dropped alongside. Rejects with the server's error and sets no store `error`: the
+   *  caller shows it where it was asked. */
+  remove: (id: string, options?: RemoveOptions) => Promise<void>
   /** Put an asset made somewhere other than the grid — a clip saved from the Clip
    *  tab — at the top of it. */
   prepend: (asset: Asset) => void
@@ -311,41 +316,23 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
   },
 
-  async remove(id) {
-    const { assets: previous, total: previousTotal } = get()
-    // Only counted down when the row was actually loaded. A clip deleted from the Clip
-    // tab need not be — it may be filtered out, or on a page not fetched yet — and
-    // taking one off the count anyway would make the total drift.
-    const present = previous.some((a) => a.id === id)
-    set((state) => ({
-      assets: state.assets.filter((a) => a.id !== id),
-      total: present ? Math.max(0, state.total - 1) : state.total,
-    }))
-
-    try {
-      await assetsApi.remove(id)
-    } catch (error) {
-      // The server's total, not `previous.length`: that is only the rows loaded so
-      // far, and after a few pages of scrolling the count would drop to a page's worth.
-      set({ assets: previous, total: previousTotal })
-      set({ error: apiErrorMessage(error, 'Could not delete that asset') })
-      throw error
-    }
-  },
-
-  async removeWithClips(id, clipIds) {
-    // Waits for the server, unlike `remove`. Dropping the parent first would unmount
-    // AssetView's panel (it renders from `assets.find`) and mount a fresh one when a
-    // failure put it back, discarding the guard's own error state — the remount bug
-    // docs/m7-clips-and-subvideos.md records. No store `error` either: the guard
-    // shows its message in place, and staying mounted is what lets it.
+  async remove(id, { withClips = false, clipIds = [] } = {}) {
+    // Waits for the server rather than dropping the row first. Every delete starts in
+    // an asset's own panel, which AssetView renders from `assets.find`: an optimistic
+    // drop unmounted it, and a refusal that put the row back mounted a fresh one with
+    // the reason gone — the remount bug docs/m7-clips-and-subvideos.md records, which
+    // turned a 409 like `extraction_in_progress` into nothing at all. No store `error`
+    // either: the panel says why, in place, and the library banner saying it too would
+    // outlive the retry that succeeded.
     //
     // No staleness token: filtering out ids the server just deleted is right whatever
     // loaded in the meantime, and after a sign-out there is nothing left to filter.
-    await assetsApi.remove(id, { withClips: true })
+    await assetsApi.remove(id, { withClips })
     const gone = new Set([id, ...clipIds])
     set((state) => {
       const assets = state.assets.filter((a) => !gone.has(a.id))
+      // Only what was actually loaded comes off the count. A clip deleted from the
+      // Clip tab may be filtered out, or on a page not fetched yet.
       return {
         assets,
         total: Math.max(0, state.total - (state.assets.length - assets.length)),

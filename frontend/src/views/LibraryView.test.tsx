@@ -598,6 +598,31 @@ describe('LibraryView generations (M8)', () => {
     expect(get).not.toHaveBeenCalled()
   })
 
+  it('adds what a generation saved before it failed', async () => {
+    // Two outputs asked for; the second never downloaded. The first is in the library
+    // with its provenance, and the grid should say so rather than wait for a reload.
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(output('out1', 'Fox one'))
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [generateJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [
+          generateJob({
+            status: 'error',
+            error_message: 'Could not download the generated file (HTTP 404)',
+            result_asset_id: 'out1',
+            result_asset_ids: ['out1'],
+          }),
+        ],
+      })
+    )
+
+    expect(await screen.findByText('Fox one')).toBeInTheDocument()
+  })
+
   it('offers text → image in the add panel', async () => {
     const user = userEvent.setup()
     render(<LibraryView />)

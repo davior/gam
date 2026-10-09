@@ -86,8 +86,9 @@ class Settings(BaseSettings):
     # ─── administration ──────────────────────────────────────────────────────
     # Comma-separated user ids or usernames. The Notes token carries no admin claim and
     # nothing in GAM can grant one, so this is the only way anybody becomes an admin —
-    # which today means being allowed to edit the generation model catalogue. Ids match
-    # exactly; usernames case-insensitively, because people type them from memory.
+    # which today means being allowed to edit the generation model catalogue. Both match
+    # exactly: Notes usernames are unique only case-sensitively, and anyone can rename.
+    # Ids are the safer entry — a name freed by a rename can be taken by someone else.
     admin_users: str = ""
 
     # ─── AI generation (M8) ──────────────────────────────────────────────────

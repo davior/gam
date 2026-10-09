@@ -85,9 +85,12 @@ export default function LibraryView() {
   }, [loadMore])
 
   // A URL import or a generation finishes in the background, so nothing else would put
-  // what it made in the grid. Keyed on seeing a job go from running to done rather than
-  // on "done" alone: the activity feed on mount already holds jobs finished days ago, and
-  // prepending those would shuffle old assets to the top of the library on every visit.
+  // what it made in the grid. Keyed on seeing a job go from running to finished rather
+  // than on "finished" alone: the activity feed on mount already holds jobs finished
+  // days ago, and prepending those would shuffle old assets to the top of the library on
+  // every visit. A generation's outputs are added however it ended — one that failed or
+  // was cancelled after saving two of four images still made those two, and they are in
+  // the library whether the grid shows them or not.
   const runningImports = useRef<Set<string>>(new Set())
   useEffect(() => {
     for (const job of jobs) {
@@ -95,7 +98,9 @@ export default function LibraryView() {
       if (isActive(job)) {
         runningImports.current.add(job.id)
       } else if (runningImports.current.delete(job.id)) {
-        if (job.status === 'done') void addAll(createdBy(job), addImported)
+        if (job.status === 'done' || job.action === 'generate') {
+          void addAll(createdBy(job), addImported)
+        }
       }
     }
   }, [jobs, addImported])

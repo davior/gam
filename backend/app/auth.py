@@ -223,21 +223,22 @@ CurrentUser = Annotated[UserCtx, Depends(current_user)]
 def is_admin(user: UserCtx, record: Optional[User]) -> bool:
     """Whether this caller is an administrator.
 
-    An entry in `ADMIN_USERS` matches an id exactly and a username case-insensitively,
-    against either the token's username or the shadow row's, so a configured name keeps
-    working whichever one has caught up with a rename in Notes.
+    An entry in `ADMIN_USERS` matches an id, or a username against either the token's
+    username or the shadow row's, so a configured name keeps working whichever one has
+    caught up with a rename in Notes.
+
+    Both exactly. Notes keeps usernames unique only case-sensitively and lets anyone
+    rename themselves, so a case-insensitive match would make whoever renames to
+    `DAVIOR` an admin alongside `davior` — and an admin chooses the endpoint every
+    user's prompts and base images are sent to.
     """
     if record is not None and record.is_admin:
         return True
 
     usernames = {
-        name.lower()
-        for name in (user.username, record.username if record is not None else "")
-        if name
+        name for name in (user.username, record.username if record is not None else "") if name
     }
-    return any(
-        entry == user.id or entry.lower() in usernames for entry in settings.admin_user_list
-    )
+    return any(entry == user.id or entry in usernames for entry in settings.admin_user_list)
 
 
 def admin_user(user: CurrentUser, session: Session = Depends(get_session)) -> UserCtx:

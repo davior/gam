@@ -25,12 +25,20 @@ def alembic_config_fixture(tmp_path, monkeypatch):
     # so both have to point at the temp database for the run to be isolated.
     from app import database
     from app.config import settings
+    from sqlalchemy import event
     from sqlmodel import create_engine
 
     monkeypatch.setattr(settings, "database_url", url)
-    monkeypatch.setattr(
-        database, "engine", create_engine(url, connect_args={"check_same_thread": False})
-    )
+    engine = create_engine(url, connect_args={"check_same_thread": False})
+
+    # As app.database's own engine does for every connection. Without it the tests
+    # below that seed real foreign-key references prove nothing: SQLite only checks
+    # them when this is on, and production always has it on.
+    @event.listens_for(engine, "connect")
+    def _enforce_foreign_keys(dbapi_connection, _record):
+        dbapi_connection.execute("PRAGMA foreign_keys=ON")
+
+    monkeypatch.setattr(database, "engine", engine)
 
     config = Config(str(BACKEND_ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_ROOT / "alembic"))
@@ -204,6 +212,11 @@ def test_add_clip_columns_survives_real_foreign_key_references(alembic_config):
         )
         conn.commit()
 
+    # A fresh connection, as the deploy that runs this upgrade gets — see the
+    # generation downgrade test below for what a reused one hides.
+    from app import database
+
+    database.engine.dispose()
     command.upgrade(config, "head")
 
     with sqlite3.connect(db_path) as conn:
@@ -276,7 +289,13 @@ def test_the_generation_catalogue_is_seeded(alembic_config):
 def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_config):
     """Dropping the `ai_*` columns recreates `asset`, the operation `7d4b9c1a6f28` found
     SQLite refuses while `assettag` rows reference it. Proven against a populated table
-    for the reason that test gives: an empty one cannot fail this way."""
+    for the reason that test gives: an empty one cannot fail this way.
+
+    The usage row and the clip are what a real library has and the first version of this
+    test did not: copying `usageevent`'s rows opens a transaction, inside which SQLite
+    silently ignores `PRAGMA foreign_keys=OFF`, and the clip's reference to its parent
+    is then checked when `asset` is dropped. Found by migrating a populated database by
+    hand, after this test had passed."""
     config, db_path = alembic_config
     command.upgrade(config, "head")
 
@@ -289,8 +308,26 @@ def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_c
         )
         conn.execute("INSERT INTO tag (id, user_id, name, created_at) VALUES ('t1', 'u', 'Fox', '2026-01-01')")
         conn.execute("INSERT INTO assettag (asset_id, tag_id, created_at) VALUES ('a1', 't1', '2026-01-01')")
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, size_bytes,"
+            " field_provenance, upload_date, modified_date, metadata_modified_date,"
+            " parent_asset_id, in_point, out_point)"
+            " VALUES ('c1', 'u', 'Clip', 'video', 'clip', 0, '{}',"
+            " '2026-01-01', '2026-01-01', '2026-01-01', 'a1', 1.0, 5.0)"
+        )
+        conn.execute(
+            "INSERT INTO usageevent (id, user_id, kind, provider, model, units, unit_type,"
+            " created_at) VALUES ('u1', 'u', 'stt', 'deepgram', 'nova-3', 60, 'seconds',"
+            " '2026-01-01')"
+        )
         conn.commit()
 
+    # A fresh connection, as a separate `alembic downgrade` run gets. The pooled one the
+    # upgrade used can be left with foreign keys off by an earlier revision's pragma,
+    # which made this test pass against a migration the command line could not run.
+    from app import database
+
+    database.engine.dispose()
     command.downgrade(config, "9c2e08b4a1f7")
 
     with sqlite3.connect(db_path) as conn:
@@ -298,6 +335,8 @@ def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_c
         assert not any(name.startswith("ai_") for name in columns)
         assert conn.execute("SELECT id FROM asset WHERE id = 'a1'").fetchone() is not None
         assert conn.execute("SELECT * FROM assettag WHERE asset_id = 'a1'").fetchone() is not None
+        assert conn.execute("SELECT parent_asset_id FROM asset WHERE id = 'c1'").fetchone() == ("a1",)
+        assert conn.execute("SELECT id FROM usageevent").fetchall() == [("u1",)]
         assert "generationmodel" not in _tables(db_path)
 
 

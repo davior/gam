@@ -141,10 +141,15 @@ Gecko Notes' token says who someone is, not whether they are an admin, so GAM is
 in `.env`:
 
 ```env
-ADMIN_USERS=davior            # Notes usernames or user ids, comma-separated
+ADMIN_USERS=1f0c…            # Notes user ids (or usernames), comma-separated
 ```
 
-Usernames match case-insensitively; ids exactly. An admin is the only one who can edit
+Both match exactly, case included. Prefer the user id — the `sub` in a Notes token, and
+the `id` `GET /api/me` returns. Notes keeps usernames unique only case-sensitively and
+lets anyone rename themselves, so a name is only as safe as nobody else ever holding it,
+and an admin decides which fal endpoint every user's prompts and base images go to.
+
+An admin is the only one who can edit
 the AI generation model catalogue (Settings → Generation); everyone else uses it as it
 stands. Left empty, nobody can edit it and the catalogue the migration seeded is what
 everyone gets — which works, until fal retires one of those endpoints.

@@ -179,9 +179,18 @@ def cancel_job(session: Session, user_id: str, kind_key: str, job_id: str) -> Op
         return None
 
     if row.status in ACTIVE_STATUSES:
+        was_queued = row.status == "queued"
         queue = kind.queue_for(row)
         if queue is not None:
             queue.cancel(job_id)
         set_fields(session, row, status="cancelled", stage="", detail="Cancelled")
+        if was_queued and getattr(row, "kind", None) == KIND_GENERATE:
+            # A queued generation can already have a request running at fal — one
+            # recovered after a restart — and no worker will reach the checkpoint that
+            # would cancel it there. Imported lazily for the reason `_enrichment_queue`
+            # gives.
+            from app.generation.run import cancel_remote
+
+            cancel_remote(session, row)
 
     return kind.to_activity(row)

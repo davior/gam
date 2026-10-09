@@ -323,7 +323,12 @@ def downgrade() -> None:
 
     # Dropping columns recreates `asset`, and SQLite checks foreign keys on that DROP
     # TABLE — see `7d4b9c1a6f28`, whose upgrade hit exactly this on a populated library.
-    op.execute('PRAGMA foreign_keys=OFF')
+    # Unlike there, the pragma has to be issued outside a transaction: SQLite ignores it
+    # inside one, and the `usageevent` rebuild above has already opened one by copying
+    # its rows. Without the autocommit block this downgrade failed on any library with a
+    # clip, a tag or a suggestion in it.
+    with op.get_context().autocommit_block():
+        op.execute('PRAGMA foreign_keys=OFF')
     with op.batch_alter_table('asset', schema=None) as batch_op:
         batch_op.drop_column('ai_generated_at')
         batch_op.drop_column('ai_seed')
@@ -332,4 +337,5 @@ def downgrade() -> None:
         batch_op.drop_column('ai_prompt')
         batch_op.drop_column('ai_generation_type')
         batch_op.drop_column('ai_model')
-    op.execute('PRAGMA foreign_keys=ON')
+    with op.get_context().autocommit_block():
+        op.execute('PRAGMA foreign_keys=ON')

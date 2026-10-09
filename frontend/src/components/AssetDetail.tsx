@@ -119,7 +119,6 @@ export default function AssetDetail({
 }: Props) {
   const update = useLibraryStore((s) => s.update)
   const remove = useLibraryStore((s) => s.remove)
-  const removeWithClips = useLibraryStore((s) => s.removeWithClips)
   const refreshAsset = useLibraryStore((s) => s.refreshAsset)
   const setAssetTags = useLibraryStore((s) => s.setAssetTags)
   const suggestions = useTagStore((s) => s.tags)
@@ -132,6 +131,9 @@ export default function AssetDetail({
   const [saving, setSaving] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // Why a plain delete was refused — an extraction still running, most often — shown
+  // in the confirm block that asked.
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   // Set once `confirmDelete` finds live clips cut from this asset — the confirm block
   // switches from "delete this?" to "promote them, or delete them too" while this is set.
   const [dependentClips, setDependentClips] = useState<Asset[] | null>(null)
@@ -194,6 +196,7 @@ export default function AssetDetail({
     // replaces the asset, the effect re-seeds, and the textarea shows the new text.
     setSummary(asset.summary ?? '')
     setConfirmingDelete(false)
+    setDeleteError(null)
     setDependentClips(null)
     setGuardError(null)
     setTagError(null)
@@ -295,15 +298,9 @@ export default function AssetDetail({
   }
 
   const confirmDelete = async () => {
-    // Checked before calling `remove()`, not caught from its rejection: `remove`
-    // optimistically drops the asset from the store *before* the request resolves,
-    // which makes `AssetView`'s `assets.find(...)` briefly come back `undefined` —
-    // unmounting this whole component — and remounting it fresh once the store
-    // restores the asset on failure. That is invisible for a plain failure (it just
-    // resets `confirmingDelete` to what a fresh mount already starts at), but it would
-    // silently discard `setDependentClips` below, called on a component instance that
-    // no longer exists by the time the guard's 409 comes back. Checking first means
-    // the guarded path never calls `remove()` at all, so it never hits that cycle.
+    // Asked before deleting rather than read from the 409: the guard needs the clips
+    // themselves, to list them and to promote or delete them, and the refusal carries
+    // only a count.
     //
     // Skipped for a clip, which can never have clips of its own (`create_clip` refuses
     // to clip one), so the answer is known without asking.
@@ -321,11 +318,12 @@ export default function AssetDetail({
       }
     }
 
+    setDeleteError(null)
     try {
       await remove(asset.id)
       onClose()
-    } catch {
-      setConfirmingDelete(false)
+    } catch (err) {
+      setDeleteError(apiErrorMessage(err, 'Could not delete that'))
     }
   }
 
@@ -346,17 +344,15 @@ export default function AssetDetail({
     }
   }
 
-  // The store's non-optimistic delete, not `remove`: see `removeWithClips` for why the
-  // guard must stay mounted until the server has answered.
   const deleteWithClips = async () => {
     if (!dependentClips) return
     setDeletingClips(true)
     setGuardError(null)
     try {
-      await removeWithClips(
-        asset.id,
-        dependentClips.map((c) => c.id)
-      )
+      await remove(asset.id, {
+        withClips: true,
+        clipIds: dependentClips.map((c) => c.id),
+      })
       onClose()
     } catch (err) {
       setGuardError(apiErrorMessage(err, 'Could not delete it and its clips'))
@@ -612,6 +608,9 @@ export default function AssetDetail({
               ? `Delete this clip? The ${asset.asset_type === 'audio' ? 'recording' : 'video'} it was cut from is not affected.`
               : 'Delete this asset and its file? This cannot be undone.'}
           </p>
+          {deleteError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{deleteError}</p>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
@@ -622,7 +621,10 @@ export default function AssetDetail({
             </button>
             <button
               type="button"
-              onClick={() => setConfirmingDelete(false)}
+              onClick={() => {
+                setConfirmingDelete(false)
+                setDeleteError(null)
+              }}
               className="btn btn-secondary flex-1"
             >
               Cancel

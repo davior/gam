@@ -120,14 +120,17 @@ def test_a_non_admin_cannot_change_the_catalogue(auth_client, models):
     _refused(auth_client.delete(f"/api/generate/models/{models[T2I].id}"), 403, "admin_required")
 
 
-@pytest.mark.parametrize("configured", ["user-under-test", "TESTER", " someone , Tester "])
+@pytest.mark.parametrize("configured", ["user-under-test", "tester", " someone , tester "])
 def test_admin_users_matches_an_id_or_a_username(auth_client, monkeypatch, configured):
     monkeypatch.setattr(settings, "admin_users", configured)
     assert auth_client.post("/api/generate/models", json=NEW).status_code == 201
 
 
-def test_an_id_matches_exactly(auth_client, monkeypatch):
-    monkeypatch.setattr(settings, "admin_users", "USER-UNDER-TEST")
+@pytest.mark.parametrize("configured", ["USER-UNDER-TEST", "TESTER", "Tester"])
+def test_ids_and_usernames_match_exactly(auth_client, monkeypatch, configured):
+    # Notes lets `TESTER` and `tester` be two different people, and lets anyone rename
+    # themselves into the other's case.
+    monkeypatch.setattr(settings, "admin_users", configured)
     _refused(auth_client.post("/api/generate/models", json=NEW), 403, "admin_required")
 
 
@@ -144,6 +147,9 @@ def test_me_reports_admin_from_config(client, monkeypatch):
     assert client.get("/api/me", headers=headers).json()["data"]["is_admin"] is False
 
     monkeypatch.setattr(settings, "admin_users", "Davior")
+    assert client.get("/api/me", headers=headers).json()["data"]["is_admin"] is False
+
+    monkeypatch.setattr(settings, "admin_users", "davior")
     assert client.get("/api/me", headers=headers).json()["data"]["is_admin"] is True
 
     monkeypatch.setattr(settings, "admin_users", "notes-user-1")

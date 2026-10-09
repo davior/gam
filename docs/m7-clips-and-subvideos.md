@@ -182,6 +182,16 @@ created between the check and the delete, vanishingly unlikely for anything but 
 multi-tab session) falls back to the plain "could not delete" path rather than the
 promote UI, which is an acceptable edge case for something this rare.
 
+**Superseded once deletes could be refused for a reason.** "Invisible for a plain
+failure" stopped being true when clip deletion added a 409 with something to say —
+`extraction_in_progress`, "let it finish, or cancel it, then delete" — and a link that
+makes a clip's own page the natural place to delete it. The optimistic drop unmounted
+that page, the refusal remounted it, and the reason went with the old instance. `remove()`
+now waits for the server before dropping anything and sets no store error: every delete
+starts in an asset's own panel, which says why in place, and staying mounted is what lets
+it. The pre-check above stays, for a different reason now — the guard needs the clips
+themselves to list them, and the 409 carries only a count.
+
 ### A third bug: deleting a clip deleted its parent's poster
 
 Shipped with M7, and found while making clips deletable from the places they are

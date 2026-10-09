@@ -115,8 +115,9 @@ image" model that was really an edit endpoint and 422'd every call.
 
 ### Admins are named in config
 `User.is_admin` exists and `/api/me` returns it, but nothing sets it and the Notes token
-carries no admin claim. `ADMIN_USERS` (comma-separated user ids or usernames, usernames
-compared case-insensitively) makes a user an admin; `/api/me` reports
+carries no admin claim. `ADMIN_USERS` (comma-separated user ids or usernames, both matched
+exactly — Notes usernames are unique only case-sensitively and anyone can rename, so
+ids are the recommended entry) makes a user an admin; `/api/me` reports
 `is_admin = record.is_admin or listed`. An `AdminUser` dependency answers
 `403 {"code": "admin_required"}`. Only admins edit the catalogue; everyone uses it.
 With `ADMIN_USERS` empty nobody can edit it, and the seeded catalogue still works.
@@ -343,8 +344,13 @@ was deleted before this could run`, `The generated file is larger than the 1024 
 Result downloads stream to a temp file through a new capped helper: SSRF check
 (`safe_url.require_safe_external_url`) on the URL and on each redirect hop (at most
 three), `Content-Length` checked up front, bytes counted while streaming, the job's
-progress callback called between chunks so a cancel lands mid-download. The extension
-comes from the URL path when it is a known media type, else from `Content-Type`, else
+progress callback called between chunks so a cancel lands mid-download. The body is
+requested and accepted only uncompressed — httpx inflates gzip and brotli with no output
+limit, before a byte could be counted — and the whole file must arrive within
+`generation_timeout_minutes`, so a server that trickles bytes cannot hold a worker
+forever. A 429, a 5xx or a dropped connection is tried three times before it fails the
+job: fal has already billed by then and keeps the file for days. The extension comes
+from the URL path when it is a known media type, else from `Content-Type`, else
 `.png` / `.mp4` by kind.
 
 ## Frontend
@@ -384,11 +390,10 @@ comes from the URL path when it is a known media type, else from `Content-Type`,
   sooner needs fal's payload-deletion API and a billing-scoped key.
 - Cost is reconciled against nothing after the fact; fal's billing-events API would give
   the discounted final amount and is the natural follow-up.
-- A cancel that lands after fal finished but while the output is still downloading
-  writes no usage row for a request fal did bill: the cost is recorded after saving.
-- A job cancelled through the API whose process dies before the worker reaches its next
-  checkpoint never sends `PUT {cancel_url}` — `recover_pending` skips cancelled rows —
-  so that fal request runs to completion.
+- A *running* job cancelled through the API whose process dies before the worker reaches
+  its next checkpoint never sends `PUT {cancel_url}` — `recover_pending` skips cancelled
+  rows — so that fal request runs to completion. (A *queued* one is cancelled at fal by
+  the cancel itself; see the review fixes below.)
 - An admin who adds `sync_mode` to a row's `extra_params` gets results back as inline
   `data:` URIs, which are accepted but then sit in the job payload, megabytes and all.
 - A generation started from an asset's own page (`/a/{id}`) is not added to any grid,
@@ -443,6 +448,38 @@ purpose. The API sections above have been brought into line with each.
   server's `invalid_base`.
 - The provenance block's Cost is the asset's `/api/usage/assets/{id}` total, marked
   `(est.)` while it is one.
+
+**Fixed after an adversarial review**, each with a test that fails without it:
+- A request fal has billed always gets its `UsageEvent`, even when saving its outputs
+  fails or is cancelled part-way; it is attached to the first output that was saved, if
+  any. Before, the cost was recorded only after every output was saved, and an errored
+  job is never run again to record it later.
+- A download that fails with a 429, a 5xx or a dropped connection is retried twice
+  before it fails the job; before, one CDN hiccup cost a second generation.
+- A 5xx on the result fetch that carries fal's `x-fal-request-id` is the model's own
+  failure, and now fails the job with fal's message. It used to be polled until the
+  thirty-minute deadline, holding a worker, and then reported as "did not finish".
+- A restart in the middle of `ingest_file` — which commits the row before probing and
+  thumbnailing — no longer leaves a provenance-less copy beside the finished one. The
+  index being saved is written to the payload first; a resumed run that finds it set
+  discards this user's generated assets, made since the job was queued, with the same
+  bytes, then saves the output again.
+- Cancelling a *queued* generation that already has a request at fal — one recovered
+  after a restart, waiting for a worker — now sends `PUT {cancel_url}`. No worker ever
+  reaches the checkpoint that would.
+- `ADMIN_USERS` matches usernames exactly. Notes keeps usernames unique only
+  case-sensitively and lets anyone rename, so case-insensitive matching made whoever
+  renamed to `DAVIOR` an admin alongside `davior` — and an admin chooses the endpoint
+  every user's prompts and base images are sent to. Ids are now the recommended entry.
+- The download refuses a compressed body and has a whole-file deadline (see
+  Configuration).
+- The check that keeps the fal key on fal's own queue host had no test; removing it left
+  the suite green. Five variants of a foreign queue URL are now tested.
+- The form's "Generate audio" box sends what it shows. Untouched, it used to send `null`,
+  leaving audio to an endpoint whose default is on, for any row an admin added without
+  pinning `generate_audio`.
+- The library grid adds the outputs a generation saved before it failed or was
+  cancelled; it used to wait for `done`.
 
 **Still unverified**, because no fal host was reachable from the build: whether the
 queue result carries `x-fal-billable-units`, whether the pricing API accepts an ordinary

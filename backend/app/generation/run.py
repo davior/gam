@@ -15,8 +15,12 @@ In order, each a stage the activity feed shows:
    thumbnailed and indexed like anything else; then the `ai_*` provenance, and the
    prompt as name and description so search finds it by what was asked for. Each asset
    id is written to the payload as it is made, so a restart here finishes the job
-   instead of saving the same image twice.
+   instead of saving the same image twice — and the index being saved is written
+   *before* ingest starts, so a restart in the middle of one finds and discards the
+   half-made copy rather than keeping it beside the finished one.
 6. Recording the cost — once, guarded by `usage_recorded` in the same commit as the row.
+   Also when saving fails: fal billed the request whatever became of its files, and an
+   errored job is never run again to record it later.
 
 Runs on a worker thread of the generation queue. `progress` is the job's reporter and
 the cancellation checkpoint, so it is called on every poll and between download chunks.
@@ -24,6 +28,7 @@ the cancellation checkpoint, so it is called on every poll and between download 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import tempfile
@@ -33,7 +38,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.clock import utcnow
 from app.config import settings
@@ -99,6 +104,10 @@ class _State:
     # after the result was fetched does not depend on fal still serving it.
     result: Optional[dict] = None
     created_asset_ids: list[str] = field(default_factory=list)
+    # The output index whose ingest has started and not yet been recorded above. Set on
+    # a resumed run only if the process died inside `ingest_file`, which commits the
+    # asset row before it probes and thumbnails it.
+    ingesting: Optional[int] = None
     usage_recorded: bool = False
 
     @classmethod
@@ -117,12 +126,16 @@ class _State:
         created = data.get("created_asset_ids")
         if not isinstance(created, list):
             created = []
+        ingesting = data.get("ingesting")
+        if isinstance(ingesting, bool) or not isinstance(ingesting, int):
+            ingesting = None
         return cls(
             request=GenerationRequest.from_dict(data["request"]),
             queued=fal.QueuedRequest.from_dict(data.get("fal_request")),
             submitted_at=submitted_at,
             result=data.get("result") if isinstance(data.get("result"), dict) else None,
             created_asset_ids=[i for i in created if isinstance(i, str)],
+            ingesting=ingesting,
             usage_recorded=bool(data.get("usage_recorded")),
         )
 
@@ -138,6 +151,8 @@ class _State:
             data["submitted_at"] = self.submitted_at.isoformat()
         if self.result is not None:
             data["result"] = self.result
+        if self.ingesting is not None:
+            data["ingesting"] = self.ingesting
         return json.dumps(data, sort_keys=True)
 
 
@@ -170,18 +185,20 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
     if not outputs:
         raise GenerationError("fal.ai finished but returned nothing to download")
 
-    created = _save_outputs(session, job, state, outputs, progress)
+    try:
+        created = _save_outputs(session, job, state, outputs, progress)
+    except Exception:
+        # fal billed this request whatever became of its files — a download that never
+        # arrived, a cancel mid-way — and an errored or cancelled job is never run
+        # again to record it later. Exception, not BaseException: a process that dies
+        # here is resumed by `recover_pending`, and that run records it.
+        session.rollback()
+        saved = [a for a in (session.get(Asset, i) for i in state.created_asset_ids) if a]
+        _record_cost_once(session, job, state, saved, api_key)
+        raise
 
     progress(STAGE_COST, 97, "")
-    if not state.usage_recorded:
-        try:
-            _record_cost(session, job, state, created, api_key)
-        except Exception:  # noqa: BLE001 - accounting must not undo the work it measures
-            # `usage_events.record` already holds this rule for the write; the price
-            # lookup before it needs the same, or a pricing hiccup fails a generation
-            # whose files are already in the library.
-            session.rollback()
-            logger.warning("Could not record the cost of generation %s", job.id, exc_info=True)
+    _record_cost_once(session, job, state, created, api_key)
 
     noun = "video" if request.kind == KIND_IMAGE_TO_VIDEO else "image"
     count = len(created)
@@ -359,14 +376,52 @@ def _save_outputs(
                 default_extension=default_extension,
                 content_type_hint=output.get("content_type"),
                 on_progress=_download_reporter(progress, label, start, span),
+                # One file taking longer than a whole generation may is not arriving.
+                max_seconds=settings.generation_timeout_minutes * 60,
             )
 
             progress(STAGE_SAVING, 90, label.rstrip(" ·"))
+            if state.ingesting == index:
+                _discard_half_saved(session, storage, job, state, path)
+            state.ingesting = index
+            _save(session, job, state)
+
             asset = _ingest(session, storage, job, request, state, path)
             created.append(asset)
             state.created_asset_ids.append(asset.id)
+            state.ingesting = None
             _save(session, job, state)
     return created
+
+
+def _discard_half_saved(
+    session: Session, storage, job: EnrichmentJob, state: _State, path: Path
+) -> None:
+    """Remove the copy an interrupted run left of this output, before saving it again.
+
+    `ingest_file` commits the row before it probes and thumbnails, so a process killed
+    in between leaves an asset this job never recorded. It is found by its bytes — the
+    same file fal is still serving — and only among this user's generated assets made
+    since the job was queued, so an identical earlier generation (the same seed can
+    reproduce an image exactly) is never mistaken for it.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+
+    leftovers = session.exec(
+        select(Asset).where(
+            Asset.user_id == job.user_id,
+            Asset.source == SOURCE_AI,
+            Asset.checksum_sha256 == digest.hexdigest(),
+            col(Asset.upload_date) >= job.created_at,
+            col(Asset.id).not_in(state.created_asset_ids or [""]),
+        )
+    ).all()
+    for leftover in leftovers:
+        logger.info("Discarding %s, half-saved by an interrupted run of %s", leftover.id, job.id)
+        asset_service.delete_asset(session, storage, leftover)
 
 
 def _download_reporter(progress: Progress, label: str, start: int, span: int):
@@ -438,6 +493,21 @@ def _filename_for(name: str, path: Path) -> str:
 # ─── the bill ────────────────────────────────────────────────────────────────
 
 
+def _record_cost_once(
+    session: Session, job: EnrichmentJob, state: _State, created: list[Asset], api_key: str
+) -> None:
+    if state.usage_recorded:
+        return
+    try:
+        _record_cost(session, job, state, created, api_key)
+    except Exception:  # noqa: BLE001 - accounting must not undo the work it measures
+        # `usage_events.record` already holds this rule for the write; the price
+        # lookup before it needs the same, or a pricing hiccup fails a generation
+        # whose files are already in the library.
+        session.rollback()
+        logger.warning("Could not record the cost of generation %s", job.id, exc_info=True)
+
+
 def _record_cost(
     session: Session, job: EnrichmentJob, state: _State, created: list[Asset], api_key: str
 ) -> None:
@@ -497,3 +567,26 @@ def _record_cost(
 
 def _save(session: Session, job: EnrichmentJob, state: _State) -> None:
     set_fields(session, job, payload=state.encode())
+
+
+# ─── cancelling a job no worker holds ────────────────────────────────────────
+
+
+def cancel_remote(session: Session, job: EnrichmentJob) -> None:
+    """Tell fal to stop a request this job submitted, when no worker will.
+
+    A running job sends the cancel itself, at its next checkpoint. A *queued* one with a
+    request already at fal — recovered after a restart, waiting for one of the
+    generation workers — never reaches a checkpoint once cancelled: the worker sees the
+    status and returns before running it. Without this its request runs to the end
+    there, billed. Best effort; never raises.
+    """
+    try:
+        state = _State.load(job.payload)
+    except GenerationError:
+        return
+    if state.queued is None or state.result is not None:
+        return
+    api_key = load_fal_key(session, job.user_id)
+    if api_key:
+        fal.cancel(state.queued, api_key=api_key)

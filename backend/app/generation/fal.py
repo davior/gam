@@ -156,6 +156,15 @@ def result(request: QueuedRequest, *, api_key: str) -> QueueResult:
         label=LABEL,
     )
     if response.status_code >= 400:
+        if response.status_code >= 500 and "x-fal-request-id" in response.headers:
+            # The model's own failure, not the gateway's: fal stamps its request id on
+            # what its servers answer. fal's Python client does not retry these either.
+            # Left as `FalUnavailable`, the poll loop would fetch it again every few
+            # seconds until the deadline, then report a generation that did finish as
+            # one that "did not finish".
+            raise GenerationError(
+                f"fal.ai could not generate this: {_upstream.error_detail(response)}"
+            )
         raise error_for(response)
     return QueueResult(
         body=_json(response),

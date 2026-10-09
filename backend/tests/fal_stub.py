@@ -23,6 +23,7 @@ import httpx
 import pytest
 
 from app.clock import utcnow
+from app.generation import download as download_module
 from app.generation import pricing
 from app.generation import run as run_module
 
@@ -80,7 +81,8 @@ class FakeFal:
         self.price: Optional[tuple[float, str]] = (0.025, "megapixel")
         self.pricing_status = 200
         self.pricing_raises: Optional[type] = None
-        # url (without query) -> file to serve, or a ready response.
+        # url (without query) -> file to serve, a ready response, or a function of the
+        # request that returns either.
         self.files: dict[str, Any] = {f"{CDN}/out-0.png": FIXTURES / "sample_image.png"}
         # Host -> address, for the SSRF guard. Anything else is public.
         self.addresses: dict[str, str] = {}
@@ -120,6 +122,8 @@ class FakeFal:
 
         target = str(request.url.copy_with(query=None))
         served = self.files.get(target)
+        if callable(served):
+            served = served(request)
         if isinstance(served, httpx.Response):
             return served
         if isinstance(served, Path):
@@ -190,6 +194,7 @@ def fal(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", fake.getaddrinfo)
     monkeypatch.setattr(run_module, "sleep", fake.clock.sleep)
     monkeypatch.setattr(run_module, "now", fake.clock.now)
+    monkeypatch.setattr(download_module, "sleep", fake.clock.sleep)
     pricing.clear_cache()
     yield fake
     pricing.clear_cache()

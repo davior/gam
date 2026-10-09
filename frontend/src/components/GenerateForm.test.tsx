@@ -268,9 +268,9 @@ describe('GenerateForm: option controls', () => {
     ).toEqual(['1', '2', '3', '4'])
   })
 
-  it('shows the catalogue’s audio default without sending it as a choice', async () => {
+  it('sends the audio setting the box shows, untouched', async () => {
     // Veo's row turns audio off because it raises the price by half. The box reflects
-    // that, and an untouched box sends null so the row's default stays in charge.
+    // that, and the request says so rather than leaving it to the endpoint.
     const user = userEvent.setup()
     const start = vi.spyOn(generateApi, 'start').mockResolvedValue(queuedJob())
     vi.spyOn(activityApi, 'list').mockResolvedValue([])
@@ -284,7 +284,24 @@ describe('GenerateForm: option controls', () => {
     await user.click(screen.getByRole('button', { name: 'Generate' }))
 
     await waitFor(() => expect(start).toHaveBeenCalledTimes(1))
-    expect(start.mock.calls[0][0].params.generate_audio).toBeNull()
+    expect(start.mock.calls[0][0].params.generate_audio).toBe(false)
+  })
+
+  it('sends audio off for a row that does not pin it, as the box shows', async () => {
+    // An admin added the model without `generate_audio` in its extra parameters. The
+    // endpoint's own default is on; the box says off, so off is what goes.
+    const user = userEvent.setup()
+    const start = vi.spyOn(generateApi, 'start').mockResolvedValue(queuedJob())
+    vi.spyOn(activityApi, 'list').mockResolvedValue([])
+    renderForm({ bases: [image('b1')] }, [{ ...VEO, extra_params: {} }])
+
+    await user.click(screen.getByRole('radio', { name: 'Image → video' }))
+    expect(screen.getByLabelText('Generate audio')).not.toBeChecked()
+    await user.type(screen.getByLabelText('Prompt'), 'waves')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+
+    await waitFor(() => expect(start).toHaveBeenCalledTimes(1))
+    expect(start.mock.calls[0][0].params.generate_audio).toBe(false)
   })
 })
 

@@ -7,6 +7,7 @@ through the API. What fal says is the one assumption — see `fal_stub.py`.
 """
 
 import base64
+import gzip
 import io
 import json
 
@@ -719,3 +720,235 @@ def test_the_price_is_asked_for_with_the_users_key_and_cached(library, session, 
     assert lookup.url.params["endpoint_id"] == T2I
     assert lookup.headers["authorization"] == f"Key {FAL_KEY}"
     assert len(_usage(session)) == 2
+
+
+# ─── a bill fal has already sent ─────────────────────────────────────────────
+#
+# By the time anything below goes wrong fal has finished the work and charged for it.
+# None of these may lose the record of that charge, and a hiccup fetching the file
+# should not cost the user a second generation.
+
+
+def _answers(*responses):
+    """A file that answers each download with the next of `responses`; the last repeats."""
+    queue = list(responses)
+
+    def serve(_request):
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    return serve
+
+
+def test_a_download_that_fails_once_is_tried_again(library, session, monkeypatch, ready, fal):
+    fal.files[f"{CDN}/out-0.png"] = _answers(
+        httpx.Response(503), FIXTURES / "sample_image.png"
+    )
+    job_id = _generate(library, session, monkeypatch, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    assert _activity(library, job_id)["status"] == "done"
+    assert len(fal.downloads()) == 2
+    assert len(_generated(session)) == 1
+
+
+def test_a_download_that_keeps_failing_still_records_the_bill(
+    library, session, monkeypatch, ready, fal
+):
+    fal.files[f"{CDN}/out-0.png"] = httpx.Response(503)
+    job_id = _generate(library, session, monkeypatch, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    job = _activity(library, job_id)
+    assert job["status"] == "error"
+    assert job["error_message"] == "Could not download the generated file (HTTP 503)"
+    assert len(fal.downloads()) == 3
+    assert _generated(session) == []
+    (usage,) = _usage(session)
+    assert usage.external_ref == "fal-req-1"
+    assert usage.asset_id is None
+    assert usage.cost == pytest.approx(0.025)
+    assert usage.cost_estimated is False
+
+
+def test_outputs_saved_before_a_failure_are_billed_and_reported(
+    library, session, monkeypatch, ready, fal
+):
+    fal.result_body = {
+        "images": [
+            {"url": f"{CDN}/out-0.png", "content_type": "image/png"},
+            {"url": f"{CDN}/out-1.png", "content_type": "image/png"},
+        ],
+    }
+    fal.result_headers["x-fal-billable-units"] = "2"
+    job_id = _generate(
+        library,
+        session,
+        monkeypatch,
+        {"model_id": ready[T2I].id, "prompt": PROMPT, "params": {"num_outputs": 2}},
+    )
+
+    job = _activity(library, job_id)
+    assert job["status"] == "error"
+    (saved,) = _generated(session)
+    assert job["result_asset_ids"] == [saved.id]
+    (usage,) = _usage(session)
+    assert usage.asset_id == saved.id
+    assert usage.cost == pytest.approx(0.05)
+
+
+def test_a_cancel_during_the_download_still_records_the_bill(
+    library, session, monkeypatch, ready, fal
+):
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    def cancel_then_serve(_request):
+        library.delete(f"/api/activity/enrichment/{job_id}")
+        return FIXTURES / "sample_image.png"
+
+    fal.files[f"{CDN}/out-0.png"] = cancel_then_serve
+    job = run_job(session, monkeypatch, job_id)
+
+    assert job.status == "cancelled"
+    assert _generated(session) == []
+    assert len(_usage(session)) == 1
+
+
+def test_a_server_error_on_the_result_is_final(library, session, monkeypatch, ready, fal):
+    # Stamped with fal's request id: the model failed, not the gateway. Polling it again
+    # until the deadline would hold a worker for thirty minutes and then misreport it.
+    fal.result_response = httpx.Response(
+        500, json={"detail": "Internal Server Error"}, headers={"x-fal-request-id": "fal-req-1"}
+    )
+    job_id = _generate(library, session, monkeypatch, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    job = _activity(library, job_id)
+    assert job["status"] == "error"
+    assert job["error_message"] == "fal.ai could not generate this: Internal Server Error"
+    assert len(fal.made("GET", host="queue.fal.run", suffix="/req-1")) == 1
+    assert fal.cancels() == []
+
+
+def test_a_compressed_download_is_refused(library, session, monkeypatch, ready, fal):
+    # httpx would inflate it with no limit before a byte was counted against the cap.
+    fal.files[f"{CDN}/out-0.png"] = httpx.Response(
+        200, content=gzip.compress(b"\0" * 4096), headers={"content-encoding": "gzip"}
+    )
+    job_id = _generate(library, session, monkeypatch, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    job = _activity(library, job_id)
+    assert job["status"] == "error"
+    assert job["error_message"] == "Could not download the generated file (it was sent compressed)"
+    (download,) = fal.downloads()
+    assert download.headers["accept-encoding"] == "identity"
+
+
+# ─── a restart in the middle of saving ───────────────────────────────────────
+
+
+def test_a_restart_inside_ingest_does_not_keep_a_half_saved_copy(
+    library, session, monkeypatch, ready, fal
+):
+    from app.ingest import thumbnails
+
+    real_generate = thumbnails.generate
+    calls = {"n": 0}
+
+    def dies_the_first_time(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ProcessDied()
+        return real_generate(*args, **kwargs)
+
+    monkeypatch.setattr(thumbnails, "generate", dies_the_first_time)
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+    with pytest.raises(ProcessDied):
+        run_job(session, monkeypatch, job_id)
+
+    # `ingest_file` committed the row before it thumbnailed; the job never recorded it.
+    session.expire_all()
+    (half_saved,) = _generated(session)
+    half_saved_id = half_saved.id
+    stored = json.loads(session.get(EnrichmentJob, job_id).payload)
+    assert stored["created_asset_ids"] == []
+    assert stored["ingesting"] == 0
+
+    job = run_job(session, monkeypatch, job_id)
+
+    assert job.status == "done", job.error_message
+    (asset,) = _generated(session)
+    assert asset.id != half_saved_id
+    assert asset.ai_model == T2I
+    assert len(_usage(session)) == 1
+
+
+# ─── cancelling a generation no worker holds ─────────────────────────────────
+
+
+def test_cancelling_a_recovered_queued_generation_stops_it_at_fal(
+    library, session, monkeypatch, ready, fal
+):
+    fal.statuses = [{"status": "IN_PROGRESS"}, ProcessDied]
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+    with pytest.raises(ProcessDied):
+        run_job(session, monkeypatch, job_id)
+
+    queue = enrichment_jobs.generation_queue()
+    monkeypatch.setattr(queue, "engine", session.get_bind())
+    queue.recover_pending()
+
+    # Waiting for a worker, with its request still running — and billing — at fal.
+    assert library.delete(f"/api/activity/enrichment/{job_id}").status_code == 200
+    (cancel,) = fal.cancels()
+    assert str(cancel.url) == "https://queue.fal.run/fal-ai/flux/requests/req-1/cancel"
+    assert cancel.headers["authorization"] == f"Key {FAL_KEY}"
+
+    job = run_job(session, monkeypatch, job_id)
+    assert job.status == "cancelled"
+    assert len(fal.cancels()) == 1
+
+
+def test_cancelling_a_fresh_queued_generation_sends_nothing_to_fal(
+    library, session, monkeypatch, ready, fal
+):
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+    assert library.delete(f"/api/activity/enrichment/{job_id}").status_code == 200
+    assert fal.calls == []
+
+
+# ─── the key stays with fal ──────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        "https://evil.example/fal-ai/flux/requests/req-1",
+        "https://queue.fal.run.evil.example/fal-ai/flux/requests/req-1",
+        "https://someone@queue.fal.run/fal-ai/flux/requests/req-1",
+        "http://queue.fal.run/fal-ai/flux/requests/req-1",
+        "https://queue.fal.run:8443/fal-ai/flux/requests/req-1",
+    ],
+)
+def test_queue_urls_on_another_host_are_not_trusted_with_the_key(
+    library, session, monkeypatch, ready, fal, foreign
+):
+    # The status, result and cancel URLs come from fal's answer, and every later call
+    # sends the user's key to them. Only fal's own queue host may receive it.
+    fal.submit_response = httpx.Response(200, json={
+        "status": "IN_QUEUE",
+        "request_id": "req-1",
+        "response_url": foreign,
+        "status_url": f"{foreign}/status",
+        "cancel_url": f"{foreign}/cancel",
+    })
+    job_id = _generate(library, session, monkeypatch, {"model_id": ready[T2I].id, "prompt": PROMPT})
+
+    assert _activity(library, job_id)["status"] == "done"
+    keyed = [r for r in fal.calls if r.headers.get("authorization") == f"Key {FAL_KEY}"]
+    assert keyed
+    for request in keyed:
+        assert request.url.scheme == "https"
+        assert request.url.host in ("queue.fal.run", "api.fal.ai")
+        assert request.url.port is None
+        assert not request.url.userinfo
+    stored = json.loads(session.get(EnrichmentJob, job_id).payload)
+    assert stored["fal_request"]["status_url"] == (
+        "https://queue.fal.run/fal-ai/flux/requests/req-1/status"
+    )

@@ -94,9 +94,8 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
     }
   }
 
-  // The store's own `remove`, so the grid drops the card too. Optimistic is safe here,
-  // unlike the parent's delete guard: the id removed is the clip's, and the panel this
-  // lives in renders the parent, so nothing unmounts underneath the confirm.
+  // The store's own `remove`, so the grid drops the card too; a refusal is shown here,
+  // once, rather than also in the library's banner.
   const deleteClip = async (clip: Asset) => {
     setDeletingId(clip.id)
     setError(null)
