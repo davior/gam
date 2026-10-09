@@ -30,6 +30,11 @@ const PAGE_SIZE = 60
  */
 const BULK_CHUNK = 500
 
+interface RemoveOptions {
+  withClips?: boolean
+  clipIds?: string[]
+}
+
 interface LibraryState {
   assets: Asset[]
   total: number
@@ -74,14 +79,23 @@ interface LibraryState {
   clearFilters: () => void
   upload: (files: File[]) => Promise<void>
   update: (id: string, changes: AssetUpdate) => Promise<void>
-  remove: (id: string) => Promise<void>
+  /** Delete an asset once the server agrees, then drop it from the grid. `withClips`
+   *  is the delete guard's "Delete clips too"; `clipIds` are the clips it listed,
+   *  dropped alongside. Rejects with the server's error and sets no store `error`: the
+   *  caller shows it where it was asked. */
+  remove: (id: string, options?: RemoveOptions) => Promise<void>
+  /** Put an asset made somewhere other than the grid — a clip saved from the Clip
+   *  tab — at the top of it. */
+  prepend: (asset: Asset) => void
   /** Replace one asset's tags with the authoritative set the server just returned. */
   setAssetTags: (assetId: string, tags: Tag[]) => void
   /** Re-read one asset from the server, for when something other than the user
    *  changed it — an enrichment job writing a summary, for instance. */
   refreshAsset: (id: string) => Promise<void>
   openById: (id: string) => Promise<Asset>
-  /** Put a finished URL import — and the chapter clips it made — at the top of the grid. */
+  /** Put a finished URL import — and the chapter clips it made — at the top of the grid.
+   *  Also each output of a finished generation, which has no clips but loses nothing by
+   *  the check. */
   addImported: (id: string) => Promise<void>
   applyTags: (assetIds: string[], add: string[], remove: string[]) => Promise<void>
   dismissRejections: () => void
@@ -302,20 +316,39 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
     }
   },
 
-  async remove(id) {
-    const previous = get().assets
-    set((state) => ({
-      assets: state.assets.filter((a) => a.id !== id),
-      total: Math.max(0, state.total - 1),
-    }))
+  async remove(id, { withClips = false, clipIds = [] } = {}) {
+    // Waits for the server rather than dropping the row first. Every delete starts in
+    // an asset's own panel, which AssetView renders from `assets.find`: an optimistic
+    // drop unmounted it, and a refusal that put the row back mounted a fresh one with
+    // the reason gone — the remount bug docs/m7-clips-and-subvideos.md records, which
+    // turned a 409 like `extraction_in_progress` into nothing at all. No store `error`
+    // either: the panel says why, in place, and the library banner saying it too would
+    // outlive the retry that succeeded.
+    //
+    // No staleness token: filtering out ids the server just deleted is right whatever
+    // loaded in the meantime, and after a sign-out there is nothing left to filter.
+    await assetsApi.remove(id, { withClips })
+    const gone = new Set([id, ...clipIds])
+    set((state) => {
+      const assets = state.assets.filter((a) => !gone.has(a.id))
+      // Only what was actually loaded comes off the count. A clip deleted from the
+      // Clip tab may be filtered out, or on a page not fetched yet.
+      return {
+        assets,
+        total: Math.max(0, state.total - (state.assets.length - assets.length)),
+      }
+    })
+  },
 
-    try {
-      await assetsApi.remove(id)
-    } catch (error) {
-      set({ assets: previous, total: previous.length })
-      set({ error: apiErrorMessage(error, 'Could not delete that asset') })
-      throw error
-    }
+  prepend(asset) {
+    // At the top regardless of the active filters, the same rule `upload` and
+    // `addImported` follow: it is what the user just made, and seeing it where they are
+    // looking is the confirmation.
+    set((state) =>
+      state.assets.some((a) => a.id === asset.id)
+        ? state
+        : { assets: [asset, ...state.assets], total: state.total + 1 }
+    )
   },
 
   async openById(id) {

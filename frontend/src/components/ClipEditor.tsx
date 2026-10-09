@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Film, Play, Scissors } from 'lucide-react'
+import { Film, Play, Scissors, Trash2 } from 'lucide-react'
 import { clipsApi } from '@/api/clips'
 import type { ActivityJob } from '@/api/transcripts'
 import { apiErrorMessage } from '@/api/client'
@@ -15,8 +15,13 @@ import EnrichmentButton from '@/components/EnrichmentButton'
  * A "dumb panel" like `TranscriptPanel`: it receives `currentTime` and calls `onSeek`
  * rather than holding a ref to the player itself, the pattern `AssetDetail` already
  * uses everywhere else. Only ever mounted for an asset that owns a file — `AssetDetail`
- * hides this tab for a clip, since M7 does not support clipping a clip. Turning a saved
- * clip into a real file is `promote`, offered on each live-clip row below.
+ * hides this tab for a clip, since M7 does not support clipping a clip.
+ *
+ * Each row's name opens that clip's own page. A live-clip row can also be played here,
+ * promoted to a real file (`promote`), or deleted. Deleting a clip never touches the
+ * file it was cut from, nor the poster it shares with it — the server only unlinks a
+ * key no surviving row still points at. An extracted sub-video gets no delete here: it
+ * owns real bytes, and that goes through its own page's confirm.
  */
 
 interface Props {
@@ -35,7 +40,12 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
   const [outPoint, setOutPoint] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [created, setCreated] = useState<{ id: string; name: string } | null>(null)
+  // One row at a time: asking about a second clip abandons the first question.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const openById = useLibraryStore((s) => s.openById)
+  const remove = useLibraryStore((s) => s.remove)
+  const prepend = useLibraryStore((s) => s.prepend)
 
   const load = useCallback(async () => {
     try {
@@ -55,6 +65,7 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
     setInPoint(null)
     setOutPoint(null)
     setCreated(null)
+    setConfirmingId(null)
     void load()
   }, [load])
 
@@ -71,12 +82,32 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
         out_point: outPoint,
       })
       setClips((current) => [clip, ...current])
+      // Into the grid too, as `upload` and `addImported` do. Without it the clip had no
+      // card, and so no Info-tab Delete, until the library next reloaded.
+      prepend(clip)
       setInPoint(null)
       setOutPoint(null)
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not save that clip'))
     } finally {
       setSaving(false)
+    }
+  }
+
+  // The store's own `remove`, so the grid drops the card too; a refusal is shown here,
+  // once, rather than also in the library's banner.
+  const deleteClip = async (clip: Asset) => {
+    setDeletingId(clip.id)
+    setError(null)
+    try {
+      await remove(clip.id)
+      setClips((current) => current.filter((c) => c.id !== clip.id))
+      // Only this row's question: another row may have been asked about meanwhile.
+      setConfirmingId((current) => (current === clip.id ? null : current))
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not delete that clip'))
+    } finally {
+      setDeletingId((current) => (current === clip.id ? null : current))
     }
   }
 
@@ -207,9 +238,15 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
                     </Link>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-gray-800 dark:text-gray-200">
+                    {/* Every row, a live clip's included: its own page is where its tags,
+                        attribution and bounded player are, and the Info-tab Delete too. */}
+                    <Link
+                      to={`/a/${clip.id}`}
+                      className="block truncate text-gray-800 hover:underline dark:text-gray-200"
+                      title="Open this clip"
+                    >
                       {clip.name}
-                    </p>
+                    </Link>
                     {isLiveClip && clip.in_point !== null && clip.out_point !== null && (
                       <p className="text-[11px] text-gray-400 dark:text-gray-500">
                         {formatDuration(clip.in_point)}–{formatDuration(clip.out_point)}
@@ -231,6 +268,37 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
                       iconOnly
                     />
                   )}
+                  {isLiveClip &&
+                    (confirmingId === clip.id ? (
+                      <span className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          className="btn btn-danger px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={deletingId === clip.id}
+                          onClick={() => void deleteClip(clip)}
+                        >
+                          {deletingId === clip.id ? 'Deleting…' : 'Delete clip'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-secondary px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={deletingId === clip.id}
+                          onClick={() => setConfirmingId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingId(clip.id)}
+                        className="shrink-0 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                        title="Delete this clip"
+                        aria-label="Delete this clip"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    ))}
                 </li>
               )
             })}

@@ -15,7 +15,7 @@ from app.ingest.filetypes import ASSET_TYPES
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_HARVEST_ATTRIBUTION
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_HARVEST_ATTRIBUTION
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult
@@ -346,28 +346,58 @@ def update_asset(
 def delete_asset(
     asset_id: str,
     user: CurrentUser,
+    with_clips: bool = Query(default=False),
     session: Session = Depends(get_session),
     storage: LocalStorage = Depends(get_storage),
 ) -> None:
+    """Delete an asset. For a clip that is only the clip: it owns no bytes, and the
+    poster it shows is its parent's file (see `services/assets.delete_asset`).
+
+    `with_clips` is the guard's third answer, beside "promote them" and "cancel": the
+    live clips cut from this asset go with it, in one transaction. It fails safe —
+    FastAPI ignores a query parameter it does not declare, so a frontend ahead of an
+    older backend gets the 409 below, never a silent cascade.
+    """
     asset = _owned(asset_id, user.id, session)
 
     # Checked here, before `delete_asset` touches anything: a live clip (M7) is meant
     # to block this, and reporting how many rather than just refusing is what lets the
-    # frontend offer "promote them, then delete" instead of a dead end.
+    # frontend offer "promote them, or delete them too" instead of a dead end.
     blocking = service.blocking_clips(session, asset.id)
-    if blocking:
+    if blocking and not with_clips:
+        n = len(blocking)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "code": "asset_has_dependent_clips",
                 "message": (
-                    f"{len(blocking)} clip{'' if len(blocking) == 1 else 's'} depend on "
-                    "this asset. Extract them as sub-videos first."
+                    f"{n} clip{'' if n == 1 else 's'} depend{'s' if n == 1 else ''} on "
+                    "this asset. Extract them as files first, or delete them with it."
+                ),
+            },
+        )
+    clips = blocking if with_clips else []
+
+    # A promote or an extract still queued or running against a row about to go would
+    # finish into a row that no longer exists: `promote_clip` updates nothing, or
+    # `create_subvideo_asset`'s insert trips the parent foreign key — either way after
+    # ffmpeg has already written a file nothing will ever reference.
+    if any(
+        enrichment_jobs.active_job(session, row.id, KIND_EXTRACT_SUBVIDEO) is not None
+        for row in (asset, *clips)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "extraction_in_progress",
+                "message": (
+                    "An extraction is still running on this asset or one of its clips. "
+                    "Let it finish, or cancel it, then delete."
                 ),
             },
         )
 
-    service.delete_asset(session, storage, asset)
+    service.delete_asset(session, storage, asset, clips=clips)
 
 
 # ─── tagging ─────────────────────────────────────────────────────────────────

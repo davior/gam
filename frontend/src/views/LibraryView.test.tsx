@@ -15,8 +15,10 @@ import { tagsApi, type Tag } from '@/api/tags'
 import { activityApi, transcriptsApi, type ActivityJob } from '@/api/transcripts'
 import { clipsApi } from '@/api/clips'
 import { enrichmentApi } from '@/api/enrichment'
+import { generateApi } from '@/api/generate'
 import { usageApi } from '@/api/usage'
 import { useActivityStore } from '@/stores/activity'
+import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { noAttribution } from '@/test-fixtures'
@@ -92,8 +94,11 @@ beforeEach(() => {
     tokens: 0,
     seconds: 0,
   })
+  // The add panel's generate form asks for the catalogue on mount, folded or not.
+  vi.spyOn(generateApi, 'models').mockResolvedValue([])
   useLibraryStore.getState().reset()
   useTagStore.getState().reset()
+  useGenerationStore.getState().reset()
   // Here rather than in afterEach: the view subscribes to this store, and resetting it
   // while the last test's view is still mounted is a render outside act().
   useActivityStore.getState().reset()
@@ -430,6 +435,7 @@ describe('LibraryView URL imports', () => {
       asset_name: 'A lecture',
       model: '',
       result_asset_id: null,
+      result_asset_ids: [],
       error_message: null,
       created_at: '2026-09-28T10:00:00Z',
       updated_at: '2026-09-28T10:00:00Z',
@@ -489,5 +495,141 @@ describe('LibraryView URL imports', () => {
     )
 
     expect(get).not.toHaveBeenCalled()
+  })
+})
+
+describe('LibraryView generations (M8)', () => {
+  function generateJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
+    return {
+      id: 'gen1',
+      kind: 'enrichment',
+      action: 'generate',
+      status: 'processing',
+      stalled: false,
+      stage: 'Generating',
+      progress: 50,
+      detail: '',
+      asset_id: null,
+      asset_name: 'a red fox',
+      model: 'fal-ai/flux/dev',
+      result_asset_id: null,
+      result_asset_ids: [],
+      error_message: null,
+      created_at: '2026-10-07T10:00:00Z',
+      updated_at: '2026-10-07T10:00:00Z',
+      ...overrides,
+    }
+  }
+
+  const output = (id: string, name: string) => ({
+    ...makeAsset(id, name),
+    asset_type: 'image' as const,
+    source: 'ai_generated',
+  })
+
+  it('adds every output of a finished generation, first output on top', async () => {
+    const outputs: Record<string, Asset> = {
+      out1: output('out1', 'Fox one'),
+      out2: output('out2', 'Fox two'),
+      out3: output('out3', 'Fox three'),
+    }
+    vi.spyOn(assetsApi, 'get').mockImplementation(async (id) => outputs[id])
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [generateJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [
+          generateJob({
+            status: 'done',
+            result_asset_id: 'out1',
+            result_asset_ids: ['out1', 'out2', 'out3'],
+          }),
+        ],
+      })
+    )
+
+    expect(await screen.findByText('6 assets')).toBeInTheDocument()
+    expect(useLibraryStore.getState().assets.map((a) => a.id)).toEqual([
+      'out1',
+      'out2',
+      'out3',
+      'a1',
+      'a2',
+      'a3',
+    ])
+  })
+
+  it('falls back to the single result id from a row that has no list', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(output('out1', 'Fox one'))
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [generateJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [generateJob({ status: 'done', result_asset_id: 'out1' })],
+      })
+    )
+
+    expect(await screen.findByText('Fox one')).toBeInTheDocument()
+  })
+
+  it('adds nothing for a generation that failed', async () => {
+    const get = vi.spyOn(assetsApi, 'get')
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [generateJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [
+          generateJob({
+            status: 'error',
+            error_message: 'fal.ai rejected the API key — check it in Settings',
+          }),
+        ],
+      })
+    )
+
+    expect(get).not.toHaveBeenCalled()
+  })
+
+  it('adds what a generation saved before it failed', async () => {
+    // Two outputs asked for; the second never downloaded. The first is in the library
+    // with its provenance, and the grid should say so rather than wait for a reload.
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(output('out1', 'Fox one'))
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    render(<LibraryView />)
+    await card('First')
+
+    act(() => useActivityStore.setState({ jobs: [generateJob()] }))
+    act(() =>
+      useActivityStore.setState({
+        jobs: [
+          generateJob({
+            status: 'error',
+            error_message: 'Could not download the generated file (HTTP 404)',
+            result_asset_id: 'out1',
+            result_asset_ids: ['out1'],
+          }),
+        ],
+      })
+    )
+
+    expect(await screen.findByText('Fox one')).toBeInTheDocument()
+  })
+
+  it('offers text → image in the add panel', async () => {
+    const user = userEvent.setup()
+    render(<LibraryView />)
+    await card('First')
+
+    await user.click(screen.getByRole('button', { name: 'Add to library' }))
+
+    expect(screen.getByRole('form', { name: 'Generate an image' })).toBeVisible()
   })
 })

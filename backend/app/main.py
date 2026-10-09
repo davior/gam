@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.auth import CurrentUser
+from app.auth import CurrentUser, is_admin
 from app.config import settings
 from app.media_tools import ffmpeg_available, ffmpeg_version
 from fastapi import Depends
@@ -28,6 +28,7 @@ from app.routers import assets as assets_router
 from app.routers import clips as clips_router
 from app.routers import embeddings as embeddings_router
 from app.routers import enrichment as enrichment_router
+from app.routers import generate as generate_router
 from app.routers import imports as imports_router
 from app.routers import media as media_router
 from app.routers import providers as providers_router
@@ -160,7 +161,9 @@ def me(
         data={
             "id": record.id,
             "username": record.username or user.username,
-            "is_admin": record.is_admin,
+            # Resolved, not the raw column: `ADMIN_USERS` is how anybody becomes one, and
+            # the column alone would tell the frontend nobody ever is.
+            "is_admin": is_admin(user, record),
             "first_seen": record.created_at.isoformat() if record.created_at else None,
         }
     )
@@ -174,6 +177,9 @@ app.include_router(enrichment_router.router, prefix="/api/assets", tags=["enrich
 app.include_router(clips_router.router, prefix="/api/assets", tags=["clips"])
 app.include_router(imports_router.router, prefix="/api/assets", tags=["imports"])
 app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])
+# Its own tree rather than under /api/assets: the catalogue is not about any asset, and a
+# generation has none until it has run.
+app.include_router(generate_router.router, prefix="/api/generate", tags=["generate"])
 app.include_router(search_router.router, prefix="/api/search", tags=["search"])
 app.include_router(embeddings_router.router, prefix="/api/embeddings", tags=["embeddings"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["settings"])

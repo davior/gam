@@ -34,9 +34,6 @@ class Asset(SQLModel, table=True):
     generation metadata. Splitting them into separate tables would mean every list,
     search, filter and tag query became a union — and "show me everything about the
     Giordano interview" is the query this product exists to answer.
-
-    M8's fields are not declared yet — that is still one Alembic migration away, and
-    carrying unused columns for a milestone not yet started is not worth it.
     """
 
     # The library listing is "my assets, newest first", and it is the hottest query in
@@ -127,6 +124,32 @@ class Asset(SQLModel, table=True):
     # corrected, which is the same rot that made copy-on-create the wrong answer for a
     # clip's inherited attribution one level down.
     credit_line: Optional[str] = None
+
+    # ─── AI generation (M8) ──────────────────────────────────────────────────
+    # What made this file, kept so it can be made again. Specified in
+    # docs/m8-ai-generation.md. All null on anything that was not generated.
+    #
+    # The bases are *not* `parent_asset_id`, though that column is right there: a parent
+    # lends its attribution (M10), puts the child in its Clip tab, and is one column for
+    # what may be ten images. They are ids inside `ai_source_assets` instead, with no
+    # foreign key, so deleting a base never blocks or breaks what was made from it — it
+    # only makes regenerating impossible, which the regenerate endpoint says so.
+    ai_model: Optional[str] = None            # the fal endpoint id
+    ai_generation_type: Optional[str] = None  # text_to_image|image_to_image|image_to_video
+    # As sent. `description` starts as the same text so search finds a generation by
+    # what was asked for, but a later Describe run overwrites that; this does not change.
+    ai_prompt: Optional[str] = None
+    # JSON: the request body exactly as sent, minus the prompt and the image fields.
+    # Catalogue defaults included, so a regeneration reproduces this one even after an
+    # admin has edited the catalogue row.
+    ai_parameters: Optional[str] = None
+    # JSON: [{"asset_id", "role": "base"|"end_frame", "name"}]. `name` is a snapshot, so
+    # a deleted base still reads as something rather than as a bare uuid.
+    ai_source_assets: Optional[str] = None
+    # The seed fal reported back, when the model reports one (FLUX does, nano-banana
+    # does not).
+    ai_seed: Optional[int] = None
+    ai_generated_at: Optional[datetime] = None
 
     # ─── provenance of the metadata, not the file ───────────────────────────
     # JSON, {"description": "ai"|"human"|"embedded", ...}. FR 8.1.3 requires that a later AI run

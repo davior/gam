@@ -1,4 +1,5 @@
 import client from '@/api/client'
+import type { AssetGeneration } from '@/api/generate'
 import type { Tag } from '@/api/tags'
 import type { ActivityJob } from '@/api/transcripts'
 
@@ -74,6 +75,11 @@ export interface Asset {
   /** Read-only: the line to display, composed unless `credit_line` overrides it. */
   credit: string
   attribution_inherited: string[]
+
+  /** M8. How a generated asset was made — enough to make it again. Null for anything
+   *  fal did not produce. The bases are named inside it, not as `parent_asset_id`: a
+   *  parent would lend this its attribution and put it in the base's Clip tab. */
+  generation: AssetGeneration | null
 
   upload_date: string
   modified_date: string
@@ -201,8 +207,17 @@ export const assetsApi = {
       .then((r) => r.data.data)
   },
 
-  remove(id: string): Promise<void> {
-    return client.delete(`/assets/${id}`).then(() => undefined)
+  /**
+   * `withClips` also deletes the live clips cut from this asset, in the same
+   * transaction: the delete guard's "Delete clips too". Without it, a parent with live
+   * clips is refused with `asset_has_dependent_clips`.
+   */
+  remove(id: string, options: { withClips?: boolean } = {}): Promise<void> {
+    return client
+      .delete(`/assets/${id}`, {
+        params: options.withClips ? { with_clips: true } : undefined,
+      })
+      .then(() => undefined)
   },
 
   /**

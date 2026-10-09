@@ -83,6 +83,37 @@ class Settings(BaseSettings):
     # age-restricted or members-only videos; mount the file read-only and point here.
     url_import_cookies_file: str = ""
 
+    # ─── administration ──────────────────────────────────────────────────────
+    # Comma-separated user ids or usernames. The Notes token carries no admin claim and
+    # nothing in GAM can grant one, so this is the only way anybody becomes an admin —
+    # which today means being allowed to edit the generation model catalogue. Both match
+    # exactly: Notes usernames are unique only case-sensitively, and anyone can rename.
+    # Ids are the safer entry — a name freed by a rename can be taken by someone else.
+    admin_users: str = ""
+
+    # ─── AI generation (M8) ──────────────────────────────────────────────────
+    # Settings, not constants, so a test can point both at a stub and an operator can
+    # follow fal if it moves a host. Each user's own key is what authenticates.
+    fal_queue_base_url: str = "https://queue.fal.run"
+    # The platform API, used here only for unit prices.
+    fal_api_base_url: str = "https://api.fal.ai"
+    # Its own worker pool, apart from `enrichment_concurrency`: a generation is almost
+    # entirely waiting on fal, and a four-minute video on the shared queue would hold
+    # every transcription behind it.
+    generation_concurrency: int = 2
+    # GAM's own deadline on a fal request. fal reports no terminal "failed" status a
+    # client can rely on, so without one an unknown status would be waited on forever.
+    # Past it the request is cancelled at fal — a remote job left running keeps billing.
+    generation_timeout_minutes: int = 30
+    generation_poll_seconds: float = 3
+    # Per output, enforced while streaming rather than after: a video arrives as one
+    # file and a size checked afterwards has already filled the disk.
+    generation_max_download_mb: int = 1024
+    # Base images travel inside the request as data URIs, so their size is request
+    # size. 2048 px on the long edge is more than any seeded model reads.
+    generation_base_max_edge: int = 2048
+    generation_max_data_uri_mb: int = 8
+
     # ─── development ─────────────────────────────────────────────────────────
     # Bypasses token verification and acts as this user id. Refused unless
     # `environment` is "development", so it cannot be switched on in production by
@@ -116,6 +147,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> List[str]:
         return [o.strip() for o in self.cors_origin.split(",") if o.strip()]
+
+    @property
+    def admin_user_list(self) -> List[str]:
+        return [u.strip() for u in self.admin_users.split(",") if u.strip()]
 
     @property
     def is_development(self) -> bool:

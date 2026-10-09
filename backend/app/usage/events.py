@@ -31,6 +31,7 @@ def record(
     cost: Optional[float] = None,
     currency: Optional[str] = None,
     cost_estimated: Optional[bool] = None,
+    external_ref: Optional[str] = None,
 ) -> None:
     """Write one usage row. Never raises."""
     try:
@@ -46,6 +47,7 @@ def record(
                 cost=cost,
                 currency=currency,
                 cost_estimated=cost_estimated,
+                external_ref=external_ref,
             )
         )
         session.commit()
@@ -94,8 +96,8 @@ def _record_completion(session: Session, asset_id: Optional[str], user_id: str, 
         model=completion.model,
         cost=estimate[0] if estimate else None,
         currency=estimate[1] if estimate else None,
-        # Only ever True here. An exact, provider-billed figure needs fal.ai's response
-        # headers, which arrive with M8.
+        # Only ever True here: a token count times a list price. The one exact figure in
+        # the app is fal.ai's, from its billing header (M8).
         cost_estimated=True if estimate else None,
     )
 
@@ -119,9 +121,11 @@ def totals_for(session: Session, user_id: str, asset_id: Optional[str] = None) -
         "priced_events": len(priced),
         "cost": round(sum(r.cost or 0.0 for r in priced), 6) if priced else 0.0,
         "currency": next((r.currency for r in priced if r.currency), "USD"),
-        # True when every figure in the total came from the list-price table rather than
-        # a bill. Everything does today; the flag exists so that stops being assumed.
-        "estimated": all(r.cost_estimated for r in priced) if priced else True,
+        # False only when every figure in the total is a bill. Since M8 some are — fal's —
+        # and a total mixing a bill with list-price estimates is still an estimate, so one
+        # estimated row is enough to say so. (`all()` over the flags read the other way
+        # round, and called a mixed total exact.)
+        "estimated": any(r.cost_estimated is not False for r in priced) if priced else True,
         "tokens": sum(r.units for r in rows if r.unit_type == UNIT_TOKENS),
         "seconds": sum(r.units for r in rows if r.unit_type == "seconds"),
     }

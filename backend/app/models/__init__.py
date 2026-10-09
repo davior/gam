@@ -12,6 +12,7 @@ empty migration and a silent schema drift.
 from app.models.asset import Asset
 from app.models.document import DocumentPage
 from app.models.embedding import Embedding
+from app.models.generation import GenerationModel
 from app.models.job import EnrichmentJob
 from app.models.provider import AIProvider
 from app.models.setting import UserSetting
@@ -28,6 +29,7 @@ __all__ = [
     "DocumentPage",
     "Embedding",
     "EnrichmentJob",
+    "GenerationModel",
     "Suggestion",
     "Tag",
     "TagCategory",

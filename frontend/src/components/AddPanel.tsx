@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import GenerateForm from '@/components/GenerateForm'
 import UploadZone from '@/components/UploadZone'
 import UrlImport from '@/components/UrlImport'
 
@@ -10,12 +11,15 @@ interface Props {
 }
 
 /**
- * The two ways into the library — files and links — folded behind the library's + button.
+ * The three ways into the library — files, links, and M8's text → image generation —
+ * folded behind the library's + button. Generating from existing images starts from
+ * those images instead (the selection bar, an asset's Generate tab), since that is where
+ * they are picked.
  *
  * Hidden rather than unmounted when closed. Unmounting would throw away a half-pasted
- * link and the import options with it, and would take an upload's progress bar off the
- * page while the upload itself carried on in the store; closing the panel is putting
- * it out of the way, not cancelling anything.
+ * link or a half-written prompt and the options with them, and would take an upload's
+ * progress bar off the page while the upload itself carried on in the store; closing the
+ * panel is putting it out of the way, not cancelling anything.
  *
  * The `hidden` attribute goes on an element with no display utility of its own:
  * Tailwind's `[hidden]` rule sits in the base layer, so a `flex` or `grid` class on the
@@ -51,6 +55,7 @@ export default function AddPanel({ open, onClose }: Props) {
       <div className="space-y-3">
         <UploadZone />
         <UrlImport />
+        <GenerateForm title="Generate an image" />
       </div>
     </section>
   )

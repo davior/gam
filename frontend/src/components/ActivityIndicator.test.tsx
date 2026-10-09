@@ -20,6 +20,7 @@ function job(overrides: Partial<ActivityJob> = {}): ActivityJob {
     asset_name: 'Interview',
     model: 'nova-3',
     result_asset_id: null,
+    result_asset_ids: [],
     error_message: null,
     created_at: '2026-09-14T10:00:00Z',
     updated_at: '2026-09-14T10:00:00Z',
@@ -75,6 +76,17 @@ describe('ActivityIndicator', () => {
 
     expect(screen.getByText('Importing')).toBeInTheDocument()
     expect(screen.getByText('Giordano lecture')).toBeInTheDocument()
+  })
+
+  it('names a generation by its prompt', async () => {
+    renderWith([
+      job({ action: 'generate', asset_id: null, asset_name: 'a red fox in snow' }),
+    ])
+
+    await userEvent.click(screen.getByRole('button', { name: /1 job running/i }))
+
+    expect(screen.getByText('Generating')).toBeInTheDocument()
+    expect(screen.getByText('a red fox in snow')).toBeInTheDocument()
   })
 
   it('keeps a failed job visible with its reason', async () => {

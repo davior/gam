@@ -4,15 +4,19 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from '@/views/SettingsView'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
+import { generateApi } from '@/api/generate'
 import { useActivityStore } from '@/stores/activity'
+import { useAuthStore } from '@/stores/auth'
 import {
   embeddingSettingsApi,
+  generationSettingsApi,
   speechSettingsApi,
   type EmbeddingSettings,
   type SpeechSettings,
 } from '@/api/settings'
 import { providersApi } from '@/api/providers'
 import { usageApi } from '@/api/usage'
+import { makeGenerationModel } from '@/test-fixtures'
 
 function embedding(overrides: Partial<EmbeddingSettings> = {}): EmbeddingSettings {
   return {
@@ -79,6 +83,10 @@ beforeEach(() => {
     },
     by_provider: [],
   })
+  // And the generation panel, which reads the fal key's state and the catalogue.
+  vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({ fal_key_configured: false })
+  vi.spyOn(generateApi, 'models').mockResolvedValue([])
+  useAuthStore.getState().reset()
 })
 
 afterEach(() => {
@@ -146,6 +154,7 @@ describe('SettingsView', () => {
       asset_name: '',
       model: 'text-embedding-3-small',
       result_asset_id: null,
+      result_asset_ids: [],
       error_message: null,
       created_at: '2026-09-14T10:00:00Z',
       updated_at: '2026-09-14T10:00:00Z',
@@ -326,5 +335,283 @@ describe('SettingsView', () => {
     expect(
       await screen.findByRole('button', { name: /add a provider/i })
     ).toBeInTheDocument()
+  })
+})
+
+describe('SettingsView generation (M8)', () => {
+  const DEV = makeGenerationModel({
+    id: 'dev',
+    endpoint_id: 'fal-ai/flux/dev',
+    label: 'FLUX.1 [dev]',
+    unit_price: 0.025,
+    price_unit: 'megapixel',
+    price_currency: 'USD',
+  })
+  const KLING = makeGenerationModel({
+    id: 'kling',
+    endpoint_id: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
+    kind: 'image_to_video',
+    label: 'Kling 2.5',
+    image_field: 'image_url',
+    max_images: 1,
+    end_image_field: 'tail_image_url',
+    options: { durations: ['5', '10'] },
+  })
+  const PARKED = makeGenerationModel({
+    id: 'old',
+    endpoint_id: 'fal-ai/imagen4/preview',
+    label: 'Imagen 4',
+    is_active: false,
+  })
+
+  function signInAs(is_admin: boolean) {
+    useAuthStore.setState({
+      user: { id: 'u1', username: 'davior', is_admin },
+      status: 'authenticated',
+    })
+  }
+
+  async function panel() {
+    const heading = await screen.findByText('Image and video generation')
+    return within(heading.closest('section') as HTMLElement)
+  }
+
+  beforeEach(() => {
+    vi.spyOn(embeddingSettingsApi, 'get').mockResolvedValue(embedding())
+  })
+
+  it('saves a pasted fal.ai key and clears the box', async () => {
+    const update = vi
+      .spyOn(generationSettingsApi, 'update')
+      .mockResolvedValue({ fal_key_configured: true })
+    renderView()
+
+    const input = await screen.findByLabelText('fal.ai API key')
+    expect(input).toHaveAttribute('type', 'password')
+    await userEvent.type(input, 'fal-secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Save fal.ai key' }))
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({ fal_api_key: 'fal-secret' })
+    )
+    // The key must not linger in the DOM after it has been stored, and nothing about it
+    // comes back — only that one is configured.
+    expect(input).toHaveValue('')
+    expect(input).toHaveAttribute('placeholder', 'A key is configured')
+  })
+
+  it('removes the stored fal.ai key with an empty string', async () => {
+    vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({ fal_key_configured: true })
+    const update = vi
+      .spyOn(generationSettingsApi, 'update')
+      .mockResolvedValue({ fal_key_configured: false })
+    renderView()
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Remove the stored fal.ai key' })
+    )
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith({ fal_api_key: '' }))
+  })
+
+  it('shows everyone else the catalogue, read-only', async () => {
+    signInAs(false)
+    vi.spyOn(generateApi, 'models').mockResolvedValue([DEV, KLING])
+    renderView()
+
+    const generation = await panel()
+    expect(await generation.findByText('FLUX.1 [dev]')).toBeInTheDocument()
+    expect(generation.getByText('≈ $0.025 per megapixel, list price')).toBeInTheDocument()
+    expect(generation.getByText('Kling 2.5')).toBeInTheDocument()
+    expect(generateApi.models).toHaveBeenCalledWith(false)
+
+    expect(generation.queryByRole('button', { name: /add a model/i })).toBeNull()
+    expect(generation.queryByRole('button', { name: /edit/i })).toBeNull()
+    expect(generation.queryByRole('button', { name: /delete/i })).toBeNull()
+    expect(generation.queryByRole('button', { name: /deactivate/i })).toBeNull()
+  })
+
+  it('shows an admin the parked rows too, marked', async () => {
+    signInAs(true)
+    vi.spyOn(generateApi, 'models').mockResolvedValue([DEV, PARKED])
+    renderView()
+
+    const generation = await panel()
+    expect(await generation.findByText('Imagen 4')).toBeInTheDocument()
+    expect(generation.getByText('Inactive')).toBeInTheDocument()
+    expect(generateApi.models).toHaveBeenCalledWith(true)
+    expect(generation.getByRole('button', { name: 'Activate Imagen 4' })).toBeVisible()
+  })
+
+  it('lets an admin add a model, every field included', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    const created = makeGenerationModel({ id: 'hailuo', label: 'Hailuo 02' })
+    const create = vi.spyOn(generateApi, 'createModel').mockResolvedValue(created)
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Add a model' }))
+    const editor = within(generation.getByRole('group', { name: 'New model' }))
+
+    await user.type(
+      editor.getByLabelText('Endpoint id'),
+      'fal-ai/minimax/hailuo-02/standard/image-to-video'
+    )
+    await user.selectOptions(editor.getByLabelText('Kind'), 'image_to_video')
+    await user.type(editor.getByLabelText('Label'), 'Hailuo 02')
+    await user.type(editor.getByLabelText('Note'), 'Cheap')
+    await user.clear(editor.getByLabelText('Sort order'))
+    await user.type(editor.getByLabelText('Sort order'), '20')
+    await user.type(editor.getByLabelText('Image field'), 'image_url')
+    await user.type(editor.getByLabelText('End-frame field'), 'end_image_url')
+    // A quoted value stays text, a bare number goes as a number. Mixed here to cover
+    // both; Hailuo's real list is all text, as the seeded row has it.
+    await user.type(editor.getByLabelText('Durations'), '6, "10"')
+    await user.type(editor.getByLabelText('Resolutions'), '512P, 768P')
+    await user.click(editor.getByLabelText('Takes a negative prompt'))
+    await user.click(editor.getByLabelText('Extra parameters'))
+    await user.paste('{"prompt_optimizer": true}')
+    await user.type(editor.getByLabelText('List price'), '0.045')
+    await user.selectOptions(editor.getByLabelText('Price unit'), 'second')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0][0]).toEqual({
+      endpoint_id: 'fal-ai/minimax/hailuo-02/standard/image-to-video',
+      kind: 'image_to_video',
+      label: 'Hailuo 02',
+      note: 'Cheap',
+      sort_order: 20,
+      is_active: true,
+      image_field: 'image_url',
+      image_field_is_list: false,
+      max_images: 1,
+      end_image_field: 'end_image_url',
+      options: {
+        aspect_ratios: [],
+        image_sizes: [],
+        durations: [6, '10'],
+        resolutions: ['512P', '768P'],
+        supports_seed: false,
+        supports_negative_prompt: true,
+        supports_audio: false,
+        max_outputs: 1,
+      },
+      extra_params: { prompt_optimizer: true },
+      unit_price: 0.045,
+      price_unit: 'second',
+      price_currency: 'USD',
+    })
+    expect(await generation.findByText('Hailuo 02')).toBeInTheDocument()
+  })
+
+  it('refuses extra parameters that are not a JSON object', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    const create = vi.spyOn(generateApi, 'createModel')
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Add a model' }))
+    const editor = within(generation.getByRole('group', { name: 'New model' }))
+    await user.type(editor.getByLabelText('Endpoint id'), 'fal-ai/flux/dev')
+    await user.type(editor.getByLabelText('Label'), 'FLUX')
+    await user.click(editor.getByLabelText('Extra parameters'))
+    await user.paste('["not", "an", "object"]')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    expect(
+      await generation.findByText(/extra parameters must be a json object/i)
+    ).toBeInTheDocument()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('refuses several bases for an image field that holds one', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    const create = vi.spyOn(generateApi, 'createModel').mockResolvedValue(
+      makeGenerationModel({
+        id: 'nb-edit',
+        endpoint_id: 'fal-ai/nano-banana/edit',
+        kind: 'image_to_image',
+        label: 'Nano Banana edit',
+        image_field: 'image_urls',
+        image_field_is_list: true,
+        max_images: 3,
+      })
+    )
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Add a model' }))
+    const editor = within(generation.getByRole('group', { name: 'New model' }))
+    await user.type(editor.getByLabelText('Endpoint id'), 'fal-ai/nano-banana/edit')
+    await user.selectOptions(editor.getByLabelText('Kind'), 'image_to_image')
+    await user.type(editor.getByLabelText('Label'), 'Nano Banana edit')
+    await user.type(editor.getByLabelText('Image field'), 'image_urls')
+    await user.clear(editor.getByLabelText('Maximum base images'))
+    await user.type(editor.getByLabelText('Maximum base images'), '3')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    // The server refuses the same row with invalid_model_entry; this says so first.
+    expect(await generation.findByText(/must take them as a list/)).toBeInTheDocument()
+    expect(create).not.toHaveBeenCalled()
+
+    await user.click(editor.getByLabelText('The image field takes a list'))
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0][0]).toMatchObject({
+      image_field: 'image_urls',
+      image_field_is_list: true,
+      max_images: 3,
+    })
+  })
+
+  it('edits a row without changing the type of its values', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    vi.spyOn(generateApi, 'models').mockResolvedValue([KLING])
+    const update = vi.spyOn(generateApi, 'updateModel').mockResolvedValue(KLING)
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Edit Kling 2.5' }))
+    const editor = within(generation.getByRole('group', { name: 'Edit model' }))
+
+    // Kling's durations are text; shown quoted so saving them back keeps them text.
+    expect(editor.getByLabelText('Durations')).toHaveValue('"5", "10"')
+    expect(editor.getByLabelText('End-frame field')).toHaveValue('tail_image_url')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][0]).toBe('kling')
+    expect(update.mock.calls[0][1]).toMatchObject({
+      end_image_field: 'tail_image_url',
+      options: { durations: ['5', '10'] },
+    })
+  })
+
+  it('lets an admin deactivate and delete a model', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    vi.spyOn(generateApi, 'models').mockResolvedValue([DEV])
+    const update = vi
+      .spyOn(generateApi, 'updateModel')
+      .mockResolvedValue({ ...DEV, is_active: false })
+    const remove = vi.spyOn(generateApi, 'deleteModel').mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    renderView()
+
+    const generation = await panel()
+    await user.click(
+      await generation.findByRole('button', { name: 'Deactivate FLUX.1 [dev]' })
+    )
+    await waitFor(() => expect(update).toHaveBeenCalledWith('dev', { is_active: false }))
+    expect(await generation.findByText('Inactive')).toBeInTheDocument()
+
+    await user.click(generation.getByRole('button', { name: 'Delete FLUX.1 [dev]' }))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith('dev'))
+    await waitFor(() => expect(generation.queryByText('FLUX.1 [dev]')).toBeNull())
   })
 })

@@ -28,7 +28,7 @@ import queue
 import threading
 import time
 from datetime import timedelta
-from typing import Any, Callable, Optional, Set, Type
+from typing import Any, Callable, Iterable, List, Optional, Set, Type
 
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, select
@@ -103,7 +103,15 @@ class JobCancelled(Exception):
 
 
 class JobQueue:
-    """One queue, its worker threads, and the cancellation set for a job table."""
+    """One queue, its worker threads, and the cancellation set for a job table.
+
+    `kinds` / `exclude_kinds` let two queues share one table (M8): generation has its
+    own workers so a four-minute video cannot hold every transcription behind it, but
+    its rows live in `EnrichmentJob` like everything else. The filter is applied
+    wherever a queue goes looking for rows on its own — restart recovery and the stale
+    sweep — because without it each queue would requeue the other's work on start and
+    run it on the wrong workers. Unfiltered (both None) is every row, as before.
+    """
 
     def __init__(
         self,
@@ -113,12 +121,16 @@ class JobQueue:
         name: str,
         concurrency: int = 1,
         engine: Optional[Engine] = None,
+        kinds: Optional[Iterable[str]] = None,
+        exclude_kinds: Optional[Iterable[str]] = None,
     ) -> None:
         self.model = model
         self.run = run
         self.name = name
         self.concurrency = max(1, concurrency)
         self.engine = engine or default_engine
+        self.kinds = frozenset(kinds) if kinds is not None else None
+        self.exclude_kinds = frozenset(exclude_kinds) if exclude_kinds else None
         self._queue: "queue.Queue[str]" = queue.Queue()
         self._cancelled: Set[str] = set()
         self._lock = threading.Lock()
@@ -126,6 +138,15 @@ class JobQueue:
 
     def session(self) -> Session:
         return Session(self.engine)
+
+    def _active_rows(self, session: Session) -> List[Any]:
+        """Every active row this queue owns."""
+        query = select(self.model).where(self.model.status.in_(ACTIVE_STATUSES))
+        if self.kinds is not None:
+            query = query.where(self.model.kind.in_(self.kinds))
+        if self.exclude_kinds is not None:
+            query = query.where(self.model.kind.not_in(self.exclude_kinds))
+        return list(session.exec(query).all())
 
     # ─── control ─────────────────────────────────────────────────────────────
 
@@ -176,10 +197,7 @@ class JobQueue:
         swept = 0
         try:
             with self.session() as session:
-                rows = session.exec(
-                    select(self.model).where(self.model.status.in_(ACTIVE_STATUSES))
-                ).all()
-                for row in rows:
+                for row in self._active_rows(session):
                     if not is_stale(row):
                         continue
                     self.cancel(row.id)
@@ -256,9 +274,7 @@ class JobQueue:
         """
         try:
             with self.session() as session:
-                rows = session.exec(
-                    select(self.model).where(self.model.status.in_(ACTIVE_STATUSES))
-                ).all()
+                rows = self._active_rows(session)
                 for row in rows:
                     fields: dict = {"status": "queued"}
                     if hasattr(row, "stage"):

@@ -196,10 +196,14 @@ URL expire. Range/206 support comes from `ranged.py`, lifted from Notes'
 - **Sub-video** (destructive, FR 11.1.1): an ffmpeg job — `-ss/-to -c copy` for speed,
   re-encode fallback when frame accuracy matters (stream-copy cuts land on keyframes).
 - **Parent deletion**: the SRS says "invalidates its clips, with user alerting". Better:
-  block the delete, list the dependent clips, and offer *"extract them as sub-videos
-  first"* — one click converts references into real files, then the parent goes. Losing
-  a curated clip to a parent delete is exactly the kind of data loss an asset manager
-  exists to prevent.
+  block a plain delete, list the dependent clips, and make the user choose — *promote
+  them* (one click converts references into real files, then the parent goes) or
+  *delete them with it* (`DELETE /api/assets/{id}?with_clips=true`, one transaction).
+  Losing a curated clip to a parent delete *by accident* is exactly the kind of data loss
+  an asset manager exists to prevent; losing them on purpose is the user's call. The
+  second choice was added in [#34](https://github.com/davior/gam/pull/34): a URL import
+  with twenty chapter clips otherwise needed twenty promotions — twenty files — before
+  the video could go.
 
 ### Enrichment
 
@@ -328,9 +332,10 @@ it was written in does not survive the session.
 | M5 Search | Merged — [#5](https://github.com/davior/gam/pull/5). Shipped unreachable; made configurable in #11, and reachable for a pre-existing library in #13 — **acceptance still not run, see below** |
 | M3 Tagging | Merged — [#7](https://github.com/davior/gam/pull/7) (fast-forwarded, so no merge commit) |
 | M6 AI enrichment | **Complete, all 8 steps** — [#14](https://github.com/davior/gam/pull/14) `AIProvider`, its migration, `/api/providers` CRUD and the settings panel; [#15](https://github.com/davior/gam/pull/15) the three protocol clients and the retry/backoff layer; [#16](https://github.com/davior/gam/pull/16) the source-material spec and `summarize`; [#17](https://github.com/davior/gam/pull/17) `autotag`, the suggestion model, and generated titles; [#18](https://github.com/davior/gam/pull/18) `describe`; [#19](https://github.com/davior/gam/pull/19) `UsageEvent`, the pricing table and the cost readout; [#20](https://github.com/davior/gam/pull/20) bulk enrichment over a selection, which also picked up the `SelectionBar` embed deferred from M5. Two gaps M6 did **not** close are recorded in [`m6-ai-enrichment.md`](m6-ai-enrichment.md) and below: `extract_text`, since built, and attribution, still undesigned. |
-| M7 Clips & sub-videos | **Complete** — [#26](https://github.com/davior/gam/pull/26). Non-destructive clips, ffmpeg sub-video extraction (fast stream-copy with an automatic re-encode fallback), and a parent-delete guard with a one-click promote path. Two bugs caught before shipping — a promoted clip almost kept its parent-relative `in_point`/`out_point`, and the delete guard's own state was briefly getting wiped by a store-driven remount — are recorded in [`m7-clips-and-subvideos.md`](m7-clips-and-subvideos.md), along with why the milestone's actual file layout diverges from this document's own architecture sketch. |
+| M7 Clips & sub-videos | **Complete** — [#26](https://github.com/davior/gam/pull/26). Non-destructive clips, ffmpeg sub-video extraction (fast stream-copy with an automatic re-encode fallback), and a parent-delete guard with a one-click promote path. Two bugs caught before shipping — a promoted clip almost kept its parent-relative `in_point`/`out_point`, and the delete guard's own state was briefly getting wiped by a store-driven remount — are recorded in [`m7-clips-and-subvideos.md`](m7-clips-and-subvideos.md), along with why the milestone's actual file layout diverges from this document's own architecture sketch. **Follow-up in [#34](https://github.com/davior/gam/pull/34):** clips had no reachable delete — the Clip tab listed them with no way to remove or even open one — so each row now links to its page and has a delete, and the guard offers "Delete clips too". It also fixed a data-loss bug M7 shipped with: a clip shares its parent's `thumb_key`, and deleting the clip deleted the poster the parent and every sibling still showed. |
 | M10 Attribution | **Complete** — eight columns, the embedded-metadata harvester, read-time inheritance through a clip's parent, the keyword index, the library filters, the Source tab, and grounded AI suggestions. Specified and recorded in [`m10-attribution.md`](m10-attribution.md), including the two bugs real files caught that a stubbed tag dictionary would not have (EXIF `DateTimeOriginal` lives in the Exif sub-IFD, and PDF dates are prefixed and separator-less), and why the `asset_fts` rebuild needed its own Alembic revision with a repopulate. Scheduled ahead of M8 and M9 at the user's request: both need an external dependency this did not, and attribution captured at ingest costs a form field where attribution reconstructed later means opening every file by hand. |
-| **M8–M9** | **Not started.** Both need an external dependency M7 did not (fal.ai for M8, GVC itself for M9). |
+| M8 AI generation | **Built** — [#34](https://github.com/davior/gam/pull/34). Text → image, image → image from several bases, and image → video, through fal.ai's queue API on a worker queue of its own; an admin-edited catalogue that records each endpoint's parameter dialect, seeded with nine models checked against fal's generated endpoint types; provenance on the asset driving Regenerate / same seed / Edit and generate; cost from fal's billing header. Specified and recorded in [`m8-ai-generation.md`](m8-ai-generation.md), including what an adversarial review caught before merge. **Never run against a live fal host** — see "Carried by the user". |
+| **M9** | **Not started.** Needs GVC itself. |
 
 Non-milestone PRs, so a `git log` that does not match the table above still makes sense:
 [#6](https://github.com/davior/gam/pull/6) moved dev ports to 8001/5174;
@@ -354,9 +359,9 @@ from a decision, which is the distinction PR bodies do not preserve.
   downloads it and fills in title, description, attribution, tags, chapter clips and, with
   no Deepgram key, the captions as transcript. Playlists fan out one job per video.
   Specified, with its decisions, operating notes and known limitations, in
-  [`url-import.md`](url-import.md). `SOURCE_URL` now has its writer; `SOURCE_AI` and
-  `SOURCE_GVC` are still legitimately waiting on M8 and M9, and `FilterBar`'s "AI
-  generated" filter is still over a value nothing can set.
+  [`url-import.md`](url-import.md). `SOURCE_URL` now has its writer, and since M8 so
+  does `SOURCE_AI` — `FilterBar`'s "AI generated" filter finally matches something.
+  `SOURCE_GVC` is still legitimately waiting on M9.
 - **~~`extract_text` was specified and never built.~~** Built. PDF, `.docx`, `.pptx`,
   `.xlsx`, `.txt`/`.md`/`.csv`, one `DocumentPage` row per natural unit, and a
   `FROM_DOCUMENT` branch in `enrichment/source.py` placed **above** the poster branch —
@@ -380,7 +385,8 @@ from a decision, which is the distinction PR bodies do not preserve.
   leave open are now answered, with the rejected alternatives recorded: structured
   fields rather than one free-text credit, embedded file metadata written directly
   while an AI may only *suggest* (grounded in a quote it must supply), and clips
-  inheriting from the parent at read time with per-field override. Not yet built.
+  inheriting from the parent at read time with per-field override. Built since — see
+  M10 in the status table.
 - **~~No tag-management screen.~~** Built. `TagPanel.tsx` is mounted at
   `views/SettingsView.tsx:513` and wires `rename`/`remove`/`recategorise` and the full
   category CRUD. This entry outlived the component by several PRs, which is the failure
@@ -396,7 +402,7 @@ from a decision, which is the distinction PR bodies do not preserve.
   moved into `DetailDock`; it is a full-width page now.
 - **~~A 401 mid-session is a dead end.~~** Closed in `cdcabbf`: `App.tsx` wires
   `setUnauthorizedHandler`, and `AppShell` calls `signOut()`.
-- **Escape does too much in the asset panel.** `TagInput` (`TagInput.tsx:93`) and the
+- **Escape does too much in the asset panel.** `TagInput` (`TagInput.tsx:98`) and the
   transcript segment editor (`TranscriptPanel.tsx:259`) both handle Escape without calling
   `stopPropagation`, so it reaches `DetailDock`'s window listener as well. Dismissing a tag
   suggestion menu, or abandoning a half-typed correction to a transcript line, therefore
@@ -458,6 +464,18 @@ a thing a future session will otherwise assume is done.
    alone. The frontend container's CSP already allows the call (`connect-src`, from
    `NOTES_BASE_URL`), so the CSP entry looks unused and is not — deleting it would pass
    every test today and silently break that fetch the day it is written.
+4. **M8 has never talked to fal.ai.** The sandbox it was built in reaches no fal host, so
+   three assumptions stand untested, each with a fallback: that the queue's result
+   carries `x-fal-billable-units` (else the cost is derived from the files and marked an
+   estimate), that the pricing API accepts an ordinary key (else the catalogue's list
+   price, marked an estimate), and that every seeded model accepts base images as `data:`
+   URIs (else that model fails with fal's own message, and uploading to fal's CDN is the
+   fix). One text → image and one image → video generation with a real key answers all
+   three — check the asset's Info tab says "AI cost", not "AI cost (est.)".
+5. **Nobody is an admin until `ADMIN_USERS` names them.** The seeded catalogue works
+   without one; editing it — and fal retires endpoint ids every few months — needs one.
+   Prefer the Notes user id (`GET /api/me` returns it) to a username: see
+   `docs/deployment.md`.
 
 M4 was brought forward past M2 and M3 because it is what M5 needs: there is nothing to
 search until there are transcripts. M2 was deferred because it only decides *where* GAM
@@ -538,11 +556,15 @@ exact-phrase query, so the fusion is not just the vector index in disguise.
 **M7** — cut a clip at 01:01–01:10; confirm no new file exists on disk and playback is
 bounded. Extract the same range as a sub-video; confirm the file is standalone and the
 parent is untouched. Attempt to delete a parent with clips and confirm the guard fires
-and the promote path works.
+and the promote path works. Delete one clip from the parent's Clip tab and confirm the
+parent's file *and poster* survive; delete a parent through "Delete clips too" and
+confirm no file of it or its clips is left in the media directory.
 
 **M8** — generate image→image from a base asset; confirm `ai_source_assets` records the
 base, the prompt round-trips, regeneration works, and the cost recorded matches fal's
-`x-fal-billable-units` header rather than an estimate.
+`x-fal-billable-units` header rather than an estimate. The automated half is in
+`tests/test_generation_*.py` against a stub of fal at the httpx seam; the live half is
+item 4 under "Carried by the user".
 
 **Environment note**: ffmpeg/ffprobe must be on `PATH` for M1 onward and in CI (the
 gecko-notes workflow already installs it conditionally — copy that step). This

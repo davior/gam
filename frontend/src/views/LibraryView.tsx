@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Library, Loader2, Plus, X } from 'lucide-react'
 import type { Asset } from '@/api/assets'
+import type { ActivityJob } from '@/api/transcripts'
 import AddPanel, { ADD_PANEL_ID } from '@/components/AddPanel'
 import AssetCard from '@/components/AssetCard'
 import AssetDetail from '@/components/AssetDetail'
@@ -9,6 +10,25 @@ import FilterBar from '@/components/FilterBar'
 import SelectionBar from '@/components/SelectionBar'
 import { isActive, useActivityStore } from '@/stores/activity'
 import { useLibraryStore } from '@/stores/library'
+
+/** Library-level jobs whose whole point is new assets. */
+const CREATES_ASSETS = new Set(['import_url', 'generate'])
+
+/** Everything a finished job made, in order. `result_asset_ids` is the list; the single
+ *  `result_asset_id` is the fallback for a row written before the list existed. */
+function createdBy(job: ActivityJob): string[] {
+  if (job.result_asset_ids?.length) return job.result_asset_ids
+  return job.result_asset_id ? [job.result_asset_id] : []
+}
+
+/**
+ * One after another, last first. Each add prepends, so this leaves the first output at
+ * the top — the order fal returned them in. Concurrent adds would land in whatever order
+ * the responses happened to arrive.
+ */
+async function addAll(ids: string[], add: (id: string) => Promise<void>): Promise<void> {
+  for (const id of [...ids].reverse()) await add(id)
+}
 
 export default function LibraryView() {
   const assets = useLibraryStore((s) => s.assets)
@@ -64,19 +84,22 @@ export default function LibraryView() {
     return () => observer.disconnect()
   }, [loadMore])
 
-  // A URL import finishes in the background, so nothing else would put its asset in
-  // the grid. Keyed on seeing a job go from running to done rather than on "done" alone:
-  // the activity feed on mount already holds imports finished days ago, and prepending
-  // those would shuffle old assets to the top of the library on every visit.
+  // A URL import or a generation finishes in the background, so nothing else would put
+  // what it made in the grid. Keyed on seeing a job go from running to finished rather
+  // than on "finished" alone: the activity feed on mount already holds jobs finished
+  // days ago, and prepending those would shuffle old assets to the top of the library on
+  // every visit. A generation's outputs are added however it ended — one that failed or
+  // was cancelled after saving two of four images still made those two, and they are in
+  // the library whether the grid shows them or not.
   const runningImports = useRef<Set<string>>(new Set())
   useEffect(() => {
     for (const job of jobs) {
-      if (job.action !== 'import_url') continue
+      if (!CREATES_ASSETS.has(job.action)) continue
       if (isActive(job)) {
         runningImports.current.add(job.id)
       } else if (runningImports.current.delete(job.id)) {
-        if (job.status === 'done' && job.result_asset_id) {
-          void addImported(job.result_asset_id)
+        if (job.status === 'done' || job.action === 'generate') {
+          void addAll(createdBy(job), addImported)
         }
       }
     }

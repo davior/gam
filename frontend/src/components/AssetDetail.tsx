@@ -12,11 +12,13 @@ import {
   Tags as TagsIcon,
   Trash2,
   Wand2,
+  WandSparkles,
   X,
 } from 'lucide-react'
 import type { Asset, AssetUpdate } from '@/api/assets'
 import { tagsApi } from '@/api/tags'
 import { enrichmentApi } from '@/api/enrichment'
+import { canBeBase } from '@/api/generate'
 import { clipsApi } from '@/api/clips'
 import { activityApi } from '@/api/transcripts'
 import { formatCost, usageApi, type UsageTotals } from '@/api/usage'
@@ -31,6 +33,7 @@ import ClipEditor from '@/components/ClipEditor'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
+import GenerateTab from '@/components/GenerateTab'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
@@ -128,11 +131,16 @@ export default function AssetDetail({
   const [saving, setSaving] = useState(false)
   const [tagError, setTagError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  // Set once `remove()` reports `asset_has_dependent_clips` — the confirm block
-  // switches from "delete this?" to "promote these, then delete" while this is set.
+  // Why a plain delete was refused — an extraction still running, most often — shown
+  // in the confirm block that asked.
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  // Set once `confirmDelete` finds live clips cut from this asset — the confirm block
+  // switches from "delete this?" to "promote them, or delete them too" while this is set.
   const [dependentClips, setDependentClips] = useState<Asset[] | null>(null)
   const [promoting, setPromoting] = useState(false)
-  const [promoteError, setPromoteError] = useState<string | null>(null)
+  const [deletingClips, setDeletingClips] = useState(false)
+  // Shared by the guard's two actions: whichever ran last says why it failed.
+  const [guardError, setGuardError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
   const descriptionRef = useAutoGrow(description)
@@ -188,8 +196,9 @@ export default function AssetDetail({
     // replaces the asset, the effect re-seeds, and the textarea shows the new text.
     setSummary(asset.summary ?? '')
     setConfirmingDelete(false)
+    setDeleteError(null)
     setDependentClips(null)
-    setPromoteError(null)
+    setGuardError(null)
     setTagError(null)
     setCurrentTime(startAt ?? asset.in_point ?? 0)
   }, [asset.id, asset.name, asset.description, asset.summary, asset.in_point, startAt])
@@ -289,39 +298,39 @@ export default function AssetDetail({
   }
 
   const confirmDelete = async () => {
-    // Checked before calling `remove()`, not caught from its rejection: `remove`
-    // optimistically drops the asset from the store *before* the request resolves,
-    // which makes `AssetView`'s `assets.find(...)` briefly come back `undefined` —
-    // unmounting this whole component — and remounting it fresh once the store
-    // restores the asset on failure. That is invisible for a plain failure (it just
-    // resets `confirmingDelete` to what a fresh mount already starts at), but it would
-    // silently discard `setDependentClips` below, called on a component instance that
-    // no longer exists by the time the guard's 409 comes back. Checking first means
-    // the guarded path never calls `remove()` at all, so it never hits that cycle.
-    try {
-      const children = await clipsApi.list(asset.id)
-      const blocking = children.filter((c) => c.source === 'clip')
-      if (blocking.length > 0) {
-        setDependentClips(blocking)
-        return
+    // Asked before deleting rather than read from the 409: the guard needs the clips
+    // themselves, to list them and to promote or delete them, and the refusal carries
+    // only a count.
+    //
+    // Skipped for a clip, which can never have clips of its own (`create_clip` refuses
+    // to clip one), so the answer is known without asking.
+    if (!ownsNoFile(asset)) {
+      try {
+        const children = await clipsApi.list(asset.id)
+        const blocking = children.filter((c) => c.source === 'clip')
+        if (blocking.length > 0) {
+          setDependentClips(blocking)
+          return
+        }
+      } catch {
+        // Could not even check — fall through and let the real delete attempt, and its
+        // own error handling below, be the source of truth.
       }
-    } catch {
-      // Could not even check — fall through and let the real delete attempt, and its
-      // own error handling below, be the source of truth.
     }
 
+    setDeleteError(null)
     try {
       await remove(asset.id)
       onClose()
-    } catch {
-      setConfirmingDelete(false)
+    } catch (err) {
+      setDeleteError(apiErrorMessage(err, 'Could not delete that'))
     }
   }
 
   const promoteAllAndDelete = async () => {
     if (!dependentClips || dependentClips.length === 0) return
     setPromoting(true)
-    setPromoteError(null)
+    setGuardError(null)
     try {
       const jobs = await Promise.all(dependentClips.map((c) => clipsApi.promote(c.id)))
       await waitForJobs(jobs.map((j) => j.id))
@@ -329,9 +338,25 @@ export default function AssetDetail({
       await remove(asset.id)
       onClose()
     } catch (err) {
-      setPromoteError(apiErrorMessage(err, 'Could not promote all of them'))
+      setGuardError(apiErrorMessage(err, 'Could not promote all of them'))
     } finally {
       setPromoting(false)
+    }
+  }
+
+  const deleteWithClips = async () => {
+    if (!dependentClips) return
+    setDeletingClips(true)
+    setGuardError(null)
+    try {
+      await remove(asset.id, {
+        withClips: true,
+        clipIds: dependentClips.map((c) => c.id),
+      })
+      onClose()
+    } catch (err) {
+      setGuardError(apiErrorMessage(err, 'Could not delete it and its clips'))
+      setDeletingClips(false)
     }
   }
 
@@ -514,7 +539,9 @@ export default function AssetDetail({
         <Fact label="Added" value={formatDate(asset.upload_date)} />
         {usage && usage.total_events > 0 && (
           <Fact
-            label="AI cost (est.)"
+            // "(est.)" only while it is one. A fal generation is costed from fal's own
+            // billing header, and calling a provider's bill an estimate undersells it.
+            label={usage.estimated ? 'AI cost (est.)' : 'AI cost'}
             value={
               usage.priced_events > 0
                 ? formatCost(usage.cost, usage.currency)
@@ -527,9 +554,9 @@ export default function AssetDetail({
       {dependentClips ? (
         <div className="space-y-2 rounded-md border border-amber-200 p-3 dark:border-amber-900">
           <p className="text-xs text-gray-700 dark:text-gray-300">
-            {dependentClips.length} clip{dependentClips.length === 1 ? '' : 's'} depend on
-            this asset. Extract {dependentClips.length === 1 ? 'it' : 'them'} as sub-video
-            {dependentClips.length === 1 ? '' : 's'} first, then this can be deleted.
+            {dependentClips.length === 1
+              ? '1 clip depends on this asset. Extract it as a file to keep it, or delete it too.'
+              : `${dependentClips.length} clips depend on this asset. Extract them as files to keep them, or delete them too.`}
           </p>
           <ul className="max-h-24 space-y-0.5 overflow-auto text-[11px] text-gray-500 dark:text-gray-400">
             {dependentClips.map((clip) => (
@@ -538,26 +565,34 @@ export default function AssetDetail({
               </li>
             ))}
           </ul>
-          {promoteError && (
-            <p className="text-xs text-red-600 dark:text-red-400">{promoteError}</p>
+          {guardError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{guardError}</p>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => void promoteAllAndDelete()}
-              disabled={promoting}
+              disabled={promoting || deletingClips}
               className="btn btn-danger flex-1 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {promoting ? 'Promoting…' : 'Promote and delete'}
             </button>
             <button
               type="button"
+              onClick={() => void deleteWithClips()}
+              disabled={promoting || deletingClips}
+              className="btn btn-danger flex-1 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {deletingClips ? 'Deleting…' : 'Delete clips too'}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setDependentClips(null)
                 setConfirmingDelete(false)
-                setPromoteError(null)
+                setGuardError(null)
               }}
-              disabled={promoting}
+              disabled={promoting || deletingClips}
               className="btn btn-secondary flex-1 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
@@ -567,8 +602,15 @@ export default function AssetDetail({
       ) : confirmingDelete ? (
         <div className="space-y-2 rounded-md border border-red-200 p-3 dark:border-red-900">
           <p className="text-xs text-gray-700 dark:text-gray-300">
-            Delete this asset and its file? This cannot be undone.
+            {/* A clip has no file to lose, and saying it does would make deleting one
+                sound like it takes the original with it. */}
+            {ownsNoFile(asset)
+              ? `Delete this clip? The ${asset.asset_type === 'audio' ? 'recording' : 'video'} it was cut from is not affected.`
+              : 'Delete this asset and its file? This cannot be undone.'}
           </p>
+          {deleteError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{deleteError}</p>
+          )}
           <div className="flex gap-2">
             <button
               type="button"
@@ -579,7 +621,10 @@ export default function AssetDetail({
             </button>
             <button
               type="button"
-              onClick={() => setConfirmingDelete(false)}
+              onClick={() => {
+                setConfirmingDelete(false)
+                setDeleteError(null)
+              }}
               className="btn btn-secondary flex-1"
             >
               Cancel
@@ -637,6 +682,18 @@ export default function AssetDetail({
             label: 'Text',
             icon: FileText,
             content: <DocumentTextPanel assetId={asset.id} />,
+          },
+        ]
+      : []),
+    // M8. An image that can be a base, or anything fal made — a generated video has no
+    // form here but still has its provenance and its Regenerate.
+    ...(canBeBase(asset) || asset.generation
+      ? [
+          {
+            id: 'generate',
+            label: 'Generate',
+            icon: WandSparkles,
+            content: <GenerateTab key={asset.id} asset={asset} usage={usage} />,
           },
         ]
       : []),

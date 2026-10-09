@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { authApi, redirectToLogin, type User } from '@/api/auth'
 import { apiErrorCode, apiErrorMessage, clearToken } from '@/api/client'
 import { useActivityStore } from '@/stores/activity'
+import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 
@@ -72,6 +73,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // would otherwise sit in the next person's autocomplete.
     useLibraryStore.getState().reset()
     useTagStore.getState().reset()
+    // Not personal data — the catalogue is global — but what it holds was fetched as
+    // this person, and left `loaded` it would never be fetched as the next one.
+    useGenerationStore.getState().reset()
     // Also stops the poll. One person's running jobs must not sit in the next
     // person's header, and a timer left armed would keep asking as them.
     useActivityStore.getState().reset()

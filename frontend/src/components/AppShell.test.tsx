@@ -36,7 +36,7 @@ describe('AppShell', () => {
     // `signOut` has existed since M2 and was called by nothing — there was no way out
     // of a session short of clearing localStorage by hand.
     useAuthStore.setState({
-      user: { id: 'u1', username: 'tester' },
+      user: { id: 'u1', username: 'tester', is_admin: false },
       status: 'authenticated',
     })
     const signOut = vi.fn()

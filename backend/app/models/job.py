@@ -60,6 +60,17 @@ KIND_HARVEST_ATTRIBUTION = "harvest_attribution"
 # `created_asset_id` there, exactly as an "extract" sub-video's does. Outside
 # `ENRICHMENT_KINDS`: it calls no paid provider. See docs/url-import.md.
 KIND_IMPORT_URL = "import_url"
+# M8. Making new media with fal.ai — text → image, image → image, image → video. A
+# library kind for the same reason as an import: nothing it makes exists until it has
+# run, and its bases (there may be ten) are inputs, not the asset the job is about. The
+# request, fal's request ids and the assets made all ride in `payload`. Outside
+# `ENRICHMENT_KINDS`: it enriches nothing. See docs/m8-ai-generation.md.
+KIND_GENERATE = "generate"
+
+# Kinds that run on the generation queue rather than the enrichment one. A generation
+# is minutes of waiting on fal, and on the shared queue at concurrency 1 a video would
+# hold every transcription behind it — see `jobs/enrichment.py::generation_queue`.
+GENERATION_JOB_KINDS = frozenset({KIND_GENERATE})
 
 # Per-asset actions. Everything in here requires an `asset_id`.
 ENRICHMENT_KINDS = frozenset(
@@ -80,7 +91,13 @@ ENRICHMENT_KINDS = frozenset(
 # change to the dispatch. A bulk run over a selection is here too: it has many assets,
 # which for the purposes of `asset_id` is the same as having none.
 LIBRARY_KINDS = frozenset(
-    {KIND_BACKFILL_EMBEDDINGS, KIND_BULK_ENRICH, KIND_HARVEST_ATTRIBUTION, KIND_IMPORT_URL}
+    {
+        KIND_BACKFILL_EMBEDDINGS,
+        KIND_BULK_ENRICH,
+        KIND_HARVEST_ATTRIBUTION,
+        KIND_IMPORT_URL,
+        KIND_GENERATE,
+    }
 )
 
 

@@ -40,6 +40,17 @@ describe('UsagePanel', () => {
     expect(screen.getByText(/not a bill/i)).toBeInTheDocument()
   })
 
+  it('does not call a provider’s own bill an estimate', async () => {
+    // M8: fal.ai reports what it billed for a generation, so a total made only of those
+    // is exact — and saying "not a bill" about it would be the inaccurate thing.
+    vi.spyOn(usageApi, 'summary').mockResolvedValue(summary({ estimated: false }))
+    render(<UsagePanel />)
+
+    expect(await screen.findByText('$0.18')).toBeInTheDocument()
+    expect(screen.queryByText(/not a bill/i)).toBeNull()
+    expect(screen.getByText(/as billed by the provider/i)).toBeInTheDocument()
+  })
+
   it('says so when some calls could not be priced', async () => {
     // A total that silently omitted them would read as complete.
     vi.spyOn(usageApi, 'summary').mockResolvedValue(

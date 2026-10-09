@@ -35,6 +35,28 @@ export const speechSettingsApi = {
   },
 }
 
+/** M8. Only the fal.ai key is per user; the model catalogue is global, in `api/generate`. */
+export interface GenerationSettings {
+  fal_key_configured: boolean
+}
+
+export const generationSettingsApi = {
+  get(): Promise<GenerationSettings> {
+    return client
+      .get<DataResponse<GenerationSettings>>('/settings/generation')
+      .then((r) => r.data.data)
+  },
+
+  update(changes: {
+    /** '' clears the stored key; omit the field to leave it alone. */
+    fal_api_key?: string
+  }): Promise<GenerationSettings> {
+    return client
+      .put<DataResponse<GenerationSettings>>('/settings/generation', changes)
+      .then((r) => r.data.data)
+  },
+}
+
 export interface EmbeddingSettings {
   provider: string
   model: string

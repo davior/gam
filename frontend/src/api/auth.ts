@@ -12,6 +12,10 @@ import { loadConfig } from '@/api/config'
 export interface User {
   id: string
   username: string
+  /** Set from GAM's own `ADMIN_USERS`, not from the Notes token, which carries no such
+   *  claim. Gates editing the generation catalogue — and only the UI for it: the server
+   *  checks again on every write. */
+  is_admin: boolean
 }
 
 interface DataResponse<T> {

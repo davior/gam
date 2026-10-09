@@ -43,7 +43,7 @@ preserve them.
 | `retrieved_at` | now | The one attribution field only an import can know — M10 left it with no automatic writer until this. |
 | thumbnail | the site's | The picture people remember the video by, and the only one an audio import gets. |
 | tags | `tags` | Whitespace collapsed, case-insensitive duplicates and anything over 80 characters dropped, 50 at most. |
-| clips | `chapters` | Named "Chapter — Video", clamped to the file's real length; a lone chapter spanning the whole video is skipped. |
+| clips | `chapters` | Named "Chapter — Video", clamped to the file's real length; a lone chapter spanning the whole video is skipped. Every chapter shows the site thumbnail — the same file as the video's — so deleting one chapter leaves the video's file and its thumbnail alone. |
 | transcript | captions, VTT | Only without a Deepgram key. Hand-written beats automatic; the video's own language beats YouTube's auto-translations. Recorded as model `youtube-captions` or `youtube-auto-captions`, so it is visible which kind a search is matching. |
 
 Everything from the site is stamped `embedded` in `field_provenance`: a statement of fact
@@ -248,10 +248,11 @@ size free while that happens.
 
 Recorded so a later session can tell a gap from a decision.
 
-- **A video with chapter clips cannot be deleted directly.** M7's delete guard blocks a
-  parent with live clips, so a twenty-chapter import needs its clips removed or promoted
-  first. Untick "Chapters as clips" for anything you may not keep. A "delete with its
-  clips" option is the natural follow-up.
+- **A video with chapter clips asks before it goes.** M7's delete guard still stops a
+  plain delete of a parent with live clips, so twenty curated chapters are never lost by
+  accident; it now offers **Delete clips too** beside **Promote and delete**, which
+  removes the video and every chapter in one step and one transaction. A single chapter
+  can be deleted from the video's Clip tab.
 - **Downloads share the enrichment worker.** With the default `enrichment_concurrency`
   of 1, a long download holds up transcriptions queued behind it, and a playlist queues
   its videos one after another.

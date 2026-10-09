@@ -3,6 +3,12 @@
 One queue rather than one per action, because they contend for the same things — CPU
 for ffmpeg, and a rate-limited upstream — and separate queues would each honour their
 own cap while collectively ignoring it.
+
+The exception is generation (M8), which gets a second queue over the same table. It
+contends for none of those things: a generation is minutes of waiting on fal.ai with
+the CPU idle, and sharing the one worker would leave every transcription queued behind
+a video. Both queues run the same `_run`; the kind filter on each is what stops them
+recovering or sweeping each other's rows.
 """
 
 from __future__ import annotations
@@ -35,6 +41,8 @@ from app.enrichment.subvideo import SubvideoExtractionError
 from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
+from app.generation.errors import GenerationError
+from app.generation.run import run as run_generate
 from app.ingest.ytdlp import UrlImportError
 from app.providers.base import ProviderError
 from app.jobs.runner import (
@@ -56,6 +64,8 @@ from app.models.job import (
     KIND_EMBED,
     KIND_EXTRACT_SUBVIDEO,
     KIND_EXTRACT_TEXT,
+    GENERATION_JOB_KINDS,
+    KIND_GENERATE,
     KIND_GENERATE_ALL,
     KIND_IMPORT_URL,
     KIND_SUMMARIZE,
@@ -66,6 +76,7 @@ from app.models.job import (
 logger = logging.getLogger(__name__)
 
 _queue: Optional[JobQueue] = None
+_generation_queue: Optional[JobQueue] = None
 
 
 def queue() -> JobQueue:
@@ -82,16 +93,40 @@ def queue() -> JobQueue:
             name="enrichment",
             concurrency=settings.enrichment_concurrency,
             engine=engine,
+            exclude_kinds=GENERATION_JOB_KINDS,
         )
     return _queue
 
 
+def generation_queue() -> JobQueue:
+    """The process's generation queue, built on first use, for the same reason."""
+    global _generation_queue
+    if _generation_queue is None:
+        _generation_queue = JobQueue(
+            EnrichmentJob,
+            _run_generation_job,
+            name="generation",
+            concurrency=settings.generation_concurrency,
+            engine=engine,
+            kinds=GENERATION_JOB_KINDS,
+        )
+    return _generation_queue
+
+
+def queue_for(kind: str) -> JobQueue:
+    """Whichever queue runs this kind — and therefore the one that can cancel it."""
+    return generation_queue() if kind in GENERATION_JOB_KINDS else queue()
+
+
 def start() -> None:
+    # Both from here, so the one `start` the app lifespan calls — and the one conftest
+    # stubs out — governs every worker thread there is.
     queue().start()
+    generation_queue().start()
 
 
-def enqueue(job_id: str) -> None:
-    queue().enqueue(job_id)
+def enqueue(job_id: str, kind: Optional[str] = None) -> None:
+    (queue_for(kind) if kind else queue()).enqueue(job_id)
 
 
 def active_job(session: Session, asset_id: str, kind: str) -> Optional[EnrichmentJob]:
@@ -157,7 +192,7 @@ def submit_library(
     session.commit()
     session.refresh(job)
 
-    enqueue(job.id)
+    enqueue(job.id, job.kind)
     return job
 
 
@@ -187,18 +222,28 @@ def submit(
     session.commit()
     session.refresh(job)
 
-    enqueue(job.id)
+    enqueue(job.id, job.kind)
     return job
 
 
 def _run_job(job_id: str) -> None:
+    """The enrichment queue's worker function."""
+    _run(job_id, queue())
+
+
+def _run_generation_job(job_id: str) -> None:
+    """The generation queue's. Same body; the queue is what differs — its reporter is
+    the one whose cancel set the API writes to for this kind."""
+    _run(job_id, generation_queue())
+
+
+def _run(job_id: str, q: JobQueue) -> None:
     """Run one job to completion, recording whatever happened.
 
     Every exit writes a terminal status. A job that ends without one sits at
     "processing" until the stale sweeper ends it forty minutes later, which reads to
     the user as a hang.
     """
-    q = queue()
     progress = q.reporter(job_id)
 
     with q.session() as session:
@@ -242,6 +287,9 @@ def _run_job(job_id: str) -> None:
         # An import that stored the site's captions as a transcript, to embed afterwards
         # the same way a finished transcription is.
         captioned: Optional[Asset] = None
+        # What a generation made, embedded afterwards for the same reason: its prompt
+        # is its description, and semantic search reads that too.
+        generated: list[Asset] = []
 
         try:
             if job.kind == KIND_TRANSCRIBE:
@@ -298,6 +346,12 @@ def _run_job(job_id: str) -> None:
                     # finished row, which is the first thing to look at when an import
                     # produced something unexpected.
                     job.payload = _with_created_asset(job.payload, imported.created_asset_id)
+            elif job.kind == KIND_GENERATE:
+                # The created ids are already in the payload — the job writes each as it
+                # is made, so a restart mid-way knows what not to make again.
+                outcome = run_generate(session, job, progress)
+                detail = outcome.detail
+                generated = outcome.created_assets
             elif job.kind == KIND_HARVEST_ATTRIBUTION:
                 harvested = run_harvest_attribution(session, job.user_id, progress)
                 detail = (
@@ -328,6 +382,8 @@ def _run_job(job_id: str) -> None:
                 _chain_embedding(session, asset)
             elif captioned is not None:
                 _chain_embedding(session, captioned)
+            for asset_made in generated:
+                _chain_embedding(session, asset_made)
 
         except JobCancelled:
             _mark_asset_failed(session, asset, job, status=None)
@@ -374,6 +430,13 @@ def _run_job(job_id: str) -> None:
             message = str(exc)
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
+
+        except GenerationError as exc:
+            # A rejected key, a refused prompt, a timeout: an answer from fal or from the
+            # job's own limits, already worded for the activity feed. No traceback.
+            message = str(exc)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Generation job %s failed: %s", job_id, message)
 
         except TranscriptionError as exc:
             message = str(exc)

@@ -27,12 +27,22 @@ from sqlmodel import Field, SQLModel
 from app.clock import utcnow
 
 # What was consumed. Kept as GAM's own vocabulary rather than gecko-notes' — it has no
-# `tts`, and `image` waits for M8.
+# `tts`.
 KIND_AI = "ai"
 KIND_STT = "stt"
+# M8: what fal.ai made.
+KIND_IMAGE = "image"
+KIND_VIDEO = "video"
 
 UNIT_TOKENS = "tokens"
 UNIT_SECONDS = "seconds"
+# fal bills each endpoint in its own unit. `generated_seconds` is deliberately not
+# `seconds`: the usage totals already sum that as audio transcribed, and four seconds of
+# generated video counted as four seconds of Deepgram would corrupt both figures.
+UNIT_IMAGES = "images"
+UNIT_MEGAPIXELS = "megapixels"
+UNIT_GENERATED_SECONDS = "generated_seconds"
+UNIT_VIDEOS = "videos"
 
 
 def new_usage_id() -> str:
@@ -62,8 +72,12 @@ class UsageEvent(SQLModel, table=True):
     # table does not know. Storing a zero there would read as "this was free".
     cost: Optional[float] = None
     currency: Optional[str] = None
-    # True for a list-price estimate. False would mean a provider-billed exact amount,
-    # which nothing produces yet — fal.ai's billing headers arrive with M8.
+    # True for a list-price estimate. False is a provider-billed exact amount, which only
+    # fal.ai produces: its `x-fal-billable-units` header times its own pricing API's
+    # unit price (M8).
     cost_estimated: Optional[bool] = None
+    # The provider's id for the call, so a figure here can be found in the provider's
+    # own billing — fal's `x-fal-request-id`. Not indexed: nothing looks it up from here.
+    external_ref: Optional[str] = None
 
     created_at: datetime = Field(default_factory=utcnow, index=True)

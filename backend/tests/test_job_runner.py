@@ -33,6 +33,7 @@ class FakeJob(SQLModel, table=True):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(default="u1")
+    kind: str = Field(default="transcribe")
     status: str = Field(default="queued")
     stage: str = Field(default="")
     progress: int = Field(default=0)
@@ -48,6 +49,9 @@ class FakeJob(SQLModel, table=True):
 # saw a model with no corresponding table and proposed creating one. A test fixture has
 # no business appearing in the application's schema.
 SQLModel.metadata.remove(FakeJob.__table__)
+
+# Taken at import, before conftest's autouse fixture replaces it for every test.
+from app.jobs.enrichment import start as REAL_ENRICHMENT_START  # noqa: E402
 
 
 @pytest.fixture(name="job_engine")
@@ -280,6 +284,83 @@ def test_recovery_requeues_work_a_restart_interrupted(job_engine):
     # A restart must never resurrect a run somebody stopped, or one already finished.
     assert read_job(job_engine, finished).status == "done"
     assert read_job(job_engine, cancelled).status == "cancelled"
+
+
+# ─── two queues over one table ───────────────────────────────────────────────
+#
+# Generation (M8) has its own queue over the same table as everything else, so each
+# queue must recover and sweep only its own rows — otherwise both requeue everything on
+# start, and a video ends up on the transcription worker.
+
+
+def _queued_ids(queue: JobQueue) -> set:
+    return set(queue._queue.queue)
+
+
+def test_recovery_takes_only_the_kinds_a_queue_owns(job_engine):
+    generation = JobQueue(FakeJob, lambda _id: None, name="gen", engine=job_engine, kinds={"generate"})
+    enrichment = JobQueue(
+        FakeJob, lambda _id: None, name="enr", engine=job_engine, exclude_kinds={"generate"}
+    )
+    video = make_job(job_engine, kind="generate", status="processing")
+    transcript = make_job(job_engine, kind="transcribe", status="processing")
+
+    generation.recover_pending()
+    assert _queued_ids(generation) == {video}
+
+    enrichment.recover_pending()
+    assert _queued_ids(enrichment) == {transcript}
+
+
+def test_an_unfiltered_queue_still_recovers_everything(job_engine):
+    queue = JobQueue(FakeJob, lambda _id: None, name="all", engine=job_engine)
+    ids = {make_job(job_engine, kind=kind, status="queued") for kind in ("generate", "transcribe")}
+
+    queue.recover_pending()
+    assert _queued_ids(queue) == ids
+
+
+def test_sweeping_ends_only_the_kinds_a_queue_owns(job_engine):
+    generation = JobQueue(FakeJob, lambda _id: None, name="gen", engine=job_engine, kinds={"generate"})
+    stalled = {}
+    for kind in ("generate", "transcribe"):
+        job_id = make_job(job_engine, kind=kind, status="processing")
+        with Session(job_engine) as session:
+            row = session.get(FakeJob, job_id)
+            row.updated_at = utcnow() - timedelta(hours=5)
+            session.add(row)
+            session.commit()
+        stalled[kind] = job_id
+
+    assert generation.sweep_stale() == 1
+    assert read_job(job_engine, stalled["generate"]).status == "error"
+    assert generation.is_cancelled(stalled["generate"])
+    # The other queue's row is that queue's to sweep.
+    assert read_job(job_engine, stalled["transcribe"]).status == "processing"
+    assert not generation.is_cancelled(stalled["transcribe"])
+
+
+def test_the_app_routes_generation_to_its_own_queue():
+    from app.jobs import enrichment
+    from app.models.job import KIND_GENERATE, KIND_TRANSCRIBE
+
+    assert enrichment.queue_for(KIND_GENERATE) is enrichment.generation_queue()
+    assert enrichment.queue_for(KIND_TRANSCRIBE) is enrichment.queue()
+    assert enrichment.generation_queue().kinds == {KIND_GENERATE}
+    assert enrichment.queue().exclude_kinds == {KIND_GENERATE}
+
+
+def test_one_start_starts_both_queues(monkeypatch):
+    """conftest stubs `enrichment.start` to keep worker threads out of the suite. That
+    holds only while it is the one place every queue is started from."""
+    from app.jobs import enrichment
+
+    started = []
+    monkeypatch.setattr(enrichment.queue(), "start", lambda: started.append("enrichment"))
+    monkeypatch.setattr(enrichment.generation_queue(), "start", lambda: started.append("generation"))
+
+    REAL_ENRICHMENT_START()
+    assert started == ["enrichment", "generation"]
 
 
 # ─── error rendering ─────────────────────────────────────────────────────────
