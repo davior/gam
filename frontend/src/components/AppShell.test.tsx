@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppShell from '@/components/AppShell'
+import { storageApi } from '@/api/storage'
 import { useActivityStore } from '@/stores/activity'
 import { useAuthStore } from '@/stores/auth'
 
@@ -10,6 +11,12 @@ beforeEach(() => {
   useAuthStore.getState().reset()
   // The shell mounts ActivityIndicator, which starts a poll.
   vi.spyOn(useActivityStore.getState(), 'start').mockImplementation(() => {})
+  // And StorageWarning, which checks the disk.
+  vi.spyOn(storageApi, 'status').mockResolvedValue({
+    level: 'ok',
+    free_bytes: null,
+    total_bytes: null,
+  })
 })
 
 afterEach(() => {

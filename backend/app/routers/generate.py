@@ -55,7 +55,7 @@ from app.schemas_generate import (
 from app.schemas_jobs import ActivityJobRead
 from app.services.assets import generation_of
 from app.settings_store import FAL_API_KEY, has_setting
-from app.storage import LocalStorage, StorageError
+from app.storage import LocalStorage, StorageError, capacity
 
 router = APIRouter()
 
@@ -330,6 +330,8 @@ def _checked_sources(
 
 
 def _queue(session: Session, user_id: str, request: GenerationRequest) -> ActivityJobRead:
+    # Here, after every other check, so a bad request is still told what is wrong with it.
+    capacity.require_room()
     job = enrichment_jobs.submit_library(
         session,
         user_id,

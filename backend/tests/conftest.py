@@ -47,6 +47,45 @@ def no_background_workers(monkeypatch):
     monkeypatch.setattr(enrichment, "start", lambda: None)
 
 
+class FakeDisk:
+    """What `storage/capacity.py` is told about the disk.
+
+    Autouse, because the guard on every upload, import and generation reads it: without
+    a fake, whether the suite passed would depend on how full the machine running it
+    was. Defaults to a disk with plenty of room. `devices` maps a path to a device id;
+    anything unlisted is device 1, so everything is one disk unless a test says not.
+    """
+
+    GB = 1024**3
+
+    def __init__(self) -> None:
+        self.set(free_gb=900)
+        self.devices: dict = {}
+
+    def set(self, *, free_gb: float, total_gb: float = 1000, reserved_gb: float = 0) -> None:
+        self.total = int(total_gb * self.GB)
+        self.free = int(free_gb * self.GB)
+        self.used = self.total - self.free - int(reserved_gb * self.GB)
+
+    def usage(self, path):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(total=self.total, used=self.used, free=self.free)
+
+    def device(self, path) -> int:
+        return self.devices.get(str(path), 1)
+
+
+@pytest.fixture(autouse=True)
+def disk(monkeypatch):
+    from app.storage import capacity
+
+    fake = FakeDisk()
+    monkeypatch.setattr(capacity, "_disk_usage", fake.usage)
+    monkeypatch.setattr(capacity, "_device", fake.device)
+    return fake
+
+
 @pytest.fixture
 def anyio_backend():
     """Run `@pytest.mark.anyio` tests on asyncio only.

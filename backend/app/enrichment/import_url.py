@@ -45,7 +45,7 @@ from app.services import assets as asset_service
 from app.services import suggestions as suggestion_service
 from app.services import tags as tag_service
 from app.settings_store import load_deepgram_key
-from app.storage import StorageError, build_storage, thumb_key_for
+from app.storage import StorageError, build_storage, capacity, thumb_key_for
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,11 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> ImportResul
         url = ytdlp.normalise_url(request.url)
     except HTTPException as exc:
         raise UrlImportError(readable_error(exc)) from exc
+
+    # Again, although the router already did: a job can sit queued behind others while
+    # the disk fills, and every playlist child arrives here without passing the router.
+    if not capacity.has_room():
+        raise UrlImportError(capacity.DISK_FULL_MESSAGE)
 
     with tempfile.TemporaryDirectory(prefix="gam-import-") as workdir:
         work = Path(workdir)

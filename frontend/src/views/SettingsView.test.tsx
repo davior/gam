@@ -16,6 +16,7 @@ import {
 } from '@/api/settings'
 import { providersApi } from '@/api/providers'
 import { usageApi } from '@/api/usage'
+import { storageApi } from '@/api/storage'
 import { makeGenerationModel } from '@/test-fixtures'
 
 function embedding(overrides: Partial<EmbeddingSettings> = {}): EmbeddingSettings {
@@ -70,6 +71,18 @@ beforeEach(() => {
   // The view mounts the provider panel too, which loads on mount. Left unmocked it
   // reaches the real axios client and every test here logs a network failure.
   vi.spyOn(providersApi, 'list').mockResolvedValue([])
+  // And the storage panel.
+  vi.spyOn(storageApi, 'summary').mockResolvedValue({
+    level: 'ok',
+    library: {
+      total_bytes: 0,
+      files: 0,
+      by_type: [],
+      thumbnails: { files: 0, bytes: 0 },
+      largest: [],
+    },
+    server: null,
+  })
   // The view mounts the usage panel too, which loads on mount.
   vi.spyOn(usageApi, 'summary').mockResolvedValue({
     totals: {

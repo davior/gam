@@ -164,6 +164,36 @@ class LocalStorage:
             logger.warning("Could not delete %s: %s", key, exc)
             return False
 
+    def files(self, owner: str | None = None) -> Iterator[tuple[str, os.stat_result]]:
+        """Every file in the layout, as `(key, stat)` — one owner's, or everyone's.
+
+        Exactly two levels deep, `<owner>/<name>`, because that is the only shape a key
+        can have. Anything else under the root — a nested directory, a stray file at the
+        top — is not GAM's, so it is neither counted nor offered for removal. Symlinks
+        are not followed: one could point anywhere, and `_path` would refuse it anyway.
+        """
+        if not self.root.is_dir():
+            return
+        if owner is not None:
+            # The rule a key's first segment is held to, so an owner cannot name `..`.
+            # One that fails it cannot have been written under, so it has no files.
+            try:
+                validate_key(f"{owner}/x")
+            except StorageError:
+                return
+            owner_dirs = [self.root / owner]
+        else:
+            with os.scandir(self.root) as entries:
+                owner_dirs = [Path(e.path) for e in entries if e.is_dir(follow_symlinks=False)]
+
+        for owner_path in owner_dirs:
+            if owner_path.is_symlink() or not owner_path.is_dir():
+                continue
+            with os.scandir(owner_path) as entries:
+                for entry in entries:
+                    if entry.is_file(follow_symlinks=False):
+                        yield f"{owner_path.name}/{entry.name}", entry.stat(follow_symlinks=False)
+
     def usage_bytes(self, owner: str) -> int:
         """Total bytes held for one owner, thumbnails included."""
         owner_dir = self.root / owner

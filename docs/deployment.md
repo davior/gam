@@ -110,6 +110,45 @@ GAM and Notes can share one Synology and one restic repository — the distinct
 `--host` tag and `BACKUP_SFTP_REMOTE_PATH` keep their snapshots apart, so
 `restic forget` prunes each app's history separately.
 
+## Disk space
+
+**Settings → Storage** shows what the library takes up and what the disk has left. Every
+user sees their own library, broken down by type, with their largest files as links. An
+[administrator](#administrators) also sees the server:
+
+- **One bar per disk**, split into GAM's media, GAM's database, everything else on that
+  disk, and free space. These are the host's numbers: `data/` is a bind mount, so the
+  container sees the real disk. "Everything else" is whatever else lives there, such as
+  the OS, Docker's images and Gecko Notes. GAM cannot break that part down from inside its
+  container; `docker system df` on the host shows Docker's own share.
+- **Reserved by the system**, when there is any. ext4 keeps about 5% of a disk back for
+  root, so used plus free falls short of the total by that much. Free space is shown as
+  what can actually be written, never as total minus used.
+- **Working space**, when the container's temp directory is on a different disk.
+  Uploads and imports land there before they are stored. It is shown, but it does not
+  count toward the warning: nothing persistent lives there, and on a development machine
+  it is often a small RAM-backed tmpfs.
+- **Stray files**: files under `data/media` that no asset refers to, left by a delete
+  whose unlink failed or by an upload or job that died between writing the file and
+  saving the row. Only files more than a day old count, because every write puts the
+  file on disk before it saves the row. **Remove them** deletes them. The hourly backup
+  still has them if that turns out to be a mistake.
+
+Two thresholds, in GB of free space:
+
+```env
+DISK_WARN_FREE_GB=20    # below this, a drive icon appears in the header
+DISK_RESERVE_GB=5       # below this, new writes are refused
+```
+
+Below the reserve, uploads, URL imports, AI generations and clip extractions are refused
+with "the server's disk is nearly full". They are checked when queued and again when the
+job starts. A generation is checked before it is sent to fal, so nothing is billed for an
+output that could not be saved; one already submitted still saves. Clips, tags,
+transcripts and previews are not refused, since they write next to nothing. The
+thresholds are fixed sizes rather than percentages because what fills the disk is single
+large files: a 90-minute import is 1–2 GB whatever size the disk is.
+
 ## Transcription
 
 Nothing to configure at deploy time. Each user adds their own Deepgram key at
@@ -153,6 +192,9 @@ An admin is the only one who can edit
 the AI generation model catalogue (Settings → Generation); everyone else uses it as it
 stands. Left empty, nobody can edit it and the catalogue the migration seeded is what
 everyone gets — which works, until fal retires one of those endpoints.
+
+An admin also sees the server's disk under **Settings → Storage**, and can clear stray
+files there. Everyone else sees only their own library's share.
 
 ## AI generation
 

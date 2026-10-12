@@ -34,6 +34,7 @@ from app.routers import media as media_router
 from app.routers import providers as providers_router
 from app.routers import search as search_router
 from app.routers import settings as settings_router
+from app.routers import storage as storage_router
 from app.routers import tags as tags_router
 from app.routers import usage as usage_router
 from app.routers import transcripts as transcripts_router
@@ -186,6 +187,7 @@ app.include_router(settings_router.router, prefix="/api/settings", tags=["settin
 app.include_router(providers_router.router, prefix="/api/providers", tags=["providers"])
 app.include_router(tags_router.router, prefix="/api/tags", tags=["tags"])
 app.include_router(usage_router.router, prefix="/api/usage", tags=["usage"])
+app.include_router(storage_router.router, prefix="/api/storage", tags=["storage"])
 # Not under /api: these URLs go straight into <img src> and <video src>, and the
 # signature in the query string is what authorises them.
 app.include_router(media_router.router, prefix="/media", tags=["media"])

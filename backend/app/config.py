@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     # video, short enough that a leaked URL stops working.
     media_url_ttl_seconds: int = 3600
 
+    # ─── disk space ──────────────────────────────────────────────────────────
+    # Absolute sizes, not percentages of the disk. What fills it is single files whose
+    # size has nothing to do with the disk's: a ninety-minute 1080p import is 1-2 GB on
+    # a 100 GB VPS or a 10 TB array alike, and one generation may download up to
+    # `generation_max_download_mb`. Ten percent of an 8 TB disk would cry wolf at
+    # 800 GB free.
+    #
+    # Below `disk_warn_free_gb` the header shows a warning. Below `disk_reserve_gb`
+    # uploads, imports, generations and extractions are refused, which keeps enough
+    # room for the writes already in flight and for SQLite, which does not recover
+    # gracefully from a disk that fills under it.
+    disk_warn_free_gb: float = 20
+    disk_reserve_gb: float = 5
+
     # ─── http ────────────────────────────────────────────────────────────────
     cors_origin: str = ""
 

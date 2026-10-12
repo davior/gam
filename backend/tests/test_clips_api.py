@@ -737,6 +737,22 @@ def test_running_extract_creates_a_standalone_asset(library, session):
     assert asset.storage_key == created["file_url"].split("?")[0].removeprefix("/media/")
 
 
+def test_a_full_disk_stops_a_queued_extraction_before_it_cuts(library, session, disk):
+    import json
+
+    from app.enrichment.extract_subvideo import run as run_extract_subvideo
+    from app.enrichment.subvideo import SubvideoExtractionError
+
+    created = _upload_video(library)
+    asset = session.get(Asset, created["id"])
+    disk.set(free_gb=1)
+
+    payload = json.dumps({"mode": "extract", "in_point": 0.2, "out_point": 1.5})
+    with pytest.raises(SubvideoExtractionError, match="disk is nearly full"):
+        run_extract_subvideo(session, asset, payload, lambda *a, **k: None)
+    assert session.exec(select(Asset).where(Asset.source == "sub_video")).all() == []
+
+
 @needs_ffmpeg
 def test_running_promote_updates_the_clip_in_place(library, session):
     import json

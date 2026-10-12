@@ -214,3 +214,30 @@ def test_usage_counts_only_that_owner(storage):
     assert storage.usage_bytes("user1") == 150
     assert storage.usage_bytes("user2") == 999
     assert storage.usage_bytes("nobody") == 0
+
+
+# ─── listing ─────────────────────────────────────────────────────────────────
+
+
+def test_files_lists_the_layout_and_nothing_outside_it(storage, tmp_path_factory):
+    mine = storage.write_bytes(new_key("user1", ".bin"), b"x" * 10).key
+    theirs = storage.write_bytes(new_key("user2", ".bin"), b"x" * 20).key
+    (storage.root / "loose.txt").write_bytes(b"not in an owner's directory")
+    (storage.root / "user1" / "nested").mkdir()
+    (storage.root / "user1" / "nested" / "deep.bin").write_bytes(b"too deep")
+    # Its own directory: `tmp_path` is the storage root here.
+    outside = tmp_path_factory.mktemp("outside")
+    (outside / "secret.bin").write_bytes(b"elsewhere")
+    (storage.root / "user1" / "link.bin").symlink_to(outside / "secret.bin")
+    (storage.root / "linked-owner").symlink_to(outside)
+
+    everyone = {key: stat.st_size for key, stat in storage.files()}
+    assert everyone == {mine: 10, theirs: 20}
+    assert {key for key, _ in storage.files("user1")} == {mine}
+
+
+def test_files_for_an_owner_that_cannot_be_a_key_is_empty(storage):
+    storage.write_bytes(new_key("user1", ".bin"), b"x")
+
+    assert list(storage.files("..")) == []
+    assert list(storage.files("nobody")) == []

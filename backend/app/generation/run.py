@@ -55,7 +55,7 @@ from app.models.usage import KIND_IMAGE, KIND_VIDEO
 from app.providers.base import ProviderError
 from app.services import assets as asset_service
 from app.settings_store import load_fal_key
-from app.storage import StorageError, build_storage
+from app.storage import StorageError, build_storage, capacity
 from app.usage import events as usage_events
 
 logger = logging.getLogger(__name__)
@@ -166,6 +166,11 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
 
     if state.result is None:
         if state.queued is None:
+            # Before submitting, and only then. fal bills when it runs the request, so this
+            # is the last moment refusing costs nothing; a request already submitted has
+            # been paid for, and is let try to save its output rather than thrown away.
+            if not capacity.has_room():
+                raise GenerationError(capacity.DISK_FULL_MESSAGE)
             body = _request_body(session, job, request, progress)
             progress(STAGE_SUBMITTING, 10, "")
             state.queued = fal.submit(request.endpoint_id, body, api_key=api_key)
