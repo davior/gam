@@ -22,7 +22,7 @@ from app.schemas_assets import AssetRead
 from app.schemas_jobs import ActivityJobRead
 from app.services import assets as asset_service
 from app.services import tags as tag_service
-from app.storage import LocalStorage
+from app.storage import LocalStorage, capacity
 
 router = APIRouter()
 
@@ -146,6 +146,7 @@ def start_subvideo_extraction(
             detail={"code": "bad_request", "message": "The out point must be after the in point"},
         )
     _require_no_active_extraction(session, asset.id)
+    capacity.require_room()
 
     job_payload = json.dumps(
         {
@@ -178,6 +179,7 @@ def promote_clip(
             detail={"code": "not_a_clip", "message": "This asset is not a clip"},
         )
     _require_no_active_extraction(session, clip.id)
+    capacity.require_room()
 
     job = enrichment_jobs.submit(
         session, clip, KIND_EXTRACT_SUBVIDEO, payload=json.dumps({"mode": "promote"})

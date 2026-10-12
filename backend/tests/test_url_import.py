@@ -291,6 +291,21 @@ def test_a_missing_cookies_file_fails_with_a_message(library, session, monkeypat
     assert "URL_IMPORT_COOKIES_FILE" in job["error_message"]
 
 
+def test_a_full_disk_stops_a_queued_import_before_it_downloads(library, session, monkeypatch, disk):
+    response = library.post("/api/assets/import", json={"url": VIDEO_URL})
+    assert response.status_code == 202, response.text
+    job_id = response.json()["data"]["id"]
+    # Filled while the job waited in the queue.
+    disk.set(free_gb=1)
+
+    _run(session, monkeypatch, job_id)
+
+    job = _activity(library, job_id)
+    assert job["status"] == "error"
+    assert job["error_message"].startswith("The server's disk is nearly full")
+    assert FakeYoutubeDL.made == []
+
+
 # ─── tags ────────────────────────────────────────────────────────────────────
 
 

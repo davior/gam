@@ -431,6 +431,40 @@ def test_a_restart_resumes_the_stored_request_instead_of_submitting_again(
     assert len(_generated(session)) == 1
 
 
+def test_a_full_disk_stops_a_queued_generation_before_fal_is_paid(
+    library, session, monkeypatch, ready, fal, disk
+):
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+    # Filled while the job waited in the queue.
+    disk.set(free_gb=1)
+
+    job = run_job(session, monkeypatch, job_id)
+
+    assert job.status == "error"
+    assert job.error_message.startswith("The server's disk is nearly full")
+    assert fal.submissions() == []
+
+
+def test_a_generation_already_submitted_still_tries_to_save_on_a_full_disk(
+    library, session, monkeypatch, ready, fal, disk
+):
+    # fal has billed for it by now; refusing to save would throw away what was paid for.
+    fal.statuses = [{"status": "IN_QUEUE", "queue_position": 2}, ProcessDied]
+    job_id = _start(library, {"model_id": ready[T2I].id, "prompt": PROMPT})
+    with pytest.raises(ProcessDied):
+        run_job(session, monkeypatch, job_id)
+    queue = enrichment_jobs.generation_queue()
+    monkeypatch.setattr(queue, "engine", session.get_bind())
+    queue.recover_pending()
+
+    disk.set(free_gb=1)
+    fal.statuses = [{"status": "COMPLETED"}]
+    job = run_job(session, monkeypatch, job_id)
+
+    assert job.status == "done", job.error_message
+    assert len(_generated(session)) == 1
+
+
 def test_a_restart_after_saving_does_not_save_or_bill_twice(library, session, monkeypatch, ready, fal):
     # Dies looking up the price: after the asset is saved, before the cost is recorded.
     fal.pricing_raises = ProcessDied

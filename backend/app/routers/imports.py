@@ -21,6 +21,7 @@ from app.jobs.registry import KINDS
 from app.models.job import KIND_IMPORT_URL
 from app.schemas import DataResponse
 from app.schemas_jobs import ActivityJobRead
+from app.storage import capacity
 
 router = APIRouter()
 
@@ -58,6 +59,7 @@ def start_url_import(
     it rather than downloading it twice.
     """
     url = normalise_url(payload.url)
+    capacity.require_room()
     request = ImportRequest(
         url=url,
         audio_only=payload.audio_only,

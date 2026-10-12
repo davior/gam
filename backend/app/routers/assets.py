@@ -23,7 +23,7 @@ from app.schemas_jobs import ActivityJobRead
 from app.schemas_tags import AssetTagsWrite, BulkTagsResult, BulkTagsWrite, TagRead
 from app.services import assets as service
 from app.services import tags as tag_service
-from app.storage import LocalStorage, build_storage
+from app.storage import LocalStorage, build_storage, capacity
 
 router = APIRouter()
 
@@ -80,6 +80,19 @@ async def upload_assets(
     for upload in files:
         filename = upload.filename or "unnamed"
         try:
+            # Per file, not once for the batch, in keeping with the partial success
+            # above: the files that fit are stored and the rest say why they were not.
+            # The bytes are already spooled to temp space by now, so what is checked is
+            # the copy into media — which is where `has_room` counts the size.
+            if not capacity.has_room(upload.size or 0):
+                rejected.append(
+                    UploadRejection(
+                        filename=filename,
+                        code=capacity.DISK_FULL_CODE,
+                        message=capacity.DISK_FULL_MESSAGE,
+                    )
+                )
+                continue
             asset = await service.ingest_upload(
                 session,
                 storage,
@@ -112,6 +125,10 @@ async def upload_assets(
     if not created and rejected:
         # Nothing stored at all is a failed request, not a 201 describing an empty
         # result — the client should be able to tell without inspecting the body.
+        if all(r.code == capacity.DISK_FULL_CODE for r in rejected):
+            # Said as itself rather than as "none of the 3 files could be stored": the
+            # reason is the same for every file and is the one thing worth reading.
+            raise capacity.disk_full_error()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={

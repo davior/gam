@@ -12,6 +12,7 @@ import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { isActive, useActivityStore } from '@/stores/activity'
 import GenerationSettingsPanel from '@/components/GenerationSettings'
 import ProviderPanel from '@/components/ProviderPanel'
+import StoragePanel from '@/components/StoragePanel'
 import TagPanel from '@/components/TagPanel'
 import UsagePanel from '@/components/UsagePanel'
 import { useSavedFlash } from '@/utils/useSavedFlash'
@@ -509,6 +510,7 @@ export default function SettingsView() {
 
       <ProviderPanel />
       <UsagePanel />
+      <StoragePanel />
       <EmbeddingPanel />
       <SpeechPanel />
       <GenerationSettingsPanel />

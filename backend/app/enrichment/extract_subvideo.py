@@ -29,7 +29,7 @@ from app.ingest.filetypes import TYPE_AUDIO
 from app.ingest.probe import probe
 from app.models.asset import Asset
 from app.services import assets as asset_service
-from app.storage import build_storage, new_key, thumb_key_for
+from app.storage import build_storage, capacity, new_key, thumb_key_for
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,10 @@ def run(
             out_point = float(data["out_point"])
         except (KeyError, TypeError, ValueError) as exc:
             raise SubvideoExtractionError("Missing or invalid in/out points") from exc
+
+    # Again, although the router already did: the job may have waited in the queue.
+    if not capacity.has_room():
+        raise SubvideoExtractionError(capacity.DISK_FULL_MESSAGE)
 
     storage = build_storage()
     progress("Extracting", 10, "")

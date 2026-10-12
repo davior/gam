@@ -53,6 +53,9 @@ user row. The changes that makes possible are specified in
   images, with the prompt and base assets recorded so a result stays reproducible.
 - **Cost visibility** — an estimate before anything paid runs, and the real cost tracked
   per asset and per library afterwards.
+- **Disk space** — what the library takes up and what the disk has left, a header
+  warning before it runs out, and new writes refused before a full disk can damage
+  anything. See [`docs/deployment.md`](docs/deployment.md#disk-space).
 
 ## Tech stack
 
