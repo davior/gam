@@ -21,6 +21,9 @@ export interface Asset {
   summary: string | null
   asset_type: AssetType
   source: string
+  /** GAM-3. The Video Creator project and render a `gvc_export` came from. */
+  origin_project_id?: string | null
+  origin_reference_id?: string | null
 
   /** M7. Provenance on any of clip/promoted/extracted; only a live clip
    *  (`source === 'clip'`) has no file of its own and needs `in_point`/`out_point`

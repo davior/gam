@@ -151,6 +151,15 @@ class Asset(SQLModel, table=True):
     ai_seed: Optional[int] = None
     ai_generated_at: Optional[datetime] = None
 
+    # ─── origin in another suite app (GAM-3) ─────────────────────────────────
+    # Set only on `source == "gvc_export"`: the Video Creator project a render came from
+    # and the render job that made it. Ids in another app's database, so no foreign key
+    # can hold them, and neither is ever followed from here; they exist so GVC can find
+    # "this project's renders" in one indexed lookup, and so a person looking at the
+    # file can tell which project to open to change it.
+    origin_project_id: Optional[str] = Field(default=None, index=True)
+    origin_reference_id: Optional[str] = None
+
     # ─── provenance of the metadata, not the file ───────────────────────────
     # JSON, {"description": "ai"|"human"|"embedded", ...}. FR 8.1.3 requires that a later AI run
     # never silently overwrites something a person wrote; without recording who last

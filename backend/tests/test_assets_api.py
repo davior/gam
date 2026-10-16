@@ -25,6 +25,53 @@ def _upload(client, *names: str):
 # ─── upload ──────────────────────────────────────────────────────────────────
 
 
+def _export(library, **fields):
+    data = (FIXTURES / "sample_video.mp4").read_bytes()
+    return library.post(
+        "/api/assets",
+        files=[("files", ("render.mp4", data, "video/mp4"))],
+        data=fields,
+    )
+
+
+def test_a_video_creator_render_is_filed_with_its_origin(library):
+    # GAM-3: GVC filing a finished render back into the library.
+    response = _export(
+        library, source="gvc_export", origin_project_id="proj-1", origin_reference_id="render-9"
+    )
+    assert response.status_code == 201, response.text
+    asset = response.json()["created"][0]
+    assert asset["source"] == "gvc_export"
+    assert asset["origin_project_id"] == "proj-1"
+    assert asset["origin_reference_id"] == "render-9"
+
+    # Read back the same, and found by the "Video Creator" filter.
+    listed = library.get("/api/assets", params={"source": "gvc_export"}).json()["data"]
+    assert [a["id"] for a in listed] == [asset["id"]]
+    assert library.get(f"/api/assets/{asset['id']}").json()["data"]["origin_project_id"] == "proj-1"
+
+
+def test_an_ordinary_upload_has_no_origin(library):
+    asset = _upload(library, "sample_image.jpg").json()["created"][0]
+    assert asset["source"] == "local_upload"
+    assert asset["origin_project_id"] is None
+    assert asset["origin_reference_id"] is None
+
+
+@pytest.mark.parametrize("source", ["ai_generated", "clip", "url", "sub_video", "nonsense"])
+def test_an_upload_cannot_claim_a_source_gam_reserves(library, source):
+    response = _export(library, source=source)
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_source"
+    assert library.get("/api/assets").json()["total"] == 0
+
+
+def test_an_origin_needs_the_gvc_source(library):
+    response = _export(library, origin_project_id="proj-1")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "origin_without_source"
+
+
 def test_upload_stores_and_describes_an_image(library):
     response = _upload(library, "sample_image.jpg")
     assert response.status_code == 201

@@ -6,12 +6,12 @@ import logging
 from datetime import datetime
 from typing import AsyncIterator, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlmodel import Session, col, func, select
 
 from app.auth import CurrentUser
 from app.database import get_session
-from app.ingest.filetypes import ASSET_TYPES
+from app.ingest.filetypes import ASSET_TYPES, SOURCE_GVC, SOURCE_UPLOAD
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
@@ -64,6 +64,9 @@ def _owned(asset_id: str, user_id: str, session: Session) -> Asset:
 async def upload_assets(
     user: CurrentUser,
     files: List[UploadFile] = File(...),
+    source: Optional[str] = Form(default=None, max_length=50),
+    origin_project_id: Optional[str] = Form(default=None, max_length=64),
+    origin_reference_id: Optional[str] = Form(default=None, max_length=64),
     session: Session = Depends(get_session),
     storage: LocalStorage = Depends(get_storage),
 ) -> UploadResult:
@@ -73,7 +76,25 @@ async def upload_assets(
     unsupported stores nineteen and reports the twentieth, rather than refusing all of
     them. A user who dragged in a folder should not have to find the offending file
     themselves.
+
+    `source` and the `origin_*` ids are GAM-3: how Video Creator files a finished render
+    back into the library. `gvc_export` is the only source a client may claim. The
+    others (`ai_generated`, `clip`, `url`…) are statements GAM makes about files it
+    produced itself, and a client able to set them could pass an upload off as, say, a
+    generation the regenerate button then tries to rerun.
     """
+    if source is not None and source not in (SOURCE_GVC, SOURCE_UPLOAD):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "invalid_source", "message": f"An upload cannot claim the source {source!r}"},
+        )
+    if (origin_project_id or origin_reference_id) and source != SOURCE_GVC:
+        # An origin only means something with the app that set it; on an ordinary
+        # upload it would be an id nobody can look up.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "origin_without_source", "message": "An origin needs source=gvc_export"},
+        )
     created: list[AssetRead] = []
     rejected: list[UploadRejection] = []
 
@@ -100,6 +121,9 @@ async def upload_assets(
                 filename=filename,
                 chunks=_stream(upload),
                 content_type=upload.content_type,
+                source=source or SOURCE_UPLOAD,
+                origin_project_id=origin_project_id or None,
+                origin_reference_id=origin_reference_id or None,
             )
             created.append(service.to_read_model(asset, storage))
         except service.UnsupportedFile:
