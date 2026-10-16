@@ -141,6 +141,28 @@ def test_a_spoken_hit_returns_the_second_it_was_said(embedded_library):
     assert "«nano»" in top["snippet"] or "«weapons»" in top["snippet"]
 
 
+def test_a_spoken_hit_says_where_the_moment_ends(embedded_library):
+    """So it can be cut out as a clip without guessing a length (Gecko Video Creator)."""
+    top = search(embedded_library["client"], "nano weapons")["data"][0]
+    assert (top["start_time"], top["end_time"]) == (412.0, 417.0)
+
+
+def test_a_moment_found_only_by_meaning_has_its_end_too(embedded_library):
+    """The semantic retriever reaches segments by a different path from the keyword
+    one; the end must not depend on which of them found the moment."""
+    # "armament" is said nowhere, so only the semantic half can find this moment.
+    top = search(embedded_library["client"], "armament")["data"][0]
+    assert top["asset"]["name"] == "Giordano interview"
+    assert top["sources"] == ["semantic"]
+    assert (top["start_time"], top["end_time"]) == (412.0, 417.0)
+
+
+def test_a_metadata_hit_has_no_moment_to_end(embedded_library):
+    top = search(embedded_library["client"], "committee")["data"][0]
+    assert top["start_time"] is None
+    assert top["end_time"] is None
+
+
 def test_the_snippet_is_the_line_not_the_whole_transcript(embedded_library):
     top = search(embedded_library["client"], "aerosol")["data"][0]
     assert len(top["snippet"]) < 200

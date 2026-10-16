@@ -62,6 +62,10 @@ class FusedAsset:
     # returns its single best moment is useful; one that floods the page with twenty of
     # its own moments is not.
     other_matches: int = 0
+    # Where the matched moment ends. Not carried through fusion: neither retriever has
+    # it to hand (the keyword index stores only the start), so it is looked up once for
+    # the final page — see `services/search.py::_attach_end_times`.
+    end_time: Optional[float] = None
 
 
 def fuse(ranked_lists: dict[str, Sequence[Candidate]], *, k: int = RRF_K) -> list[Candidate]:

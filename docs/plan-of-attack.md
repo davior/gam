@@ -178,8 +178,10 @@ Two indexes over the same corpus, fused:
 - **Fusion**: Reciprocal Rank Fusion over the two ranked lists. No weights to tune, and
   exact-phrase queries and half-remembered ones both land.
 
-A result carries `{asset, score, snippet, start_time}`, and the UI deep-links to
-`/assets/{id}?t=412.0`.
+A result carries `{asset, score, snippet, start_time, end_time}`, and the UI deep-links
+to `/assets/{id}?t=412.0`. `end_time` is the matched transcript segment's end, so
+Gecko Video Creator can cut the moment out as a clip rather than guess its length
+(GVC's plan, GAM-1); it is looked up for the returned page, not stored in the index.
 
 ### Serving bytes — diverging from Notes on purpose
 

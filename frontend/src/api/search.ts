@@ -10,6 +10,8 @@ export interface SearchHit {
   snippet: string
   /** Seconds into the asset. Null for a metadata hit, which is about the file itself. */
   start_time: number | null
+  /** Where that moment ends, for cutting it out as a clip. Null with `start_time`. */
+  end_time: number | null
   segment_id: string | null
   /** Which retrievers found it: 'keyword', 'semantic', or both. */
   sources: string[]
