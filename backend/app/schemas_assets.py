@@ -78,6 +78,10 @@ class AssetRead(BaseModel):
     # M8. How this asset was made, when fal.ai made it; null for everything else.
     generation: Optional["AssetGenerationRead"] = None
 
+    # GAM-3. The GVC project and render a `gvc_export` came from; null otherwise.
+    origin_project_id: Optional[str] = None
+    origin_reference_id: Optional[str] = None
+
     upload_date: datetime
     modified_date: datetime
     metadata_modified_date: datetime

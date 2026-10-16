@@ -363,7 +363,9 @@ from a decision, which is the distinction PR bodies do not preserve.
   Specified, with its decisions, operating notes and known limitations, in
   [`url-import.md`](url-import.md). `SOURCE_URL` now has its writer, and since M8 so
   does `SOURCE_AI` — `FilterBar`'s "AI generated" filter finally matches something.
-  `SOURCE_GVC` is still legitimately waiting on M9.
+  `SOURCE_GVC` has its writer since GAM-3: `POST /api/assets` takes `source=gvc_export`
+  (the only source a client may claim) with `origin_project_id` / `origin_reference_id`,
+  which is how Video Creator files a finished render back into the library.
 - **~~`extract_text` was specified and never built.~~** Built. PDF, `.docx`, `.pptx`,
   `.xlsx`, `.txt`/`.md`/`.csv`, one `DocumentPage` row per natural unit, and a
   `FROM_DOCUMENT` branch in `enrichment/source.py` placed **above** the poster branch —

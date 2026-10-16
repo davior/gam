@@ -73,6 +73,8 @@ async def ingest_upload(
     chunks: AsyncIterator[bytes],
     content_type: Optional[str] = None,
     source: str = SOURCE_UPLOAD,
+    origin_project_id: Optional[str] = None,
+    origin_reference_id: Optional[str] = None,
 ) -> Asset:
     """Store the bytes, then describe them.
 
@@ -92,6 +94,8 @@ async def ingest_upload(
         asset_type=asset_type,
         source=source,
         content_type=content_type,
+        origin_project_id=origin_project_id,
+        origin_reference_id=origin_reference_id,
     )
 
 
@@ -150,6 +154,8 @@ def _catalogue(
     source: str,
     content_type: Optional[str],
     name: Optional[str] = None,
+    origin_project_id: Optional[str] = None,
+    origin_reference_id: Optional[str] = None,
 ) -> Asset:
     """Everything that happens once the bytes are safely stored."""
     extension = extension_of(filename)
@@ -164,6 +170,8 @@ def _catalogue(
         file_format=extension.lstrip(".") or None,
         size_bytes=stored.size_bytes,
         checksum_sha256=stored.sha256,
+        origin_project_id=origin_project_id,
+        origin_reference_id=origin_reference_id,
     )
     session.add(asset)
     session.commit()
@@ -899,6 +907,8 @@ def to_read_model(
             for t in (asset_tags or [])
         ],
         generation=generation_of(asset),
+        origin_project_id=asset.origin_project_id,
+        origin_reference_id=asset.origin_reference_id,
         upload_date=asset.upload_date,
         modified_date=asset.modified_date,
         metadata_modified_date=asset.metadata_modified_date,
