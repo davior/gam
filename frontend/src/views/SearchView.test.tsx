@@ -44,6 +44,7 @@ function hit(overrides: Partial<SearchHit> = {}): SearchHit {
     score: 0.03,
     snippet: 'We are deploying «nano» «weapons» via aerosol dispersion.',
     start_time: 412,
+    end_time: 417,
     segment_id: 's1',
     sources: ['keyword', 'semantic'],
     other_matches: 0,

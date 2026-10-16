@@ -29,6 +29,9 @@ class SearchHit(BaseModel):
     # Seconds into the asset. Null for a metadata hit, which is about the file rather
     # than a moment in it.
     start_time: Optional[float] = None
+    # Where that moment ends, so it can be cut out as a clip. Null whenever start_time
+    # is, and for a moment whose transcript segment no longer exists.
+    end_time: Optional[float] = None
     segment_id: Optional[str] = None
     # Which retrievers found it — "keyword", "semantic", or both.
     sources: List[str] = Field(default_factory=list)
@@ -80,6 +83,7 @@ def search(
             score=round(fused.score, 6),
             snippet=fused.snippet,
             start_time=fused.start_time,
+            end_time=fused.end_time,
             segment_id=fused.segment_id,
             sources=sorted(fused.sources),
             other_matches=fused.other_matches,

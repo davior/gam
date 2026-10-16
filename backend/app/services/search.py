@@ -68,9 +68,34 @@ def search(
         allowed = _asset_ids_of_type(session, user_id, asset_type)
         fused = [a for a in fused if a.asset_id in allowed]
 
-    return SearchOutcome(
-        assets=fused[:limit], semantic_ran=semantic_ran, semantic_error=semantic_error
-    )
+    page = fused[:limit]
+    _attach_end_times(session, page)
+    return SearchOutcome(assets=page, semantic_ran=semantic_ran, semantic_error=semantic_error)
+
+
+def _attach_end_times(session: Session, hits: list[FusedAsset]) -> None:
+    """Give each moment its end, so a caller can cut it out without guessing a length.
+
+    Gecko Video Creator turns a hit into a clip ("where people talk about X"), and a
+    start alone leaves it to pick an out point blind. Looked up from the transcript
+    rather than stored in the FTS index: adding a column there means rebuilding the
+    whole index in a migration, for a value one indexed query fetches for a page of
+    thirty. Done after `limit`, so only hits that will be returned are looked up.
+    """
+    segment_ids = [h.segment_id for h in hits if h.segment_id]
+    if not segment_ids:
+        return
+    rows = session.exec(
+        select(TranscriptSegment.id, TranscriptSegment.end_time).where(
+            col(TranscriptSegment.id).in_(segment_ids)
+        )
+    ).all()
+    ends = dict(rows)
+    for hit in hits:
+        if hit.segment_id:
+            # A segment deleted since it was indexed (a transcript re-run) has no end to
+            # give; the hit keeps its start and says nothing rather than something wrong.
+            hit.end_time = ends.get(hit.segment_id)
 
 
 def _keyword_candidates(session: Session, user_id: str, query: str) -> list[Candidate]:
