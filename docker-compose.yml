@@ -90,6 +90,9 @@ services:
       # Parallel SFTP connections, and an optional upload cap in KiB/s (empty = none).
       - BACKUP_SFTP_CONNECTIONS=${BACKUP_SFTP_CONNECTIONS:-2}
       - BACKUP_LIMIT_UPLOAD_KBPS=${BACKUP_LIMIT_UPLOAD_KBPS:-}
+      # restic shows no progress when its output is a log rather than a terminal, so a
+      # day-long first upload was silent from start to finish. One status line a minute.
+      - RESTIC_PROGRESS_FPS=${RESTIC_PROGRESS_FPS:-0.0166}
       - BACKUP_CRON_SCHEDULE=${BACKUP_CRON_SCHEDULE:-0 * * * *}
       - BACKUP_KEEP_HOURLY=${BACKUP_KEEP_HOURLY:-48}
       - BACKUP_KEEP_DAILY=${BACKUP_KEEP_DAILY:-14}
