@@ -424,6 +424,13 @@ repository lock.
 The first run sends the whole library, which over a home line can take most of a day
 (restic prints an ETA). Later runs send only what changed, in minutes.
 
+- **The log prints one progress line a minute** (`[1:23:45] 12.34%  … files … ETA …`;
+  `RESTIC_PROGRESS_FPS` in `.env` changes the rate). Between them it is quiet, not
+  stuck. A `previous run still going, skipping` line from an hourly tick is proof the
+  run is alive: it is printed only while the run holds its lock. To see how much has
+  landed on the NAS, `docker compose exec backup rclone size nas:/GeckoNotes/gam/restic`
+  (your `BACKUP_SFTP_REMOTE_PATH`), a few minutes apart; or watch NET I/O climb in
+  `docker stats gam-backup-1`.
 - **If it dies, run the same `exec` line again.** restic saves its index as it goes, so
   what already reached the NAS is not sent twice; the rerun picks up roughly where the
   last one stopped. The dead run's leftover repository lock is cleared automatically.
