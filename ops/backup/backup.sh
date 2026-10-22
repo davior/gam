@@ -7,6 +7,10 @@
 set -eu
 trap 'echo "[backup] FAILED (exit $?)" >&2' ERR
 
+# The repository and the mirror's remote, whoever started this run — cron, `docker
+# compose run`, or `docker compose exec`, which skips the entrypoint (see env.sh).
+. /usr/local/lib/backup-env.sh
+
 mkdir -p /backup/tmp
 
 # One run at a time. A first upload of a large library takes most of a day, and the

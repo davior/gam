@@ -8,6 +8,7 @@ RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/rep
 
 COPY entrypoint.sh /entrypoint.sh
 COPY backup.sh /usr/local/bin/backup.sh
+COPY env.sh /usr/local/lib/backup-env.sh
 RUN chmod +x /entrypoint.sh /usr/local/bin/backup.sh
 
 WORKDIR /backup
