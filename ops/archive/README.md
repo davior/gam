@@ -149,7 +149,7 @@ with no restart needed. `GAM/mirror/MIRROR_INFO` says when the last run was.
 **After updating production**, update the archive the same way it was installed. Download the
 new commit's ZIP, extract it, and replace `docker/gam` with it, keeping your
 `ops/archive/.env`. Then **Container Manager → Project → gam-archive → Action → Stop**,
-then **Build**, then **Start**. If the archive's logs (**Container → gam-archive-backend
+then **Build**, then **Start**. If the archive's logs (**Container → gam-archive-backend-1
 → Log**) say the database "is at migration …, which this checkout does not contain",
 this is the step you missed.
 
@@ -165,4 +165,4 @@ old environment.
 | "Could not reach the asset library" | Backend container not running or unhealthy. Look at its log; a wrong `GAM_MIRROR_DIR` shows as `unable to open database file` |
 | `unable to open database file` | `GAM_MIRROR_DIR` points at the wrong place, or the mirror has not run yet. `ls` the path in File Station: it must hold `db/gam.db` |
 | Images show, videos never play | Usually a browser blocking plain-HTTP media on a LAN address. Try another browser, or reach it over Tailscale's MagicDNS name |
-| Library hours or days old | The mirror has stopped. Check `docker logs backup` on the gam host for `[backup] FAILED` |
+| Library hours or days old | The mirror has stopped. Check `docker compose logs backup` on the gam host for `[backup] FAILED` |
