@@ -35,7 +35,7 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from jose import JWTError, jwt
 from jose.exceptions import ExpiredSignatureError
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.config import settings
 from app.database import get_session
@@ -144,8 +144,26 @@ def _origin_allowed_for_cookie(request: Request) -> bool:
     return any(origin_host == _host_of(allowed) for allowed in settings.cors_origins)
 
 
+def _read_only_user(session: Session) -> UserCtx:
+    """The one person a read-only archive acts as.
+
+    Matched by id first, then by username, so `READ_ONLY_USER` can be whichever the
+    operator has to hand. Exact matches only, for the reason `is_admin` gives. An entry
+    matching no row is used as an id as given: the archive then shows an empty library,
+    which says plainly that the setting is wrong.
+    """
+    wanted = settings.read_only_user.strip()
+    record = session.get(User, wanted)
+    if record is None:
+        record = session.exec(select(User).where(User.username == wanted)).first()
+    if record is None:
+        return UserCtx(id=wanted, username=wanted)
+    return UserCtx(id=record.id, username=record.username)
+
+
 def current_user(
     request: Request,
+    session: Session = Depends(get_session),
     authorization: Annotated[Optional[str], Header()] = None,
     gecko_session: Annotated[Optional[str], Cookie()] = None,
 ) -> UserCtx:
@@ -155,6 +173,11 @@ def current_user(
     explicitly rather than read off the request so it shows up in the OpenAPI schema
     and can be overridden in tests.
     """
+    # Before any token is looked at: an archive cannot verify one (it deliberately does
+    # not hold production's secret — see docs/deployment.md), and has nobody to ask.
+    if settings.read_only and settings.read_only_user:
+        return _read_only_user(session)
+
     token: Optional[str] = None
     # Which transport carried it, because it changes what a failure *means*. A cookie
     # was minted by Notes moments ago and handed over by the browser; if it will not

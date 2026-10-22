@@ -15,6 +15,8 @@ import client from '@/api/client'
 
 export interface ClientConfig {
   notes_base_url: string
+  /** A copy run against the NAS mirror: the server refuses every write. */
+  read_only: boolean
 }
 
 interface DataResponse<T> {

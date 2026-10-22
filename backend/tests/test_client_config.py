@@ -38,5 +38,5 @@ def test_it_exposes_nothing_but_what_it_promises(client):
     """
     data = client.get("/api/config").json()["data"]
 
-    assert set(data) == {"notes_base_url"}
+    assert set(data) == {"notes_base_url", "read_only"}
     assert settings.jwt_secret_key not in str(data)

@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppShell from '@/components/AppShell'
 import { storageApi } from '@/api/storage'
+import * as configApi from '@/api/config'
 import { useActivityStore } from '@/stores/activity'
 import { useAuthStore } from '@/stores/auth'
 
@@ -22,6 +23,13 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks()
 })
+
+function mockConfig(readOnly: boolean) {
+  vi.spyOn(configApi, 'loadConfig').mockResolvedValue({
+    notes_base_url: 'https://notes.example.test',
+    read_only: readOnly,
+  })
+}
 
 function renderShell() {
   return render(
@@ -53,5 +61,26 @@ describe('AppShell', () => {
     await userEvent.click(screen.getByRole('button', { name: /sign out/i }))
 
     expect(signOut).toHaveBeenCalled()
+  })
+
+  it('says when it is a read-only archive, and offers no sign-out there', async () => {
+    mockConfig(true)
+    useAuthStore.setState({
+      user: { id: 'u1', username: 'tester', is_admin: false },
+      status: 'authenticated',
+    })
+
+    renderShell()
+
+    expect(await screen.findByText(/read-only archive copy/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /sign out/i })).not.toBeInTheDocument()
+  })
+
+  it('shows no archive banner in the live app', async () => {
+    mockConfig(false)
+    renderShell()
+
+    await screen.findByText('Content')
+    expect(screen.queryByText(/read-only archive copy/i)).not.toBeInTheDocument()
   })
 })

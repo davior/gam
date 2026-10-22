@@ -110,6 +110,13 @@ GAM and Notes can share one Synology and one restic repository — the distinct
 `--host` tag and `BACKUP_SFTP_REMOTE_PATH` keep their snapshots apart, so
 `restic forget` prunes each app's history separately.
 
+Optionally the same run also keeps a **plain-file mirror** on the NAS (`BACKUP_MIRROR_PATH`,
+step 13 of the backup README): the same `db/` + `media/` layout as `data/`, as ordinary
+files. A read-only copy of the app can run from it in Synology's Container Manager, with
+no dependency on this host or on Notes — see [`ops/archive/README.md`](../ops/archive/README.md).
+That copy sets `READ_ONLY=true` and `READ_ONLY_USER`; the app refuses to start with the
+second and not the first, so neither can turn sign-in off here by accident.
+
 ## Disk space
 
 **Settings → Storage** shows what the library takes up and what the disk has left. Every
