@@ -13,7 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import List
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -128,6 +128,18 @@ class Settings(BaseSettings):
     generation_base_max_edge: int = 2048
     generation_max_data_uri_mb: int = 8
 
+    # ─── read-only archive ───────────────────────────────────────────────────
+    # For a copy of the app run against the plain-file mirror the backup sidecar keeps
+    # on the NAS (ops/backup/README.md, "Plain-file mirror"). The database is opened
+    # read-only, every non-GET request is refused, and no worker starts — restart
+    # recovery and the stale sweep both write.
+    read_only: bool = False
+    # Who the archive acts as, by id or username. Instead of signing in: Notes only
+    # redirects back to *.geckopico.com, and an archive that needs Notes up to open is
+    # no use on the day production is down. So an archive must never be reachable from
+    # anywhere but a trusted network.
+    read_only_user: str = ""
+
     # ─── development ─────────────────────────────────────────────────────────
     # Bypasses token verification and acts as this user id. Refused unless
     # `environment` is "development", so it cannot be switched on in production by
@@ -145,6 +157,17 @@ class Settings(BaseSettings):
                 "tokens Notes issues. Generate one with: openssl rand -hex 32"
             )
         return value
+
+    @model_validator(mode="after")
+    def _read_only_user_needs_read_only(self) -> "Settings":
+        # The same two-condition rule as dev auth, but refused outright rather than
+        # ignored: READ_ONLY_USER turns sign-in off, and a production .env that picked
+        # it up from an archive's should stop the app, not quietly keep it running.
+        if self.read_only_user and not self.read_only:
+            raise ValueError(
+                "READ_ONLY_USER disables sign-in and is only allowed with READ_ONLY=true."
+            )
+        return self
 
     @property
     def resolved_database_url(self) -> str:

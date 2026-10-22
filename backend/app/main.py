@@ -10,7 +10,7 @@ import os
 import shutil
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -47,7 +47,8 @@ VERSION = "0.1.0"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    os.makedirs(settings.resolved_media_dir, exist_ok=True)
+    if not settings.read_only:
+        os.makedirs(settings.resolved_media_dir, exist_ok=True)
     if ffmpeg_available():
         logger.info("ffmpeg available: %s", ffmpeg_version())
     else:
@@ -70,10 +71,15 @@ async def lifespan(_app: FastAPI):
 
     log_if_behind(engine)
 
-    # Picks up anything a restart interrupted, and starts the worker threads.
-    from app.jobs import enrichment
+    # Picks up anything a restart interrupted, and starts the worker threads. Not in a
+    # read-only archive: recovery would requeue whatever production had running when
+    # the mirror was taken, and every step of a job is a write.
+    if settings.read_only:
+        logger.info("Read-only mode: the database is opened read-only and no workers start.")
+    else:
+        from app.jobs import enrichment
 
-    enrichment.start()
+        enrichment.start()
 
     yield
 
@@ -83,6 +89,30 @@ app = FastAPI(title="Gecko Asset Manager", version=VERSION, lifespan=lifespan)
 # Behind Caddy/nginx, so X-Forwarded-* decides scheme and client address. Matches the
 # gecko-notes deployment, where the app container is never reachable directly.
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+@app.middleware("http")
+async def _refuse_writes_when_read_only(request: Request, call_next):
+    """In a read-only archive, refuse every write before any router sees it.
+
+    The read-only database would refuse them anyway, but only as a 500 from partway
+    through a handler, after an upload had already been streamed to a disk that
+    cannot hold it. Registered before CORS so the refusal still carries CORS headers.
+    """
+    if settings.read_only and request.method.upper() not in _SAFE_METHODS:
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": {
+                    "code": "read_only",
+                    "message": "This is a read-only archive copy. Make changes in the live app.",
+                }
+            },
+        )
+    return await call_next(request)
+
 
 if not settings.cors_origins:
     logger.warning("CORS_ORIGIN is not set — cross-origin API requests will be blocked.")
@@ -141,7 +171,9 @@ def client_config() -> DataResponse[ClientConfig]:
     `NOTES_BASE_URL` could be set in `.env`, plumbed through docker-compose, and still
     have no effect on where the login button went.
     """
-    return DataResponse(data=ClientConfig(notes_base_url=settings.notes_base_url))
+    return DataResponse(
+        data=ClientConfig(notes_base_url=settings.notes_base_url, read_only=settings.read_only)
+    )
 
 
 @app.get("/api/me", response_model=DataResponse[dict])
@@ -155,9 +187,14 @@ def me(
     authenticated request would put a SELECT — and periodically a write — in front of
     every upload and every media byte, for a row nothing on those paths reads.
     """
+    from app.models.user import User
     from app.services.users import ensure_user
 
-    record = ensure_user(session, user)
+    # Read, not upserted, in an archive: the write would only fail — harmlessly, but
+    # with a warning on every page load.
+    record = session.get(User, user.id) if settings.read_only else None
+    if record is None:
+        record = ensure_user(session, user)
     return DataResponse(
         data={
             "id": record.id,

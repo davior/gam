@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from sqlalchemy import event
+from sqlalchemy.pool import NullPool
 from sqlmodel import Session, create_engine
 
 from app.config import settings
@@ -19,7 +20,28 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = settings.resolved_database_url
 
-if DATABASE_URL.startswith("sqlite:///"):
+
+def read_only_url(url: str) -> str:
+    """The same SQLite file, opened so that no write can reach it.
+
+    `mode=ro` rather than relying on the `:ro` bind mount alone: on a read-only mount
+    SQLite still opens read-write and fails on the first write with "attempt to write a
+    readonly database" — after the request has already done half its work. `mode=ro`
+    fails it at the statement, and keeps a mirror mounted read-write safe as well.
+
+    Needs a file in rollback-journal mode. A WAL file opened `mode=ro` still has to
+    create its `-shm`, which a read-only mount cannot hold; the mirror converts its
+    copy before uploading it (ops/backup/backup.sh).
+    """
+    if not url.startswith("sqlite:///"):
+        return url
+    path = url.replace("sqlite:///", "", 1)
+    return f"sqlite:///file:{path}?mode=ro&uri=true"
+
+
+if settings.read_only:
+    DATABASE_URL = read_only_url(DATABASE_URL)
+elif DATABASE_URL.startswith("sqlite:///"):
     Path(DATABASE_URL.replace("sqlite:///", "", 1)).parent.mkdir(parents=True, exist_ok=True)
 
 engine = create_engine(
@@ -28,6 +50,11 @@ engine = create_engine(
     # it. Background workers run on their own threads and open their own sessions,
     # so the check has to come off.
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    # A read-only archive's database is replaced under it on every mirror run, by a
+    # rename. A pooled connection holds the old file open and goes on reading it, so
+    # the archive would show the day it started until somebody restarted it. A fresh
+    # connection per session costs a file open, which SQLite does in microseconds.
+    **({"poolclass": NullPool} if settings.read_only else {}),
     echo=False,
 )
 
@@ -43,8 +70,10 @@ if DATABASE_URL.startswith("sqlite"):
         which is the right trade for a single-host media library.
         """
         cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
+        # Both are writes to the file header, so a read-only connection refuses them.
+        if not settings.read_only:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 

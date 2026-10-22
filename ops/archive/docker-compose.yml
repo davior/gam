@@ -1,0 +1,57 @@
+# A read-only copy of GAM, run on the NAS against the plain-file mirror the backup
+# sidecar keeps there (ops/backup/README.md, "Plain-file mirror").
+#
+# Its own folder, not a file beside the main docker-compose.yml: Synology's Container
+# Manager opens a project by finding `docker-compose.yml` in the folder it is pointed
+# at, and the repository root's is production's — backup sidecar and all. Setup, start
+# to finish, is in ops/archive/README.md.
+#
+# No backup service and no reverse-proxy network. Nothing here may be reachable from the
+# internet: the archive signs nobody in and shows READ_ONLY_USER's library to whoever
+# reaches the port.
+
+services:
+  backend:
+    build: ../../backend
+    restart: unless-stopped
+    volumes:
+      # Read-only twice over: the mount, and the database opened `mode=ro`
+      # (app/database.py). Either alone would do; the mount also keeps a bug in the app
+      # from touching the only other copy of the library.
+      - ${GAM_MIRROR_DIR:?set GAM_MIRROR_DIR in ops/archive/.env}/db:/app/data/db:ro
+      - ${GAM_MIRROR_DIR}/media:/app/data/media:ro
+    environment:
+      - DATABASE_URL=sqlite:////app/data/db/gam.db
+      - MEDIA_DIR=/app/data/media
+      - READ_ONLY=true
+      - READ_ONLY_USER=${READ_ONLY_USER:?set READ_ONLY_USER in ops/archive/.env}
+      # Not production's. Here it only signs media URLs, and the production secret on a
+      # NAS would let anyone who can read the NAS mint a Notes session for any account.
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY in ops/archive/.env}
+      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      - ENVIRONMENT=production
+      - TZ=${TZ:-UTC}
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  frontend:
+    build: ../../frontend
+    restart: unless-stopped
+    ports:
+      - "${ARCHIVE_PORT:-18083}:80"
+    environment:
+      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+    depends_on:
+      - backend
+
+networks:
+  default:
+    # Not gam_default, so an archive started on the production host by mistake cannot
+    # join production's network and answer as its backend.
+    name: gam_archive

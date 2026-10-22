@@ -4,7 +4,7 @@ FROM alpine:3.20
 # in every Alpine base image — add it explicitly rather than assume.
 RUN echo "https://dl-cdn.alpinelinux.org/alpine/v3.20/community" >> /etc/apk/repositories \
     && apk update \
-    && apk add --no-cache restic sqlite openssh-client tzdata ca-certificates
+    && apk add --no-cache restic rclone sqlite openssh-client tzdata ca-certificates
 
 COPY entrypoint.sh /entrypoint.sh
 COPY backup.sh /usr/local/bin/backup.sh

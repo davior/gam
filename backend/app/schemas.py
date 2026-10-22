@@ -45,6 +45,9 @@ class ClientConfig(BaseModel):
     """
 
     notes_base_url: str
+    # So the frontend can say it is an archive. Public by nature: anyone who can reach
+    # an archive can already see that writes are refused.
+    read_only: bool = False
 
 
 class HealthResponse(BaseModel):

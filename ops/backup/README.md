@@ -1,17 +1,39 @@
 # Backup setup: gam → Synology NAS
 
-Sets up the `backup` service from `docker-compose.yml`: a sidecar that takes a
-whole-database snapshot and pushes it, with the entire `data/media/` tree, to a
-Synology NAS over SFTP on a schedule. See `docs/backup-strategy.md` for design
-rationale. This file is the setup procedure.
+Sets up the `backup` service from `docker-compose.yml`, a sidecar on the gam host that,
+on a schedule:
 
-All backup logic runs in the `backup` container on the gam host. Nothing
-restic-specific runs on the NAS — it only needs its stock SFTP service.
+1. takes a consistent snapshot of the SQLite database;
+2. pushes it, with the whole `data/media/` tree, into an encrypted **restic**
+   repository on the NAS — the history, kept 48 hours / 14 days / 8 weeks;
+3. optionally keeps a **plain-file mirror** beside it — the same `db/` and
+   `media/<owner>/<uuid>.<ext>` layout as `data/`, as ordinary files you can open, and
+   that a read-only copy of the app can run from ([`ops/archive/`](../archive/README.md)).
 
-gam runs on a separate remote host, so the NAS is reached over a router
-port-forward. SSH is therefore genuinely exposed to the internet, and the steps
-below lean on key-only auth, a non-default port, a locked-down account, a
-source-IP firewall rule, and DSM's brute-force protection.
+Why both. restic is what saves you from a mistake: a deleted or overwritten file is
+still in last week's snapshot. But its repository is encrypted chunks — nothing on the
+NAS can open it without restic and the password. The mirror is the opposite: browsable,
+runnable, and it copies deletions, so it is a working copy and not a history. Each
+covers the other's gap.
+
+**The mirror doubles the space media takes on the NAS**, and the first mirror run sends
+the whole library over again. Size the share for twice `du -sh data/media`.
+
+All backup logic runs in the `backup` container on the gam host. The NAS only needs its
+stock SFTP service: restic and rclone both speak SFTP, and both use the one account and
+key set up below.
+
+gam runs on a separate remote host, so the NAS is reached over a router port-forward.
+SSH is therefore genuinely exposed to the internet, and the steps below lean on key-only
+auth, a non-default port, a locked-down account, a source-IP firewall rule, and DSM's
+brute-force protection. (Or skip the exposure entirely with Tailscale — see
+"Maintenance".)
+
+Paths below assume the repo lives at `/opt/gam` on the gam host, and a share named `GAM`
+on volume 1 of the NAS. Adjust both to taste, consistently.
+
+**Steps 1–12 are the restic backup, 13–14 the mirror. Do them in order** — the mirror
+reuses everything the earlier steps set up.
 
 ---
 
@@ -75,8 +97,16 @@ automatically. No login required.
 
 ## 3. NAS: create the shared folder and account
 
-**Control Panel → Shared Folder** → create a dedicated share, e.g. `GeckoNotes`.
-Don't reuse a folder holding anything else.
+**Control Panel → Shared Folder** → create a dedicated share, e.g. `GAM`.
+Don't reuse a folder holding anything else. Leave "Encrypt this shared folder" off unless
+you know you want it: an encrypted share is unmounted after every reboot until someone
+types its key, and backups (and the archive) fail until they do. The restic repository is
+encrypted regardless; the mirror is not — it is plain files, readable by any NAS account
+granted the share.
+
+Untick **Enable Recycle Bin** for this share: the
+mirror deletes files on purpose, and a recycle bin quietly keeps every one of them,
+filling the volume.
 
 **Control Panel → User & Group → User** → create a non-admin local user, e.g.
 `gam-backup`.
@@ -85,7 +115,7 @@ Don't reuse a folder holding anything else.
 
 | Share      | Access                                          |
 | ---------- | ----------------------------------------------- |
-| `GeckoNotes` | Read/Write                                    |
+| `GAM` | Read/Write                                    |
 | `homes`    | Read Only (required — see "Read this first")     |
 | everything else | No Access                                  |
 
@@ -135,7 +165,7 @@ chmod 600 "$HOME_DIR/.ssh/authorized_keys"
   ls -ld "$HOME_DIR" "$HOME_DIR/.ssh"
   ls -l "$HOME_DIR/.ssh/authorized_keys"
   wc -l "$HOME_DIR/.ssh/authorized_keys"
-} > /volume1/GeckoNotes/keycheck.txt 2>&1
+} > /volume1/GAM/keycheck.txt 2>&1
 ```
 
 Read `keycheck.txt` via File Station. Home should be `755` owned by the user,
@@ -162,7 +192,7 @@ sed -i '/^[[:space:]]*#*[[:space:]]*PubkeyAuthentication/d' "$CONF"
 sed -i '/^[[:space:]]*#*[[:space:]]*AuthorizedKeysFile/d' "$CONF"
 sed -i 's|^PasswordAuthentication yes|PasswordAuthentication yes\nPubkeyAuthentication yes\nAuthorizedKeysFile .ssh/authorized_keys|' "$CONF"
 
-grep -v '^#' "$CONF" | grep -v '^$' > /volume1/GeckoNotes/sshdconf.txt 2>&1
+grep -v '^#' "$CONF" | grep -v '^$' > /volume1/GAM/sshdconf.txt 2>&1
 ```
 
 Check `sshdconf.txt` shows both new lines **above** any `Match User` blocks.
@@ -209,7 +239,7 @@ fingerprint anywhere in the UI**, so get it with a Task Scheduler script:
 ```bash
 #!/bin/sh
 for f in /etc/ssh/ssh_host_*_key; do ssh-keygen -lf "$f"; done \
-  > /volume1/GeckoNotes/hostkeys.txt
+  > /volume1/GAM/hostkeys.txt
 ```
 
 Match the ED25519 line. That comparison is what establishes trust; skipping it
@@ -246,14 +276,14 @@ Once connected:
 ```
 sftp> pwd
 sftp> ls
-sftp> cd GeckoNotes
+sftp> cd GAM
 sftp> put /etc/hostname writetest.txt
 sftp> rm writetest.txt
 ```
 
 Synology chroots the user, so `pwd` at login returns `/` — that is the chroot
-root, not the filesystem root. The share appears inside it as `/GeckoNotes`. Use
-that, never `/volume1/GeckoNotes`.
+root, not the filesystem root. The share appears inside it as `/GAM`. Use
+that, never `/volume1/GAM`.
 
 ## 10. Fill `.env`
 
@@ -269,7 +299,12 @@ RESTIC_PASSWORD=<generated above>
 BACKUP_SFTP_HOST=<ddns hostname or public IP>
 BACKUP_SFTP_PORT=<forwarded port>
 BACKUP_SFTP_USER=gam-backup
-BACKUP_SFTP_REMOTE_PATH=/GeckoNotes/restic
+BACKUP_SFTP_REMOTE_PATH=/GAM/restic
+# Leave the mirror off for now; step 13 turns it on.
+BACKUP_MIRROR_PATH=
+# Hourly by default. Times are in TZ.
+BACKUP_CRON_SCHEDULE=0 * * * *
+TZ=Europe/London
 ```
 
 The `/restic` subdirectory keeps the repo's `data/`, `snapshots/` and `keys/`
@@ -312,6 +347,96 @@ One snapshot listed means the chain works. Confirm the restart policy is
 Check `docker logs backup` again after the next scheduled tick — an unattended
 run is the only real proof.
 
+## 13. Turn on the plain-file mirror
+
+Nothing to do on the NAS — the account from step 3 can already write to the share. On
+the gam host, add to `.env`:
+
+```
+BACKUP_MIRROR_PATH=/GAM/mirror
+```
+
+The SFTP **chroot** path, like `BACKUP_SFTP_REMOTE_PATH` — not `/volume1/GAM/mirror`.
+Keep it beside `restic/`, never inside it: restic owns that directory and `restic check`
+would object to strangers in it.
+
+Then recreate the container (environment is read at creation) and force a first run
+rather than waiting for the schedule. The first one copies the whole library, so for a
+large one run it detached and follow the log:
+
+```bash
+docker compose up -d --build --force-recreate backup
+docker compose exec -d backup sh -c '/usr/local/bin/backup.sh >>/proc/1/fd/1 2>>/proc/1/fd/2'
+docker logs -f backup
+```
+
+Every run from then on sends only what changed: new media, the database, and a small
+`MIRROR_INFO` file. Ordering is deliberate — media first, then the database — so the
+mirrored database never names a file that has not arrived yet.
+
+## 14. Verify the mirror
+
+```bash
+docker compose run --rm backup rclone lsf nas:/GAM/mirror
+docker compose run --rm backup rclone cat nas:/GAM/mirror/MIRROR_INFO
+docker compose run --rm backup rclone size nas:/GAM/mirror/media
+du -sh data/media
+```
+
+`lsf` should list `MIRROR_INFO`, `db/` and `media/`. `MIRROR_INFO` carries the time of
+the last mirror and the database's migration revision. The two sizes should agree.
+
+On the NAS, File Station now shows `GAM/mirror/media/<owner-id>/…` as ordinary files you
+can download or play. To run the app against them, carry on with
+[`ops/archive/README.md`](../archive/README.md).
+
+What to know about the mirror:
+
+- **It copies deletions.** Removing an asset in GAM removes it from the mirror on the
+  next run. To get one back, use restic ("Restoring", below).
+- **It is unencrypted on the NAS.** Anyone who can read the share can read the library
+  and the database, including asset metadata and transcripts. Provider API keys in the
+  database are encrypted with production's `JWT_SECRET_KEY`, which never goes to the NAS.
+- **A brief window:** an asset deleted in the seconds between the database snapshot and
+  the media sync shows as missing in the archive until the next run.
+- **A failed mirror fails the run** (`[backup] FAILED` in `docker logs backup`), but only
+  after restic has finished, so a NAS problem with the mirror never costs you a snapshot.
+
+---
+
+## Restoring
+
+Onto the gam host, with the app stopped so nothing writes while files land:
+
+```bash
+docker compose stop backend
+docker compose run --rm backup restic snapshots                 # pick one, or use latest
+docker compose run --rm -v "$PWD/restore:/restore" backup \
+  restic restore latest --host gam --target /restore
+```
+
+restic restores with full paths: the database lands at `restore/backup/tmp/gam.db` and
+media at `restore/backup/src/media/`. Move them into place, then start again:
+
+```bash
+mv data/db/gam.db data/db/gam.db.before-restore
+rm -f data/db/gam.db-wal data/db/gam.db-shm
+cp restore/backup/tmp/gam.db data/db/gam.db
+rsync -a restore/backup/src/media/ data/media/
+docker compose up -d backend
+```
+
+Delete the `-wal` and `-shm` files with the old database, never keep them beside the
+restored one — SQLite would replay the old database's log into it.
+
+**From the mirror instead**, when the newest copy is all you need (no restic password, no
+restic at all): download `GAM/mirror/db/gam.db` and `GAM/mirror/media/` from the NAS
+(File Station, or `sftp`/`rsync` from any machine) into `data/db/` and `data/media/`, the
+same way. It is the state as of the last run, so anything deleted before it is not
+there.
+
+Test one of these once, before you need it. A backup nobody has restored from is a hope.
+
 ---
 
 ## Maintenance
@@ -341,7 +466,7 @@ Task Scheduler, root. Runs a debug sshd on a spare port that logs why it refused
 ```bash
 #!/bin/sh
 timeout 180 /usr/bin/sshd -ddd -p 2299 -f /etc/ssh/sshd_config \
-  > /volume1/GeckoNotes/sshd_debug.txt 2>&1
+  > /volume1/GAM/sshd_debug.txt 2>&1
 ```
 
 Connect to port 2299 within three minutes from a machine on the LAN (that port
@@ -401,7 +526,7 @@ Each of these was tried during the original setup and none of them mattered:
 
 ## Later: second destination
 
-`docs/backup-strategy.md` describes fanning the same backup out to an off-site
-S3-compatible bucket for geographic redundancy. Deliberately deferred. Adding it
+An off-site S3-compatible bucket would add geographic redundancy — the NAS and the gam
+host are then not the only two copies. Deliberately deferred. Adding it
 means a second `restic backup ... -r <bucket-repo>` and its own `restic forget`
 in `backup.sh`, with separate credentials. No changes to the NAS setup above.
