@@ -37,6 +37,72 @@ reuses everything the earlier steps set up.
 
 ---
 
+## Already backing up Gecko Notes from this server?
+
+Then most of this is done, and GAM can reuse Notes' connection — the same account, key
+and pinned host key. Notes' backup proves the hard parts work: SFTP enabled (step 1),
+User Home service (2), the `PubkeyAuthentication` fix (6), Auto Block, firewall and
+port-forward (7). Skip those.
+
+Sharing the key costs nothing here. Both apps' secrets sit on the same server, so anyone
+who can read one key can read the other; a second key would protect against nothing.
+Keep the **repositories** separate, though — each app gets its own directory and its own
+restic password.
+
+What is left:
+
+**a. Give the account somewhere for GAM to write.** Either create a `GAM` share (step 3,
+first paragraph only) and on the Notes backup account's **Permissions** tab set `GAM`
+to Read/Write — leave the account's other settings alone, Notes depends on them. Or
+skip the share and keep GAM inside Notes' one, under a directory of its own, e.g.
+`/GeckoNotes/gam/`. The paths below assume the `GAM` share; substitute if not.
+
+**b. Copy Notes' key and host key** (paths are Notes' checkout, wherever it lives on
+this server — `/opt/gecko-notes` here):
+
+```bash
+mkdir -p /opt/gam/ops/backup/secrets && chmod 700 /opt/gam/ops/backup/secrets
+cp /opt/gecko-notes/ops/backup/secrets/id_backup   /opt/gam/ops/backup/secrets/
+cp /opt/gecko-notes/ops/backup/secrets/known_hosts /opt/gam/ops/backup/secrets/
+chmod 600 /opt/gam/ops/backup/secrets/id_backup
+```
+
+Copies rather than a bind mount of Notes' files, so a change to one checkout — a
+`git clean`, a key rotation half done — cannot take the other app's backup down with it.
+
+**c. Test it** — step 9, with the copied key and Notes' host, port and user. Then
+`cd GAM` (or your directory) and the `put`/`rm` write test. A `Permission denied` on
+the `put` with a successful login means (a) has not taken effect.
+
+**d. Fill `.env`** as step 10, with two rules:
+
+- `BACKUP_SFTP_HOST`, `BACKUP_SFTP_PORT` and `BACKUP_SFTP_USER` exactly as in Notes'
+  `.env`. `known_hosts` pins the key under the host *as written*: Notes' entry for
+  `nas.example.ddns.net` does not cover the same NAS reached as `203.0.113.7`, and
+  the run fails with `Host key verification failed`.
+- A **new** `RESTIC_PASSWORD`, generated as step 10 says and saved in the password
+  manager under GAM. It encrypts GAM's repository, not the connection, and has nothing
+  to do with Notes'.
+
+```
+BACKUP_SFTP_REMOTE_PATH=/GAM/restic
+BACKUP_MIRROR_PATH=
+```
+
+Never Notes' path. restic would happily put two apps' snapshots in one repository, and
+`--host gam` would keep their retention apart — but the restic password would then be
+shared, and a repository corrupted by either app would take both histories with it.
+
+**e. Carry on from step 11**, then 13–14 for the mirror. Two schedules writing to one
+NAS over one link: GAM's defaults to the top of the hour, so check `BACKUP_CRON_SCHEDULE`
+in Notes' `.env` and offset GAM's from it — say `30 * * * *` if Notes runs on the hour —
+so the two uploads do not compete.
+
+**Later, if the key is rotated** for Notes, copy the new one here again (b), or GAM's
+backup starts failing the hour the old key is removed from the NAS.
+
+---
+
 ## Read this first: two undocumented DSM requirements
 
 Two things are required that no Synology documentation mentions, and both fail
