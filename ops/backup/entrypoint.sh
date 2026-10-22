@@ -5,6 +5,10 @@
 # through to running the schedule in the foreground.
 set -eu
 
+# ServerAlive: give up after five minutes of silence, not ninety seconds. A NAS busy
+# writing an upload that runs for hours can go quiet for over a minute and still be
+# there; at 30s x 3 the first real run died that way, and restic cannot reconnect once
+# its ssh has exited — the whole run is lost, not one file.
 mkdir -p /root/.ssh
 cat > /root/.ssh/config <<EOF
 Host synology-backup
@@ -18,8 +22,9 @@ Host synology-backup
     BatchMode yes
     PasswordAuthentication no
     ConnectTimeout 15
-    ServerAliveInterval 30
-    ServerAliveCountMax 3
+    TCPKeepAlive yes
+    ServerAliveInterval 15
+    ServerAliveCountMax 20
 EOF
 chmod 700 /root/.ssh
 chmod 600 /root/.ssh/config

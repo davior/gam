@@ -109,7 +109,7 @@ Never Notes' `/GeckoNotes/restic`. restic would happily put two apps' snapshots 
 repository, and `--host gam` would keep their retention apart — but the restic password would then be
 shared, and a repository corrupted by either app would take both histories with it.
 
-**e. Carry on from step 11**, then 13–14 for the mirror, with
+**e. Carry on from step 11** — including "A large first upload" — then 13–14 for the mirror, with
 `BACKUP_MIRROR_PATH=/GeckoNotes/gam/mirror` (and that path wherever step 14 says
 `/GAM/mirror`). On the NAS the mirror is then `/volume1/GeckoNotes/gam/mirror` — the
 `GAM_MIRROR_DIR` the archive needs ([`ops/archive/README.md`](../archive/README.md),
@@ -404,12 +404,38 @@ Edit `.env`, not `.env.example` — that stays a template.
 ```bash
 docker compose build backup
 docker compose run --rm backup restic init
-docker compose run --rm backup /usr/local/bin/backup.sh
 docker compose up -d backup
+docker compose exec -d backup sh -c '/usr/local/bin/backup.sh >>/proc/1/fd/1 2>>/proc/1/fd/2'
+docker logs -f backup
 ```
 
-`restic init` is one-time and creates the repository on the NAS. The third line
-forces an immediate backup instead of waiting for the first cron tick.
+`restic init` is one-time and creates the repository on the NAS. The `exec` line
+starts the first backup now instead of waiting for the first cron tick, inside the
+scheduled container and detached. Ctrl-C on `docker logs -f` stops only the watching,
+not the backup.
+
+Inside that container rather than a `docker compose run --rm` one, because the run
+lock lives there: a scheduled tick that arrives while this is still going sees it and
+skips itself (`previous run still going, skipping`) instead of failing on restic's
+repository lock.
+
+### A large first upload
+
+The first run sends the whole library, which over a home line can take most of a day
+(restic prints an ETA). Later runs send only what changed, in minutes.
+
+- **If it dies, run the same `exec` line again.** restic saves its index as it goes, so
+  what already reached the NAS is not sent twice; the rerun picks up roughly where the
+  last one stopped. The dead run's leftover repository lock is cleared automatically.
+- **If the home connection is sluggish meanwhile**, cap the upload in `.env`, e.g.
+  `BACKUP_LIMIT_UPLOAD_KBPS=5000` (about 40 Mbit/s; KiB/s, applies to restic and the
+  mirror), then `docker compose up -d --force-recreate backup` and start it again.
+  Remove the cap once the first run is through.
+- `BACKUP_SFTP_CONNECTIONS` (default 2) is how many uploads run in parallel. Raise it
+  only if the NAS and both lines have room to spare; more connections is what makes a
+  saturated home NAS stall.
+- With the mirror on, the same run then copies the library a second time into
+  `mirror/` — expect the first run to take about twice restic's ETA.
 
 `docker compose run --rm` creates a throwaway container each time, so it always
 picks up current files. `docker compose restart` does **not** — bind mounts and
@@ -545,6 +571,19 @@ firewall rule, non-default port and Auto Block stop being load-bearing.
 
 The client-side error is always the same unhelpful `Permission denied
 (publickey,password)`. Get the server's actual reason instead.
+
+### `Timeout, server … not responding` partway through a run
+
+Authentication worked — the run got as far as uploading — and then the NAS went quiet
+for longer than ssh would wait, usually under the long first upload. ssh now waits five
+minutes (`ServerAliveInterval 15` × `ServerAliveCountMax 20` in `entrypoint.sh`) and
+restic uses two connections, not five; if it still happens, set
+`BACKUP_LIMIT_UPLOAD_KBPS` ("A large first upload", step 11) and rerun. Nothing is
+lost: the rerun reuses what was already uploaded.
+
+If it happens on *small* hourly runs too, the link itself is dropping — check the NAS's
+**Log Center** for the connection, and whether Gecko Notes' backup over the same link
+fails at the same times.
 
 ### Read sshd's reasoning directly
 
