@@ -51,11 +51,27 @@ restic password.
 
 What is left:
 
-**a. Give the account somewhere for GAM to write.** Either create a `GAM` share (step 3,
-first paragraph only) and on the Notes backup account's **Permissions** tab set `GAM`
-to Read/Write — leave the account's other settings alone, Notes depends on them. Or
-skip the share and keep GAM inside Notes' one, under a directory of its own, e.g.
-`/GeckoNotes/gam/`. The paths below assume the `GAM` share; substitute if not.
+**a. Pick GAM's directory — inside Notes' share.** Notes' backup account already has
+Read/Write on `GeckoNotes` (`/volume1/GeckoNotes`), and its restic repository sits at
+`/GeckoNotes/restic`. GAM goes beside it in a directory of its own, so nothing on the
+NAS changes at all — no new share, no permission edits on an account Notes depends on:
+
+```
+/volume1/GeckoNotes/
+├── restic/          Notes' repository — untouched
+└── gam/
+    ├── restic/      GAM's repository (step 11 creates it)
+    └── mirror/      GAM's plain-file mirror (step 13 creates it)
+```
+
+Check the prefix against Notes' own `.env` first: GAM's paths start with whatever
+Notes' `BACKUP_SFTP_REMOTE_PATH` starts with. `/GeckoNotes/restic` there means
+`/GeckoNotes/gam/…` here. (If it is plain `/restic`, the account's chroot *is* the share
+and GAM's paths are `/gam/…`.)
+
+If the `GeckoNotes` share has its **Recycle Bin** on, turn it off or the mirror's
+deliberate deletions pile up in `#recycle` (step 3 explains). Notes' restic prune
+deletes files too, so this was already worth doing.
 
 **b. Copy Notes' key and host key** (paths are Notes' checkout, wherever it lives on
 this server — `/opt/gecko-notes` here):
@@ -70,9 +86,9 @@ chmod 600 /opt/gam/ops/backup/secrets/id_backup
 Copies rather than a bind mount of Notes' files, so a change to one checkout — a
 `git clean`, a key rotation half done — cannot take the other app's backup down with it.
 
-**c. Test it** — step 9, with the copied key and Notes' host, port and user. Then
-`cd GAM` (or your directory) and the `put`/`rm` write test. A `Permission denied` on
-the `put` with a successful login means (a) has not taken effect.
+**c. Test it** — step 9, with the copied key and Notes' host, port and user, then
+`cd GeckoNotes` and the `put`/`rm` write test. It should pass first time; Notes' backup
+already does exactly this every hour.
 
 **d. Fill `.env`** as step 10, with two rules:
 
@@ -85,18 +101,23 @@ the `put` with a successful login means (a) has not taken effect.
   to do with Notes'.
 
 ```
-BACKUP_SFTP_REMOTE_PATH=/GAM/restic
+BACKUP_SFTP_REMOTE_PATH=/GeckoNotes/gam/restic
 BACKUP_MIRROR_PATH=
 ```
 
-Never Notes' path. restic would happily put two apps' snapshots in one repository, and
-`--host gam` would keep their retention apart — but the restic password would then be
+Never Notes' `/GeckoNotes/restic`. restic would happily put two apps' snapshots in one
+repository, and `--host gam` would keep their retention apart — but the restic password would then be
 shared, and a repository corrupted by either app would take both histories with it.
 
-**e. Carry on from step 11**, then 13–14 for the mirror. Two schedules writing to one
-NAS over one link: GAM's defaults to the top of the hour, so check `BACKUP_CRON_SCHEDULE`
-in Notes' `.env` and offset GAM's from it — say `30 * * * *` if Notes runs on the hour —
-so the two uploads do not compete.
+**e. Carry on from step 11**, then 13–14 for the mirror, with
+`BACKUP_MIRROR_PATH=/GeckoNotes/gam/mirror` (and that path wherever step 14 says
+`/GAM/mirror`). On the NAS the mirror is then `/volume1/GeckoNotes/gam/mirror` — the
+`GAM_MIRROR_DIR` the archive needs ([`ops/archive/README.md`](../archive/README.md),
+step 4).
+
+Two schedules now write to one NAS over one link. GAM's defaults to the top of the hour,
+and so does Notes' (`0 * * * *`), so check `BACKUP_CRON_SCHEDULE` in Notes' `.env` and
+offset GAM's from it — say `30 * * * *` — so the two uploads do not compete.
 
 **Later, if the key is rotated** for Notes, copy the new one here again (b), or GAM's
 backup starts failing the hour the old key is removed from the NAS.

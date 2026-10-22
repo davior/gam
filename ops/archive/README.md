@@ -90,9 +90,11 @@ ARCHIVE_PORT=18083
 TZ=Europe/London
 ```
 
-`GAM_MIRROR_DIR` is the NAS's own path, starting `/volume1/` (or wherever the `GAM`
-share lives — File Station → right-click the share → **Properties** shows it). It is
-*not* the `/GAM/mirror` chroot path the backup uses.
+`GAM_MIRROR_DIR` is the NAS's own path, starting `/volume1/` (File Station →
+right-click the share → **Properties** shows where it lives). It is *not* the chroot
+path the backup uses. If GAM's backup shares Gecko Notes' NAS account (the backup
+README's "Already backing up Gecko Notes" section), the mirror is in Notes' share:
+`GAM_MIRROR_DIR=/volume1/GeckoNotes/gam/mirror`.
 
 Upload the file to `docker/gam/ops/archive/` with File Station. On Windows, Notepad
 saves it as `.env.txt` unless you pick **Save as type: All files**. Check the name in
