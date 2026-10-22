@@ -406,12 +406,12 @@ docker compose build backup
 docker compose run --rm backup restic init
 docker compose up -d backup
 docker compose exec -d backup sh -c '/usr/local/bin/backup.sh >>/proc/1/fd/1 2>>/proc/1/fd/2'
-docker logs -f backup
+docker compose logs -f backup
 ```
 
 `restic init` is one-time and creates the repository on the NAS. The `exec` line
 starts the first backup now instead of waiting for the first cron tick, inside the
-scheduled container and detached. Ctrl-C on `docker logs -f` stops only the watching,
+scheduled container and detached. Ctrl-C on `docker compose logs -f` stops only the watching,
 not the backup.
 
 Inside that container rather than a `docker compose run --rm` one, because the run
@@ -450,14 +450,14 @@ docker compose up -d --force-recreate backup
 
 ```bash
 docker compose run --rm backup restic snapshots
-docker logs backup
-docker inspect <container> --format '{{.HostConfig.RestartPolicy.Name}}'
+docker compose logs backup
+docker inspect gam-backup-1 --format '{{.HostConfig.RestartPolicy.Name}}'
 docker compose exec backup crontab -l
 ```
 
 One snapshot listed means the chain works. Confirm the restart policy is
 `unless-stopped` or `always`, or the container won't return after a host reboot.
-Check `docker logs backup` again after the next scheduled tick — an unattended
+Check `docker compose logs backup` again after the next scheduled tick — an unattended
 run is the only real proof.
 
 ## 13. Turn on the plain-file mirror
@@ -480,7 +480,7 @@ large one run it detached and follow the log:
 ```bash
 docker compose up -d --build --force-recreate backup
 docker compose exec -d backup sh -c '/usr/local/bin/backup.sh >>/proc/1/fd/1 2>>/proc/1/fd/2'
-docker logs -f backup
+docker compose logs -f backup
 ```
 
 Every run from then on sends only what changed: new media, the database, and a small
@@ -512,7 +512,7 @@ What to know about the mirror:
   database are encrypted with production's `JWT_SECRET_KEY`, which never goes to the NAS.
 - **A brief window:** an asset deleted in the seconds between the database snapshot and
   the media sync shows as missing in the archive until the next run.
-- **A failed mirror fails the run** (`[backup] FAILED` in `docker logs backup`), but only
+- **A failed mirror fails the run** (`[backup] FAILED` in `docker compose logs backup`), but only
   after restic has finished, so a NAS problem with the mirror never costs you a snapshot.
 
 ---
