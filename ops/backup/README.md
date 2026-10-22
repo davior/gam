@@ -73,8 +73,8 @@ If the `GeckoNotes` share has its **Recycle Bin** on, turn it off or the mirror'
 deliberate deletions pile up in `#recycle` (step 3 explains). Notes' restic prune
 deletes files too, so this was already worth doing.
 
-**b. Copy Notes' key and host key** (paths are Notes' checkout, wherever it lives on
-this server — `/opt/gecko-notes` here):
+**b. Copy Notes' key and host key** from its checkout at `/opt/gecko-notes` (adjust if
+yours lives elsewhere):
 
 ```bash
 mkdir -p /opt/gam/ops/backup/secrets && chmod 700 /opt/gam/ops/backup/secrets
