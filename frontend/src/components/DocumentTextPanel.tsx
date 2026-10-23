@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FileText, Loader2 } from 'lucide-react'
+import { FileText, Loader2, ScanText } from 'lucide-react'
 import { enrichmentApi, type DocumentPage } from '@/api/enrichment'
 import { activityApi, type ActivityJob } from '@/api/transcripts'
 import { apiErrorMessage } from '@/api/client'
+import EnrichmentButton from '@/components/EnrichmentButton'
 import { useActivityStore } from '@/stores/activity'
 
 interface Props {
@@ -106,6 +107,23 @@ export default function DocumentTextPanel({ assetId }: Props) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-3 py-2">
+        {/* Here rather than on the Info tab, beside the only place its output is shown.
+            The button also reports a failed run's reason — a scan has no text to read —
+            so the explanation sits under the empty state that would otherwise invite a
+            re-run that cannot work. */}
+        <div className="mb-2">
+          <EnrichmentButton
+            assetId={assetId}
+            action="extract_text"
+            icon={ScanText}
+            label="Extract text"
+            runningLabel="Reading…"
+            start={enrichmentApi.extractText}
+            failureMessage="Could not start reading this document"
+            refreshOnFinish={false}
+          />
+        </div>
+
         {error && (
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
             {error}
@@ -123,15 +141,6 @@ export default function DocumentTextPanel({ assetId }: Props) {
             {running
               ? 'Reading the document…'
               : 'No text has been read out of this document yet. Run Extract text to make it summarisable.'}
-          </p>
-        )}
-
-        {/* Why it failed, here as well as beside the button. A scanned PDF has no text to
-            read, and that reason would otherwise live only on the Info tab while this one
-            invited another run that cannot work. */}
-        {!error && !running && storeJob?.status === 'error' && storeJob.error_message && (
-          <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
-            {storeJob.error_message}
           </p>
         )}
 

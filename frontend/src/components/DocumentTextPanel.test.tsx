@@ -43,6 +43,15 @@ afterEach(() => {
 })
 
 describe('DocumentTextPanel', () => {
+  it('offers the Extract text button', async () => {
+    vi.spyOn(enrichmentApi, 'text').mockResolvedValue([])
+    vi.spyOn(activityApi, 'list').mockResolvedValue([])
+
+    render(<DocumentTextPanel assetId="a1" />)
+
+    expect(await screen.findByRole('button', { name: /extract text/i })).toBeEnabled()
+  })
+
   it('shows the extracted text with its labels', async () => {
     vi.spyOn(enrichmentApi, 'text').mockResolvedValue([
       page(),
@@ -100,9 +109,8 @@ describe('DocumentTextPanel', () => {
   })
 
   it('says why when the extraction failed, instead of asking for another run', async () => {
-    // A scan has no text to read, and the reason lives on the failed job. Shown only on
-    // the Info tab it is invisible from here, where the empty state invites a re-run
-    // that cannot work.
+    // A scan has no text to read, and the reason lives on the failed job. The empty
+    // state invites a re-run, so the reason has to be on screen beside it.
     vi.spyOn(enrichmentApi, 'text').mockResolvedValue([])
     vi.spyOn(activityApi, 'list').mockResolvedValue([])
     useActivityStore.setState({

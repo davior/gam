@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { AxiosError } from 'axios'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import SuggestionPanel from '@/components/SuggestionPanel'
+import SuggestionPanel, { type SuggestionScope } from '@/components/SuggestionPanel'
 import { enrichmentApi, type Suggestion } from '@/api/enrichment'
 import { assetsApi } from '@/api/assets'
 import { useActivityStore } from '@/stores/activity'
@@ -53,10 +53,10 @@ function codedError(code: string) {
   return error
 }
 
-function renderPanel() {
+function renderPanel(scope: SuggestionScope = 'details') {
   return render(
     <MemoryRouter>
-      <SuggestionPanel assetId="a1" />
+      <SuggestionPanel assetId="a1" scope={scope} />
     </MemoryRouter>
   )
 }
@@ -153,7 +153,7 @@ describe('SuggestionPanel', () => {
     useActivityStore.setState({ jobs: [job({ status: 'done' })] })
     rerender(
       <MemoryRouter>
-        <SuggestionPanel assetId="a1" />
+        <SuggestionPanel assetId="a1" scope="details" />
       </MemoryRouter>
     )
 
@@ -172,7 +172,7 @@ describe('SuggestionPanel', () => {
     useActivityStore.setState({ jobs: [job({ action: 'generate_all', status: 'done' })] })
     rerender(
       <MemoryRouter>
-        <SuggestionPanel assetId="a1" />
+        <SuggestionPanel assetId="a1" scope="details" />
       </MemoryRouter>
     )
 
@@ -228,7 +228,7 @@ describe('attribution suggestions (M10)', () => {
 
   it('shows the field, the value and the evidence', async () => {
     vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([attribution()])
-    renderPanel()
+    renderPanel('source')
 
     expect(await screen.findByText('BBC Two')).toBeInTheDocument()
     expect(screen.getByText('Publisher')).toBeInTheDocument()
@@ -242,7 +242,7 @@ describe('attribution suggestions (M10)', () => {
     const accept = vi
       .spyOn(enrichmentApi, 'accept')
       .mockResolvedValue(attribution({ status: 'accepted' }))
-    renderPanel()
+    renderPanel('source')
 
     await userEvent.click(await screen.findByRole('button', { name: /accept bbc two/i }))
 
@@ -254,11 +254,71 @@ describe('attribution suggestions (M10)', () => {
     // others beside it.
     vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([
       attribution({ id: 'bad', field: null, proposed_value: null }),
-      suggestion({ id: 'tag-1', kind: 'tag', value: 'DARPA' }),
+      attribution({ id: 'good', field: 'creator', proposed_value: 'Jane Doe' }),
     ])
-    renderPanel()
+    renderPanel('source')
+
+    expect(await screen.findByText('Jane Doe')).toBeInTheDocument()
+    expect(screen.queryByText('BBC Two')).toBeNull()
+  })
+})
+
+describe('which tab a suggestion appears on', () => {
+  // Details and Source are both mounted at once and ask the same endpoint, so each has
+  // to keep to its own kinds or the other tab's proposals turn up under it.
+  const mixed = () => [
+    suggestion({ id: 't', kind: 'title', value: 'A Better Title' }),
+    suggestion({ id: 'g', kind: 'tag', value: 'DARPA' }),
+    suggestion({
+      id: 'a',
+      kind: 'attribution',
+      value: '{}',
+      field: 'publisher',
+      proposed_value: 'BBC Two',
+      evidence: 'the lower third',
+    }),
+  ]
+
+  it('shows only the title and tags on Details', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue(mixed())
+    renderPanel('details')
 
     expect(await screen.findByText('DARPA')).toBeInTheDocument()
+    expect(screen.getByText('A Better Title')).toBeInTheDocument()
     expect(screen.queryByText('BBC Two')).toBeNull()
+  })
+
+  it('shows only attribution on Source', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue(mixed())
+    renderPanel('source')
+
+    expect(await screen.findByText('BBC Two')).toBeInTheDocument()
+    expect(screen.queryByText('DARPA')).toBeNull()
+    expect(screen.queryByText('A Better Title')).toBeNull()
+  })
+
+  it('does not accept the other tab’s suggestions with Accept all', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue(mixed())
+    const accept = vi
+      .spyOn(enrichmentApi, 'accept')
+      .mockImplementation((_assetId, id) =>
+        Promise.resolve(suggestion({ id, status: 'accepted' }))
+      )
+    renderPanel('details')
+
+    await userEvent.click(await screen.findByRole('button', { name: /accept all/i }))
+
+    await waitFor(() => expect(accept).toHaveBeenCalledTimes(2))
+    expect(accept).not.toHaveBeenCalledWith('a1', 'a')
+  })
+
+  it('renders nothing on a tab with no suggestions of its own', async () => {
+    vi.spyOn(enrichmentApi, 'suggestions').mockResolvedValue([
+      suggestion({ kind: 'tag', value: 'DARPA' }),
+    ])
+    renderPanel('source')
+
+    await waitFor(() => expect(enrichmentApi.suggestions).toHaveBeenCalled())
+    expect(screen.queryByText(/nothing is applied until you say so/i)).toBeNull()
   })
 })
