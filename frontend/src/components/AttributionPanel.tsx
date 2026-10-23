@@ -216,7 +216,7 @@ export default function AttributionPanel({ asset }: Props) {
         />
       )}
 
-      <SuggestionPanel assetId={asset.id} />
+      <SuggestionPanel assetId={asset.id} scope="source" />
 
       {FIELDS.map((field) => (
         <div key={field.name}>

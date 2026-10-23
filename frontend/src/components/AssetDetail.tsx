@@ -7,7 +7,6 @@ import {
   Mic,
   Pencil,
   Quote,
-  ScanText,
   Scissors,
   Tags as TagsIcon,
   Trash2,
@@ -488,7 +487,7 @@ export default function AssetDetail({
         )}
       </div>
 
-      <SuggestionPanel assetId={asset.id} />
+      <SuggestionPanel assetId={asset.id} scope="details" />
     </div>
   )
 
@@ -503,18 +502,6 @@ export default function AssetDetail({
           runningLabel="Extracting…"
           start={clipsApi.promote}
           failureMessage="Could not start extracting"
-        />
-      )}
-      {asset.asset_type === TEXT_TYPE && (
-        <EnrichmentButton
-          assetId={asset.id}
-          action="extract_text"
-          icon={ScanText}
-          label="Extract text"
-          runningLabel="Reading…"
-          start={enrichmentApi.extractText}
-          failureMessage="Could not start reading this document"
-          refreshOnFinish={false}
         />
       )}
       <EmbedButton assetId={asset.id} />

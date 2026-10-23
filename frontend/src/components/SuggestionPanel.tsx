@@ -17,8 +17,22 @@ import { useLibraryStore } from '@/stores/library'
  * store for the same job to know when to reload rather than owning its own trigger.
  */
 
+/**
+ * Which tab this instance lives on. `Tabs` keeps every panel mounted, and Details and
+ * Source each render one of these against the same asset, so without a scope each showed
+ * the other's suggestions: attribution proposals on Details, and title and tag proposals
+ * under Source. A suggestion belongs where the field it would change is.
+ */
+export type SuggestionScope = 'details' | 'source'
+
+const KINDS_BY_SCOPE: Record<SuggestionScope, ReadonlyArray<Suggestion['kind']>> = {
+  details: ['title', 'tag'],
+  source: ['attribution'],
+}
+
 interface Props {
   assetId: string
+  scope: SuggestionScope
 }
 
 /** Field names as the Source tab labels them, so the two do not disagree. */
@@ -31,7 +45,7 @@ const FIELD_LABELS: Record<string, string> = {
   license: 'Licence / rights',
 }
 
-export default function SuggestionPanel({ assetId }: Props) {
+export default function SuggestionPanel({ assetId, scope }: Props) {
   // Autotag can also be run through "Generate all", which is a different action on
   // the same asset — this still has to notice that run ending, or accepted-looking
   // suggestions from it would sit unread until something else reloaded the panel.
@@ -54,11 +68,15 @@ export default function SuggestionPanel({ assetId }: Props) {
   const running = job ? isActive(job) : false
 
   const load = useCallback(() => {
+    // Filtered on the way in rather than at render, so "Accept all", the count that
+    // decides whether to offer it, and the empty state all speak of this tab's
+    // suggestions alone — accepting all on Details must not also accept attribution.
+    const kinds = KINDS_BY_SCOPE[scope]
     enrichmentApi
       .suggestions(assetId)
-      .then(setSuggestions)
+      .then((all) => setSuggestions(all.filter((s) => kinds.includes(s.kind))))
       .catch(() => setSuggestions([]))
-  }, [assetId])
+  }, [assetId, scope])
 
   useEffect(() => {
     load()
