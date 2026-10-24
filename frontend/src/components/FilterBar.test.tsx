@@ -34,6 +34,12 @@ function lastParams(): ListAssetsParams {
   return calls.length > 0 ? (calls[calls.length - 1][0] ?? {}) : {}
 }
 
+/** Pick a tag through the autocomplete, the only way to add a tag filter. */
+async function addTag(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole('combobox', { name: 'Filter by tag' }))
+  await user.click(await screen.findByRole('option', { name: new RegExp(name) }))
+}
+
 beforeEach(() => {
   list = vi
     .spyOn(assetsApi, 'list')
@@ -64,11 +70,32 @@ describe('FilterBar', () => {
     const user = userEvent.setup()
     render(<FilterBar />)
 
-    await user.click(await screen.findByRole('button', { name: /NATO/ }))
+    await addTag(user, 'NATO')
     await waitFor(() => expect(lastParams().tag).toEqual(['NATO']))
 
-    await user.click(screen.getByRole('button', { name: /archive/ }))
+    await addTag(user, 'archive')
     await waitFor(() => expect(lastParams().tag).toEqual(['NATO', 'archive']))
+  })
+
+  it('narrows the tag menu as you type, and Enter picks the highlighted tag', async () => {
+    const user = userEvent.setup()
+    render(<FilterBar />)
+
+    const input = await screen.findByRole('combobox', { name: 'Filter by tag' })
+    await user.type(input, 'arch')
+    expect(screen.queryByRole('option', { name: /NATO/ })).not.toBeInTheDocument()
+
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(lastParams().tag).toEqual(['archive']))
+  })
+
+  it('never commits free text that is not an existing tag', async () => {
+    const user = userEvent.setup()
+    render(<FilterBar />)
+
+    const input = await screen.findByRole('combobox', { name: 'Filter by tag' })
+    await user.type(input, 'nonexistent{Enter}')
+    expect(lastParams().tag).toBeUndefined()
   })
 
   it('clears one filter from its chip without touching the others', async () => {
@@ -76,7 +103,7 @@ describe('FilterBar', () => {
     render(<FilterBar />)
 
     await user.click(screen.getByRole('button', { name: 'Video' }))
-    await user.click(await screen.findByRole('button', { name: /NATO/ }))
+    await addTag(user, 'NATO')
     await waitFor(() => expect(lastParams().tag).toEqual(['NATO']))
 
     await user.click(screen.getByRole('button', { name: 'Clear NATO' }))
@@ -90,7 +117,7 @@ describe('FilterBar', () => {
     render(<FilterBar />)
 
     await user.click(screen.getByRole('button', { name: 'Video' }))
-    await user.click(await screen.findByRole('button', { name: /NATO/ }))
+    await addTag(user, 'NATO')
     await waitFor(() => expect(lastParams().tag).toEqual(['NATO']))
 
     await user.click(screen.getByRole('button', { name: 'Clear all' }))

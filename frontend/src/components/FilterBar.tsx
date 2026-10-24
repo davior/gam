@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Search, SlidersHorizontal, X } from 'lucide-react'
 import { buildCategoryTree, type CategoryNode } from '@/api/tags'
-import TypeFilterChips, { Chip } from '@/components/TypeFilterChips'
+import TagFilterInput from '@/components/TagFilterInput'
+import TypeFilterChips from '@/components/TypeFilterChips'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
 import { formatDuration } from '@/utils/format'
@@ -188,21 +189,7 @@ export default function FilterBar() {
       </div>
 
       {tags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
-          <span className="mr-1 text-xs text-gray-500 dark:text-gray-400">Tags</span>
-          {tags.slice(0, 12).map((tag) => (
-            <Chip
-              key={tag.id}
-              active={tagFilter.some((t) => t.toLowerCase() === tag.name.toLowerCase())}
-              onClick={() => toggleTag(tag.name)}
-            >
-              {tag.name}
-              {tag.asset_count !== undefined && (
-                <span className="ml-1 tabular-nums opacity-60">{tag.asset_count}</span>
-              )}
-            </Chip>
-          ))}
-        </div>
+        <TagFilterInput tags={tags} selected={tagFilter} onPick={toggleTag} />
       )}
 
       {showMore && (
