@@ -208,6 +208,91 @@ def test_autotag_over_a_selection_proposes_without_applying(library, session, mo
     assert session.exec(select(Tag)).all() == []
 
 
+def test_generate_all_over_a_selection_applies_the_title_and_tags(
+    library, session, monkeypatch, upstream
+):
+    """The one bulk action that writes without review: reviewing dozens of suggestions
+    one asset at a time is the chore the button exists to remove."""
+    from app.models.suggestion import Suggestion
+    from app.models.tag import Tag
+
+    first = _upload_image(library)
+    second = _upload_image(library)
+    configure_provider(session)
+
+    replies = iter(
+        ["A summary.", "A description.", '{"title": "A title", "tags": ["one", "two"]}'] * 2
+    )
+
+    def reply(url, *, headers=None, json_body, timeout, label, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": next(replies)}],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        )
+
+    monkeypatch.setattr(_upstream, "post_json", reply)
+    job = run_job(library, session, monkeypatch, "generate_all", [first["id"], second["id"]])
+
+    assert job.status == "done"
+    assert "2 done" in job.detail
+    assert {t.name for t in session.exec(select(Tag)).all()} == {"one", "two"}
+
+    for created in (first, second):
+        asset = session.get(Asset, created["id"])
+        assert asset.name == "A title"
+        assert asset.summary == "A summary."
+        # Nobody read it, so the record must not say somebody did.
+        assert json.loads(asset.field_provenance)["name"] == "ai"
+
+    # Applied, not left waiting: nothing is pending, so nothing is asked about.
+    assert all(s.status == "accepted" for s in session.exec(select(Suggestion)).all())
+
+
+def test_generate_all_over_a_selection_only_fills_blanks(library, session, monkeypatch, upstream):
+    """A stray Ctrl-A must not replace text or a name somebody already settled on."""
+    from app.models.tag import Tag
+
+    created = _upload_image(library)
+    asset = session.get(Asset, created["id"])
+    asset.name = "My own name"
+    asset.summary = "Mine."
+    asset.description = "Also mine."
+    session.add(asset)
+    session.commit()
+    configure_provider(session)
+
+    prompts = []
+
+    def reply(url, *, headers=None, json_body, timeout, label, **kwargs):
+        prompts.append(json_body)
+        return httpx.Response(
+            200,
+            json={
+                "content": [{"type": "text", "text": '{"title": "A title", "tags": ["one"]}'}],
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        )
+
+    monkeypatch.setattr(_upstream, "post_json", reply)
+    job = run_job(library, session, monkeypatch, "generate_all", [created["id"]])
+
+    assert job.status == "done"
+    session.expire_all()
+    asset = session.get(Asset, created["id"])
+    assert (asset.name, asset.summary, asset.description) == (
+        "My own name",
+        "Mine.",
+        "Also mine.",
+    )
+    # Only autotag ran, so the summary and description calls were never paid for.
+    assert len(prompts) == 1
+    # Tags still land; the title stays a suggestion rather than being thrown away.
+    assert [t.name for t in session.exec(select(Tag)).all()] == ["one"]
+
+
 # ─── the endpoint ────────────────────────────────────────────────────────────
 
 

@@ -34,16 +34,34 @@ _STEPS = (
 )
 
 
-def run(session: Session, asset: Asset, progress: Progress) -> str:
+def run(
+    session: Session, asset: Asset, progress: Progress, *, only_missing: bool = False
+) -> str:
     """Run summarize, describe and autotag over one asset, in turn.
 
     Stops at whichever step first raises — the same "one clear error" behaviour a
     single-action job already has, rather than swallowing a failure to force the
     remaining steps to run against material that step already showed is unusable.
+
+    `only_missing` skips a summary or description the asset already has. The single-asset
+    button is a deliberate request for a fresh answer and overwrites; a run over a whole
+    selection must not quietly replace text someone wrote or generated earlier on the
+    strength of a stray Ctrl-A.
     """
+    steps = [
+        (stage, step)
+        for stage, step in _STEPS
+        if not (
+            only_missing
+            and (
+                (step is summarize.run and asset.summary)
+                or (step is describe.run and asset.description)
+            )
+        )
+    ]
     results = []
-    total = len(_STEPS)
-    for index, (stage, step) in enumerate(_STEPS):
+    total = len(steps)
+    for index, (stage, step) in enumerate(steps):
         base = int(index * 100 / total)
 
         def inner(_stage: str, pct: int, detail: str = "", *, base=base) -> None:

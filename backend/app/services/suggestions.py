@@ -134,13 +134,19 @@ def propose(
     return created
 
 
-def accept(session: Session, asset: Asset, suggestion: Suggestion) -> Suggestion:
+def accept(
+    session: Session, asset: Asset, suggestion: Suggestion, *, automatic: bool = False
+) -> Suggestion:
     """Apply one suggestion for real.
 
     A title is written through `apply_metadata`, the *human* path, which stamps
     provenance "human" — because it is: the user read it and chose it. That also means a
     later enrichment run will not quietly replace a title they approved, which is the
     behaviour FR 8.1.3 is asking for.
+
+    `automatic` is the one exception: a bulk "Generate all" applies its own proposals
+    without anyone reading them, so the title is stamped "ai" instead. Claiming "human"
+    there would make the provenance record say someone approved a name nobody saw.
     """
     if suggestion.status != STATUS_PENDING:
         return suggestion
@@ -154,7 +160,8 @@ def accept(session: Session, asset: Asset, suggestion: Suggestion) -> Suggestion
             if tag_service.attach(session, asset.id, tag.id):
                 asset_service.reindex_ids(session, [asset.id])
     elif suggestion.kind == KIND_TITLE:
-        asset_service.apply_metadata(session, asset, {"name": suggestion.value})
+        write = asset_service.apply_ai_metadata if automatic else asset_service.apply_metadata
+        write(session, asset, {"name": suggestion.value})
     elif suggestion.kind == KIND_ATTRIBUTION:
         decoded = decode_attribution(suggestion)
         if decoded:
@@ -171,6 +178,28 @@ def accept(session: Session, asset: Asset, suggestion: Suggestion) -> Suggestion
     session.commit()
     session.refresh(suggestion)
     return suggestion
+
+
+def accept_proposed(session: Session, asset: Asset, *, rename: bool = True) -> int:
+    """Apply every pending tag and title for this asset, unreviewed. Returns how many.
+
+    With `rename` false the title is left pending rather than applied or discarded: the
+    caller knows the asset already has a name someone chose, and it is still there to
+    accept by hand.
+
+    Attribution is left pending on purpose. A tag or a name is cheap to change back; a
+    credit line is a claim about who made something, backed by evidence a person is meant
+    to read before it is believed (M10).
+    """
+    applied = 0
+    for suggestion in pending_for(session, asset.id):
+        if suggestion.kind not in (KIND_TAG, KIND_TITLE):
+            continue
+        if suggestion.kind == KIND_TITLE and not rename:
+            continue
+        accept(session, asset, suggestion, automatic=True)
+        applied += 1
+    return applied
 
 
 def reject(session: Session, suggestion: Suggestion) -> Suggestion:

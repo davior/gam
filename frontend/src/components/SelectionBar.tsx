@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Eye,
@@ -7,6 +7,7 @@ import {
   ScanText,
   Sparkles,
   Tags,
+  Wand2,
   WandSparkles,
   X,
 } from 'lucide-react'
@@ -41,6 +42,9 @@ const ENRICHMENTS: Array<{
   label: string
   icon: typeof Eye
 }> = [
+  // First, and the only one here that changes names and tags without asking. It is the
+  // single-asset "Generate all" run over everything selected, minus the review step.
+  { action: 'generate_all', label: 'Generate all', icon: Wand2 },
   { action: 'extract_text', label: 'Extract text', icon: ScanText },
   { action: 'describe', label: 'Describe', icon: Eye },
   { action: 'summarize', label: 'Summarise', icon: FileText },
@@ -68,6 +72,21 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
   const [unavailable, setUnavailable] = useState(false)
 
   const ids = useMemo(() => [...selected], [selected])
+
+  // Names and tags are on the cards, so unlike the other bulk actions this one leaves the
+  // grid stale when it finishes. Remembers which assets it was started over — the
+  // selection may have changed or been cleared by the time the job ends.
+  const refreshAsset = useLibraryStore((s) => s.refreshAsset)
+  const generatedIds = useRef<string[] | null>(null)
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (wasRunning.current && !bulkRunning && generatedIds.current) {
+      const finished = generatedIds.current
+      generatedIds.current = null
+      void Promise.all(finished.map((id) => refreshAsset(id)))
+    }
+    wasRunning.current = bulkRunning
+  }, [bulkRunning, refreshAsset])
 
   // In the order they were picked, not grid order: for a video the first is the start
   // frame and the second the end frame, and clicking them in that order is how anyone
@@ -100,6 +119,7 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
     setUnavailable(false)
     try {
       await enrichmentApi.bulk(action, ids)
+      generatedIds.current = action === 'generate_all' ? ids : null
       await refreshActivity()
     } catch (err) {
       const code = apiErrorCode(err)
