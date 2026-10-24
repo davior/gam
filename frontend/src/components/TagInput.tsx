@@ -43,6 +43,10 @@ export default function TagInput({
   const [draft, setDraft] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
+  // Whether the keyboard has moved into the menu. Without it, the first suggestion is
+  // always "highlighted", so typing "Industrial" and pressing Enter would silently
+  // swap in "Fourth Industrial Revolution" and the typed name could never be added.
+  const [navigated, setNavigated] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const attached = useMemo(() => new Set(tags.map((t) => t.name.toLowerCase())), [tags])
@@ -69,12 +73,15 @@ export default function TagInput({
     onAdd([name])
     setDraft('')
     setActive(0)
+    setNavigated(false)
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter' || event.key === ',') {
       event.preventDefault()
-      const chosen = open && matches[active] ? matches[active].name : draft
+      // A comma is a delimiter for what was typed; only Enter can pick a suggestion.
+      const picked = event.key === 'Enter' && navigated && open && matches[active]
+      const chosen = picked ? matches[active].name : draft
       commit(chosen)
       return
     }
@@ -87,11 +94,13 @@ export default function TagInput({
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setOpen(true)
+      setNavigated(true)
       setActive((i) => Math.min(i + 1, matches.length - 1))
       return
     }
     if (event.key === 'ArrowUp') {
       event.preventDefault()
+      setNavigated(true)
       setActive((i) => Math.max(i - 1, 0))
       return
     }
@@ -147,6 +156,7 @@ export default function TagInput({
               setDraft(e.target.value)
               setOpen(true)
               setActive(0)
+              setNavigated(false)
             }}
             onFocus={() => setOpen(true)}
             // A timeout, not a plain blur handler: clicking a suggestion blurs the
@@ -168,7 +178,10 @@ export default function TagInput({
                     type="button"
                     role="option"
                     aria-selected={index === active}
-                    onMouseEnter={() => setActive(index)}
+                    onMouseEnter={() => {
+                      setActive(index)
+                      setNavigated(true)
+                    }}
                     onClick={() => commit(tag.name)}
                     className={`flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs ${
                       index === active
