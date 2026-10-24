@@ -633,3 +633,45 @@ describe('LibraryView generations (M8)', () => {
     expect(screen.getByRole('form', { name: 'Generate an image' })).toBeVisible()
   })
 })
+
+describe('LibraryView paging', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('fetches the next page once the first has rendered', async () => {
+    /**
+     * The sentinel is not in the DOM while the first page loads, so an observer attached
+     * only on mount never saw it and the library stopped at page one. This observer
+     * reports intersecting as soon as it is given something to watch, which is what a
+     * real one does for an element already on screen.
+     */
+    class VisibleObserver {
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      observe() {
+        this.callback(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver
+        )
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', VisibleObserver)
+
+    const list = vi.spyOn(assetsApi, 'list').mockImplementation(async (params) => {
+      const offset = params?.offset ?? 0
+      return {
+        data: offset === 0 ? ASSETS.slice(0, 2) : ASSETS.slice(2),
+        total: ASSETS.length,
+        limit: 60,
+        offset,
+      }
+    })
+
+    render(<LibraryView />)
+
+    expect(await screen.findByText('Third')).toBeInTheDocument()
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ offset: 2 }))
+  })
+})
