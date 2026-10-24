@@ -112,9 +112,11 @@ describe('SelectionBar enrichment', () => {
     await waitFor(() => expect(bulk).toHaveBeenCalledWith('summarize', ['a1', 'a2']))
   })
 
-  it('generates everything for the selection and re-reads it once the run ends', async () => {
+  it('generates all, then re-reads the selection when the run ends', async () => {
     const bulk = vi.spyOn(enrichmentApi, 'bulk').mockResolvedValue(job())
-    const refreshAsset = vi.spyOn(useLibraryStore.getState(), 'refreshAsset').mockResolvedValue()
+    const refreshAsset = vi
+      .spyOn(useLibraryStore.getState(), 'refreshAsset')
+      .mockResolvedValue()
     renderBar()
 
     await userEvent.click(screen.getByRole('button', { name: /generate all/i }))
