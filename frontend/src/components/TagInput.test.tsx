@@ -100,4 +100,15 @@ describe('TagInput', () => {
     await user.keyboard('{ArrowDown}{Enter}')
     expect(onAdd).toHaveBeenCalledWith(['beta'])
   })
+
+  it('commits what was typed, not the auto-highlighted suggestion, on Enter or comma', async () => {
+    const { onAdd, user } = setup({
+      suggestions: [tag('t1', 'Fourth Industrial Revolution')],
+    })
+    const input = screen.getByRole('combobox')
+    await user.type(input, 'Industrial{Enter}')
+    expect(onAdd).toHaveBeenLastCalledWith(['Industrial'])
+    await user.type(input, 'Industrial,')
+    expect(onAdd).toHaveBeenLastCalledWith(['Industrial'])
+  })
 })
