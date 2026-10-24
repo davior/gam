@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { AxiosError } from 'axios'
@@ -124,9 +124,11 @@ describe('SelectionBar enrichment', () => {
 
     // The names and tags it applied are on the cards, which only know what they were
     // last told — so nothing is re-read until the job is over.
-    useActivityStore.setState({ jobs: [job()] })
+    // Each in its own act(): batched into one render the component would never see the
+    // job running, and so never see it finish.
+    await act(async () => useActivityStore.setState({ jobs: [job()] }))
     expect(refreshAsset).not.toHaveBeenCalled()
-    useActivityStore.setState({ jobs: [job({ status: 'done' })] })
+    await act(async () => useActivityStore.setState({ jobs: [job({ status: 'done' })] }))
 
     await waitFor(() => expect(refreshAsset).toHaveBeenCalledTimes(2))
     expect(refreshAsset).toHaveBeenCalledWith('a1')
