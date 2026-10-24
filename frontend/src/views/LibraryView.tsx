@@ -68,6 +68,15 @@ export default function LibraryView() {
 
   // Infinite scroll. An observer rather than a scroll handler: it does not fire on
   // every pixel, and it keeps working if the grid is put in a different container.
+  //
+  // Keyed on `loading` and the loaded count, not just `loadMore`. The sentinel only
+  // exists once the first page is in, so an effect that ran once on mount found no
+  // element and never attached — the grid stopped at page one for good. Re-attaching
+  // after each page matters for the same reason: an observer reports on *changes* in
+  // visibility, so a sentinel that is still on screen after a page lands (a tall
+  // window, small cards) would never ask for the next one. A fresh observer always
+  // reports its initial state.
+  const loadedCount = assets.length
   useEffect(() => {
     const sentinel = sentinelRef.current
     if (!sentinel) return
@@ -82,7 +91,7 @@ export default function LibraryView() {
     )
     observer.observe(sentinel)
     return () => observer.disconnect()
-  }, [loadMore])
+  }, [loadMore, loading, loadedCount])
 
   // A URL import or a generation finishes in the background, so nothing else would put
   // what it made in the grid. Keyed on seeing a job go from running to finished rather
