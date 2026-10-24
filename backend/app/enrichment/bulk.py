@@ -19,7 +19,16 @@ from typing import Callable, Optional
 
 from sqlmodel import Session
 
-from app.enrichment import attribute, autotag, describe, embed, extract_text, summarize
+from app.enrichment import (
+    attribute,
+    autotag,
+    describe,
+    embed,
+    extract_text,
+    generate_all,
+    summarize,
+)
+from app.ingest.filetypes import display_name_from
 from app.models.asset import Asset
 from app.models.job import (
     KIND_ATTRIBUTE,
@@ -27,9 +36,11 @@ from app.models.job import (
     KIND_DESCRIBE,
     KIND_EMBED,
     KIND_EXTRACT_TEXT,
+    KIND_GENERATE_ALL,
     KIND_SUMMARIZE,
 )
 from app.providers.base import ProviderUnavailable
+from app.services import suggestions as suggestion_service
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +49,26 @@ Progress = Callable[..., None]
 # Same reasoning and same number as `backfill.py`: one pathological asset must not end a
 # run, but three in a row indicts the provider rather than the content.
 CONSECUTIVE_FAILURE_LIMIT = 3
+
+def _generate_and_apply(session: Session, asset: Asset, progress: Progress) -> str:
+    """Generate all, then keep what it proposed instead of leaving it for review.
+
+    Single-asset "Generate all" stops at suggestions (FR 9.1.4): one asset's worth is
+    reviewable at a glance. Across a selection of dozens that review is the chore the
+    person pressed the button to avoid, so here the title and tags are applied as soon as
+    they exist. Reviewing happens afterwards, in the library, where a wrong tag is one
+    click to remove. Only blanks are filled, though: an existing summary or description
+    is kept, and so is a name that is no longer the one the file arrived with.
+    """
+    # Still carrying the name it was ingested with — the filename, with or without its
+    # extension. Anything else was typed by someone (or generated earlier) and stays.
+    ingested = {asset.original_name, display_name_from(asset.original_name)}
+    detail = generate_all.run(session, asset, progress, only_missing=True)
+    applied = suggestion_service.accept_proposed(
+        session, asset, rename=asset.name in ingested
+    )
+    return f"{detail} · {applied} applied"
+
 
 # What a selection may be put through. Deliberately not "any KIND_": transcription is
 # excluded because it is billed per minute of audio and a mis-click over two hundred
@@ -55,6 +86,7 @@ ACTIONS = {
     # the mis-click that makes transcription too expensive to offer here costs only time.
     # It is also the action most worth having in bulk — documents arrive by the folder.
     KIND_EXTRACT_TEXT: extract_text.run,
+    KIND_GENERATE_ALL: _generate_and_apply,
 }
 
 # A selection has to be reviewable before it is run, and it is the thing standing between
@@ -156,4 +188,5 @@ _STAGES = {
     KIND_AUTOTAG: "Suggesting tags",
     KIND_EMBED: "Embedding",
     KIND_EXTRACT_TEXT: "Reading text",
+    KIND_GENERATE_ALL: "Generating",
 }

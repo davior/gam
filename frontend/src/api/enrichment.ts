@@ -39,9 +39,18 @@ export interface Suggestion {
 /** What a whole selection can be put through. Transcription is deliberately absent —
  *  it is billed per minute of audio, and a mis-click over two hundred videos is an
  *  expensive way to discover it was on the menu. Extracting text is here for the
- *  opposite reason: it calls nothing, and documents arrive by the folder. */
+ *  opposite reason: it calls nothing, and documents arrive by the folder.
+ *
+ *  `generate_all` is the one that writes: over a selection it applies the title and tags
+ *  it comes up with rather than leaving them as suggestions. */
 export type BulkAction =
-  'describe' | 'summarize' | 'autotag' | 'embed' | 'extract_text' | 'attribute'
+  | 'describe'
+  | 'summarize'
+  | 'autotag'
+  | 'embed'
+  | 'extract_text'
+  | 'attribute'
+  | 'generate_all'
 
 /** One readable chunk of a document, in the unit that document naturally has. */
 export interface DocumentPage {

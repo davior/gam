@@ -112,6 +112,25 @@ describe('SelectionBar enrichment', () => {
     await waitFor(() => expect(bulk).toHaveBeenCalledWith('summarize', ['a1', 'a2']))
   })
 
+  it('generates everything for the selection and re-reads it once the run ends', async () => {
+    const bulk = vi.spyOn(enrichmentApi, 'bulk').mockResolvedValue(job())
+    const refreshAsset = vi.spyOn(useLibraryStore.getState(), 'refreshAsset').mockResolvedValue()
+    renderBar()
+
+    await userEvent.click(screen.getByRole('button', { name: /generate all/i }))
+    await waitFor(() => expect(bulk).toHaveBeenCalledWith('generate_all', ['a1', 'a2']))
+
+    // The names and tags it applied are on the cards, which only know what they were
+    // last told — so nothing is re-read until the job is over.
+    useActivityStore.setState({ jobs: [job()] })
+    expect(refreshAsset).not.toHaveBeenCalled()
+    useActivityStore.setState({ jobs: [job({ status: 'done' })] })
+
+    await waitFor(() => expect(refreshAsset).toHaveBeenCalledTimes(2))
+    expect(refreshAsset).toHaveBeenCalledWith('a1')
+    expect(refreshAsset).toHaveBeenCalledWith('a2')
+  })
+
   it('offers embed, which M5 deferred', async () => {
     const bulk = vi.spyOn(enrichmentApi, 'bulk').mockResolvedValue(job())
     renderBar()
