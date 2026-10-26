@@ -38,6 +38,8 @@ from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
 from app.enrichment.generate_all import run as run_generate_all
 from app.enrichment.import_url import run as run_import_url
+from app.enrichment.page_import import PageImportError
+from app.enrichment.page_import import run_track as run_import_track
 from app.enrichment.source import NoSourceMaterial
 from app.enrichment.subvideo import SubvideoExtractionError
 from app.enrichment.summarize import run as run_summarize
@@ -72,6 +74,7 @@ from app.models.job import (
     GENERATION_JOB_KINDS,
     KIND_GENERATE,
     KIND_GENERATE_ALL,
+    KIND_IMPORT_TRACK,
     KIND_IMPORT_URL,
     KIND_SUMMARIZE,
     KIND_TRANSCRIBE,
@@ -351,6 +354,15 @@ def _run(job_id: str, q: JobQueue) -> None:
                     # finished row, which is the first thing to look at when an import
                     # produced something unexpected.
                     job.payload = _with_created_asset(job.payload, imported.created_asset_id)
+            elif job.kind == KIND_IMPORT_TRACK:
+                imported_track = run_import_track(session, job, progress)
+                detail = imported_track.detail
+                if imported_track.created_asset_id:
+                    # Merged rather than replacing, as for a URL import: the track's URL
+                    # and what the page said stay readable on the finished row.
+                    job.payload = _with_created_asset(
+                        job.payload, imported_track.created_asset_id
+                    )
             elif job.kind == KIND_GENERATE:
                 # The created ids are already in the payload — the job writes each as it
                 # is made, so a restart mid-way knows what not to make again.
@@ -443,6 +455,11 @@ def _run(job_id: str, q: JobQueue) -> None:
         except SubvideoExtractionError as exc:
             message = str(exc)
             _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
+
+        except PageImportError as exc:
+            message = str(exc)
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
