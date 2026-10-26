@@ -17,7 +17,7 @@ from sqlalchemy import and_, func, not_, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, col, delete, select, update
 
-from app import attribution
+from app import attribution, music
 from app.auth import sign_media_key
 from app.clock import utcnow
 from app.config import settings
@@ -240,11 +240,11 @@ def _describe(session: Session, storage: LocalStorage, asset: Asset) -> None:
     session.commit()
     session.refresh(asset)
     _reindex(session, asset)
-    apply_embedded_attribution(session, asset, embedded)
+    apply_embedded_fields(session, asset, embedded)
 
 
-def apply_embedded_attribution(session: Session, asset: Asset, embedded: dict) -> None:
-    """Write harvested attribution into the fields that are still empty.
+def apply_embedded_fields(session: Session, asset: Asset, embedded: dict) -> None:
+    """Write harvested attribution and music profile into the fields that are still empty.
 
     Filtering to empty fields is what makes this safe to run without asking, and what
     makes the library-wide re-harvest safe to run twice: an EXIF `Artist` is a fact about
@@ -258,7 +258,7 @@ def apply_embedded_attribution(session: Session, asset: Asset, embedded: dict) -
     fillable = {
         name: value
         for name, value in embedded.items()
-        if name in attribution.ATTRIBUTION_FIELDS and _is_unset(getattr(asset, name, None))
+        if name in _EMBEDDED_FIELDS and _is_unset(getattr(asset, name, None))
     }
     if not fillable:
         return
@@ -266,7 +266,11 @@ def apply_embedded_attribution(session: Session, asset: Asset, embedded: dict) -
     try:
         apply_embedded_metadata(session, asset, fillable)
     except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
-        logger.warning("Could not store embedded attribution for %s", asset.id, exc_info=True)
+        logger.warning("Could not store embedded metadata for %s", asset.id, exc_info=True)
+
+
+# What a harvest may fill. Not `name` or `description`: see ingest/embedded_metadata.py.
+_EMBEDDED_FIELDS = frozenset(attribution.ATTRIBUTION_FIELDS) | frozenset(music.MUSIC_FIELDS)
 
 
 def _is_unset(value) -> bool:
@@ -347,6 +351,7 @@ def _reindex(session: Session, asset: Asset) -> None:
             asset,
             tags_text=tags.tags_text_for(session, asset.id),
             attribution_text=attribution.index_text(attribution.resolve(asset, parent)),
+            music_text=music.index_text(asset),
         )
     except Exception:  # noqa: BLE001 - see above
         logger.warning("Could not index asset %s for search", asset.id, exc_info=True)
@@ -902,6 +907,13 @@ def to_read_model(
         credit_line=resolved_attribution.credit_line,
         credit=resolved_attribution.credit,
         attribution_inherited=list(resolved_attribution.inherited),
+        music_genres=music.decode_terms(asset.music_genres),
+        music_moods=music.decode_terms(asset.music_moods),
+        music_instruments=music.decode_terms(asset.music_instruments),
+        music_bpm=asset.music_bpm,
+        music_key=asset.music_key,
+        music_vocals=asset.music_vocals,
+        music_energy=asset.music_energy,
         tags=[
             AssetTagRead(id=t.id, name=t.name, category_id=t.category_id)
             for t in (asset_tags or [])

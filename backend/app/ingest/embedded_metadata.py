@@ -20,6 +20,11 @@ What is deliberately *not* harvested:
   `title` is frequently boilerplate from an encoder, and silently renaming somebody's
   asset on upload is a worse failure than leaving a field blank.
 - `description` / `summary` — not attribution, and owned by the enrichment path.
+
+An audio file's tags also carry a music profile — genre, tempo, key, mood — which is read
+here too, by `_music_from_tags`. Same standing as the attribution beside it: what the
+file says, filling blanks, stamped `embedded`. Only for audio: a video's `genre` is the
+film's ("Documentary"), not a description of its soundtrack.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from app import music
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_DOCUMENT, TYPE_IMAGE, TYPE_VIDEO, extension_of
 
 logger = logging.getLogger(__name__)
@@ -62,6 +68,18 @@ _TAG_SOURCES: dict[str, tuple[str, ...]] = {
     "source_url": ("purl", "url", "wxxx", "comment"),
 }
 
+# Music tags, by the key ffprobe reports (lowercased in `probe.py`). ffprobe names the
+# ID3 frames it knows (TCON is `genre`) and passes the rest through under their frame id,
+# so TBPM, TKEY and TMOO arrive as `tbpm`, `tkey`, `tmoo`. The plain names are the Vorbis
+# comment spellings FLAC and Ogg use, and what ffmpeg itself writes into a TXXX frame;
+# `tmpo` is the MP4 tempo atom.
+_MUSIC_TAG_SOURCES: dict[str, tuple[str, ...]] = {
+    "music_genres": ("genre",),
+    "music_moods": ("tmoo", "mood"),
+    "music_bpm": ("tbpm", "bpm", "tmpo", "tempo"),
+    "music_key": ("tkey", "initialkey", "initial_key", "key"),
+}
+
 
 def harvest(
     path: Path,
@@ -76,7 +94,10 @@ def harvest(
     never clobber something a person typed.
     """
     try:
-        if asset_type in (TYPE_VIDEO, TYPE_AUDIO):
+        if asset_type == TYPE_AUDIO:
+            tags = probe_tags or {}
+            return {**_from_container_tags(tags), **_music_from_tags(tags)}
+        if asset_type == TYPE_VIDEO:
             return _from_container_tags(probe_tags or {})
         if asset_type == TYPE_IMAGE:
             return _from_image(path)
@@ -124,6 +145,52 @@ def _from_container_tags(tags: Mapping[str, str]) -> dict[str, Any]:
 
             found[field_name] = value
             break
+
+    return found
+
+
+def _music_from_tags(tags: Mapping[str, str]) -> dict[str, Any]:
+    """A music profile out of an audio file's tag block, in column form.
+
+    Vocals are only ever inferred from evidence a writer left on purpose: a lyrics frame
+    means words are sung, and a genre of "Instrumental" (ID3v1 genre 33) means none are.
+    Anything else leaves it unknown — guessing "instrumental" for an untagged track would
+    put songs under every search for music without words.
+    """
+    found: dict[str, Any] = {}
+
+    for key in _MUSIC_TAG_SOURCES["music_genres"]:
+        genres = music.split_terms(tags.get(key))
+        if genres:
+            found["music_genres"] = music.encode_terms(genres)
+            if any(genre.lower() == "instrumental" for genre in genres):
+                found["music_vocals"] = False
+            break
+
+    for key in _MUSIC_TAG_SOURCES["music_moods"]:
+        moods = music.split_terms(tags.get(key))
+        if moods:
+            found["music_moods"] = music.encode_terms(moods)
+            break
+
+    for key in _MUSIC_TAG_SOURCES["music_bpm"]:
+        bpm = music.parse_bpm(tags.get(key))
+        if bpm is not None:
+            found["music_bpm"] = bpm
+            break
+
+    for key in _MUSIC_TAG_SOURCES["music_key"]:
+        musical_key = music.clean_key(tags.get(key))
+        if musical_key:
+            found["music_key"] = musical_key
+            break
+
+    # ID3 USLT arrives as `lyrics` or `lyrics-eng`; Vorbis as `lyrics` or `unsyncedlyrics`.
+    if any(
+        (name.startswith("lyrics") or name == "unsyncedlyrics") and (value or "").strip()
+        for name, value in tags.items()
+    ):
+        found["music_vocals"] = True
 
     return found
 

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from sqlmodel import Session, col, select
 
+from app import music
 from app.embeddings import EmbeddingError, build_embedder
 from app.models.asset import Asset
 from app.models.embedding import OWNER_ASSET, OWNER_SEGMENT
@@ -58,7 +59,14 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
 
 def _embed_asset_text(session: Session, asset: Asset, embedder) -> int:
     """One vector for what the asset *is*, as opposed to what is said in it."""
-    parts = [asset.name or "", asset.description or "", asset.summary or ""]
+    # The music profile rides along so "tense slow piano" finds a track by meaning, not
+    # only by the exact words the keyword index holds. Empty for everything but music.
+    parts = [
+        asset.name or "",
+        asset.description or "",
+        asset.summary or "",
+        music.index_text(asset),
+    ]
     text = "\n".join(part for part in parts if part.strip()).strip()
     if not text:
         return 0

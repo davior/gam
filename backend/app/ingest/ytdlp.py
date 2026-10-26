@@ -34,6 +34,7 @@ import yt_dlp
 from fastapi import HTTPException, status
 from yt_dlp.utils import DownloadCancelled, DownloadError
 
+from app import music
 from app.config import settings
 from app.ingest.embedded_metadata import normalise_partial_date
 from app.jobs.runner import JobCancelled
@@ -517,6 +518,10 @@ class ImportedMetadata:
     # yt-dlp's name for the site ("youtube", "rumble"), for labelling where tags and
     # captions came from.
     extractor: str = ""
+    # Music profile columns, in column form. Only the genre: it is the one music field
+    # sites report (SoundCloud and Bandcamp do; YouTube's `categories` is the site's own
+    # taxonomy, "Music" for every song, and says nothing about which music).
+    music: dict[str, Any] = field(default_factory=dict)
 
     @property
     def source_url(self) -> Optional[str]:
@@ -566,6 +571,11 @@ def metadata_from_info(info: dict) -> ImportedMetadata:
     if published:
         attribution["published_date"] = published
 
+    genres = info.get("genres")
+    if not isinstance(genres, (list, tuple)):
+        genres = music.split_terms(info.get("genre"))
+    encoded_genres = music.encode_terms(genres)
+
     return ImportedMetadata(
         title=title[:255],
         description=description,
@@ -573,6 +583,7 @@ def metadata_from_info(info: dict) -> ImportedMetadata:
         tags=_tags(info.get("tags")),
         chapters=_chapters(info.get("chapters")),
         extractor=_text(info.get("extractor_key") or info.get("extractor")).lower(),
+        music={"music_genres": encoded_genres} if encoded_genres else {},
     )
 
 

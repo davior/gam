@@ -36,7 +36,7 @@ from app.enrichment.deepgram import Transcript
 from app.enrichment.transcribe import store_transcript
 from app.ingest import captions as caption_parser
 from app.ingest import thumbnails, ytdlp
-from app.ingest.filetypes import SOURCE_URL, TYPE_IMAGE
+from app.ingest.filetypes import SOURCE_URL, TYPE_AUDIO, TYPE_IMAGE
 from app.ingest.ytdlp import ImportedMetadata, UrlImportError
 from app.jobs.runner import readable_error, set_fields
 from app.models.asset import Asset
@@ -324,6 +324,10 @@ def _apply_metadata(session: Session, asset: Asset, meta: ImportedMetadata) -> N
     changes["retrieved_at"] = utcnow()
     if meta.description:
         changes["description"] = meta.description
+    # A genre describes the music only when the import is music. A video's "genre" is
+    # the programme's, which is not what the music profile records.
+    if asset.asset_type == TYPE_AUDIO:
+        changes.update(meta.music)
     try:
         asset_service.apply_embedded_metadata(session, asset, changes)
     except Exception:  # noqa: BLE001 - the video is in; losing its metadata must not undo that

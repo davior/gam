@@ -79,6 +79,20 @@ export interface Asset {
   credit: string
   attribution_inherited: string[]
 
+  /** What a track sounds like, so Video Creator can find music that fits a scene. Read
+   *  from the file's own tags (ID3, Vorbis, MP4) where present, otherwise typed in the
+   *  Music tab. Not inherited by a clip: an excerpt can be the quiet intro of a loud
+   *  track. Lists are empty, and the rest null, when nothing is known. */
+  music_genres: string[]
+  music_moods: string[]
+  music_instruments: string[]
+  music_bpm: number | null
+  /** In the notation the file or person wrote it: "Am", "A minor", Camelot "8A". */
+  music_key: string | null
+  /** Null is "not known", which is not the same as false, "instrumental". */
+  music_vocals: boolean | null
+  music_energy: MusicEnergy | null
+
   /** M8. How a generated asset was made — enough to make it again. Null for anything
    *  fal did not produce. The bases are named inside it, not as `parent_asset_id`: a
    *  parent would lend this its attribution and put it in the base's Clip tab. */
@@ -152,7 +166,20 @@ export interface AssetUpdate {
   retrieved_at?: string | null
   license?: string | null
   credit_line?: string | null
+
+  /** A list replaces the stored one whole; an empty list clears it. */
+  music_genres?: string[]
+  music_moods?: string[]
+  music_instruments?: string[]
+  music_bpm?: number | null
+  music_key?: string | null
+  music_vocals?: boolean | null
+  music_energy?: MusicEnergy | null
 }
+
+export const MUSIC_ENERGY_LEVELS = ['low', 'medium', 'high'] as const
+
+export type MusicEnergy = (typeof MUSIC_ENERGY_LEVELS)[number]
 
 /** The attribution fields, in the order the panel shows them. */
 export const ATTRIBUTION_FIELDS = [

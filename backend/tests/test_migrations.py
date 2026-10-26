@@ -444,3 +444,42 @@ def test_asset_fts_downgrade_also_repopulates(alembic_config):
             "SELECT asset_id FROM asset_fts WHERE asset_fts MATCH 'Giordano'"
         ).fetchone()
         assert hit is not None and hit[0] == "a1"
+
+
+def test_asset_fts_rebuild_keeps_the_index_and_adds_music(alembic_config):
+    """Seeds an index entry and a profile at the revision before the rebuild, and
+    asserts both are searchable after: the only assertion that catches a missing
+    repopulate, which a column comparison passes."""
+    config, db_path = alembic_config
+    command.upgrade(config, "c3a8f15e7b20")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO asset (id, user_id, name, asset_type, source, storage_key,"
+            " size_bytes, field_provenance, upload_date, modified_date, metadata_modified_date,"
+            " publisher, music_genres, music_moods, music_vocals, music_energy)"
+            " VALUES ('a1', 'u', 'Caravan theme', 'audio', 'local_upload', 'k1',"
+            " 100, '{}', '2026-01-01', '2026-01-01', '2026-01-01',"
+            " 'Modern Wisdom', '[\"Cinematic\"]', '[\"Tense\"]', 0, 'low')"
+        )
+        conn.execute(
+            "INSERT INTO asset_fts (asset_id, user_id, name, description, summary, tags_text,"
+            " attribution_text) VALUES ('a1', 'u', 'Caravan theme', '', '', '', 'Modern Wisdom')"
+        )
+        conn.commit()
+
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM asset_fts").fetchone()[0] == 1
+        for term in ("Caravan", "Wisdom", "Cinematic", "Tense", "instrumental", "low"):
+            hit = conn.execute(
+                "SELECT asset_id FROM asset_fts WHERE asset_fts MATCH ?", (term,)
+            ).fetchone()
+            assert hit is not None and hit[0] == "a1", f"not findable by {term!r}"
+
+    command.downgrade(config, "c3a8f15e7b20")
+
+    with sqlite3.connect(db_path) as conn:
+        hit = conn.execute("SELECT asset_id FROM asset_fts WHERE asset_fts MATCH 'Caravan'").fetchone()
+        assert hit is not None and hit[0] == "a1"

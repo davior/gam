@@ -209,7 +209,7 @@ def test_a_harvest_never_overwrites_a_value_already_there(library, session):
     stored = session.exec(select(Asset)).first()
 
     asset_service.apply_metadata(session, stored, {"creator": "The actual photographer"})
-    asset_service.apply_embedded_attribution(
+    asset_service.apply_embedded_fields(
         session, stored, {"creator": "Jane Doe", "publisher": "BBC"}
     )
     session.refresh(stored)

@@ -9,6 +9,10 @@ One job walks the lot, for the same reasons `backfill.py` gives: one cancellable
 one progress bar, one line in the activity feed rather than a wall of near-identical
 ones.
 
+It fills an audio file's music profile from the same tag block at the same time — genre,
+tempo, key and mood — so a library of songs uploaded before that existed catches up in
+the same pass rather than needing a job of its own.
+
 Safe to run repeatedly. It only ever fills fields that are blank, so a second run is a
 no-op over everything the first one filled and over everything the user has since
 corrected by hand — there is no "already harvested" flag to keep, and no way for this to
@@ -79,7 +83,7 @@ def run(session: Session, user_id: str, progress: Progress) -> HarvestResult:
             continue
 
         before = {name: getattr(asset, name, None) for name in found}
-        asset_service.apply_embedded_attribution(session, asset, found)
+        asset_service.apply_embedded_fields(session, asset, found)
         session.refresh(asset)
         if any(getattr(asset, name, None) != before[name] for name in found):
             attributed += 1

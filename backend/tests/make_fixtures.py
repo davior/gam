@@ -74,6 +74,7 @@ def main() -> None:
     _write_minimal_pdf(FIXTURES / "sample_document.pdf")
     _write_office_documents()
     _write_attributed_fixtures()
+    _write_music_fixtures()
 
     print("wrote:", ", ".join(sorted(p.name for p in FIXTURES.iterdir())))
 
@@ -186,6 +187,44 @@ def _write_attributed_pdf(target: Path) -> None:
         + b"%%EOF\n"
     )
     target.write_bytes(bytes(out))
+
+
+def _write_music_fixtures() -> None:
+    """Audio carrying a music profile in its tags, in the two tag systems that matter.
+
+    ID3 and Vorbis comments spell every one of these differently (TBPM against BPM, TKEY
+    against INITIALKEY), and ffprobe passes the unknown ID3 frames through under their
+    four-letter ids. A mocked tag dict would encode a guess about all of that; these
+    files are what a tagger actually leaves.
+    """
+    # ID3v2.4. ffmpeg writes a four-letter uppercase key as that frame, so TBPM, TKEY
+    # and TMOO are real frames here rather than TXXX entries. Two genres in one TCON,
+    # which is how v2.4 stores several.
+    run([
+        "ffmpeg", "-y", "-nostdin",
+        "-f", "lavfi", "-i", "sine=frequency=220:duration=1",
+        "-c:a", "libmp3lame", "-id3v2_version", "4",
+        "-metadata", "artist=Jane Doe",
+        "-metadata", "genre=Ambient;Cinematic",
+        "-metadata", "TBPM=92",
+        "-metadata", "TKEY=Am",
+        "-metadata", "TMOO=Tense",
+        str(FIXTURES / "music_audio.mp3"),
+    ])
+
+    # FLAC, Vorbis comments. A lyrics comment, which is the one thing that says a track
+    # has vocals.
+    run([
+        "ffmpeg", "-y", "-nostdin",
+        "-f", "lavfi", "-i", "sine=frequency=330:duration=1",
+        "-c:a", "flac",
+        "-metadata", "genre=Folk",
+        "-metadata", "BPM=128 BPM",
+        "-metadata", "MOOD=Uplifting",
+        "-metadata", "INITIALKEY=8A",
+        "-metadata", "LYRICS=La la la",
+        str(FIXTURES / "music_audio.flac"),
+    ])
 
 
 def _write_office_documents() -> None:

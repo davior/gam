@@ -8,7 +8,8 @@ import type { GenerationModel, GenerationOptions } from '@/api/generate'
  * Spreading this into each keeps them compiling without duplicating the list eight times —
  * and means the next field added to `Asset` is one edit here rather than eight. M8's
  * `generation` is that next field, so it rides along here despite the name: an asset no
- * one generated is the default every one of those files wants.
+ * one generated is the default every one of those files wants. The empty music profile
+ * rides along for the same reason.
  *
  * Deliberately only these fields rather than a whole `makeAsset` factory: each of those
  * files varies a different part of the asset, and replacing their factories with one
@@ -27,6 +28,13 @@ export const noAttribution: Pick<
   | 'credit'
   | 'attribution_inherited'
   | 'generation'
+  | 'music_genres'
+  | 'music_moods'
+  | 'music_instruments'
+  | 'music_bpm'
+  | 'music_key'
+  | 'music_vocals'
+  | 'music_energy'
 > = {
   source_url: null,
   creator: null,
@@ -39,6 +47,13 @@ export const noAttribution: Pick<
   credit: '',
   attribution_inherited: [],
   generation: null,
+  music_genres: [],
+  music_moods: [],
+  music_instruments: [],
+  music_bpm: null,
+  music_key: null,
+  music_vocals: null,
+  music_energy: null,
 }
 
 /**

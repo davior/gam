@@ -5,6 +5,7 @@ import {
   Info,
   Link2,
   Mic,
+  Music,
   Pencil,
   Quote,
   Scissors,
@@ -33,6 +34,7 @@ import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import GenerateTab from '@/components/GenerateTab'
+import MusicPanel from '@/components/MusicPanel'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
@@ -681,6 +683,18 @@ export default function AssetDetail({
             label: 'Generate',
             icon: WandSparkles,
             content: <GenerateTab key={asset.id} asset={asset} usage={usage} />,
+          },
+        ]
+      : []),
+    // Audio only. A video's soundtrack is not what a search for music wants back, and
+    // the profile describes a track, not a programme.
+    ...(asset.asset_type === 'audio'
+      ? [
+          {
+            id: 'music',
+            label: 'Music',
+            icon: Music,
+            content: <MusicPanel asset={asset} />,
           },
         ]
       : []),
