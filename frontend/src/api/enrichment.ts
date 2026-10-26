@@ -62,6 +62,14 @@ export interface DocumentPage {
 }
 
 export const enrichmentApi = {
+  /** Measure one track's tempo, key and energy from its sound. Fills blanks only, and
+   *  calls no provider, so it needs nothing configured. */
+  analyzeMusic(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/analyze-music`)
+      .then((r) => r.data.data)
+  },
+
   summarize(assetId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/summarize`)

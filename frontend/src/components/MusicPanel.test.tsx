@@ -1,7 +1,10 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router-dom'
+import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import MusicPanel from '@/components/MusicPanel'
+import { enrichmentApi } from '@/api/enrichment'
 import { splitTerms } from '@/utils/terms'
 import { useLibraryStore } from '@/stores/library'
 import type { Asset } from '@/api/assets'
@@ -40,6 +43,11 @@ function asset(overrides: Partial<Asset> = {}): Asset {
 
 const update = vi.fn().mockResolvedValue(undefined)
 
+// The measure button renders a Link (to Settings, on a provider error), so needs a router.
+function renderPanel(panel: React.ReactElement) {
+  return render(<MemoryRouter>{panel}</MemoryRouter>)
+}
+
 beforeEach(() => {
   update.mockClear()
   useLibraryStore.setState({ update })
@@ -59,7 +67,7 @@ describe('splitTerms', () => {
 
 describe('MusicPanel', () => {
   it('shows what the file tags already said', () => {
-    render(
+    renderPanel(
       <MusicPanel
         asset={asset({
           music_genres: ['Ambient', 'Cinematic'],
@@ -79,7 +87,7 @@ describe('MusicPanel', () => {
   it('sends only the fields that changed', async () => {
     // A BPM read from the file must keep its "embedded" stamp until someone edits it.
     const user = userEvent.setup()
-    render(<MusicPanel asset={asset({ music_bpm: 92 })} />)
+    renderPanel(<MusicPanel asset={asset({ music_bpm: 92 })} />)
 
     await user.type(screen.getByLabelText('Moods'), 'Tense, dark')
     await user.selectOptions(screen.getByLabelText('Energy'), 'low')
@@ -93,7 +101,9 @@ describe('MusicPanel', () => {
 
   it('clears a field back to not known', async () => {
     const user = userEvent.setup()
-    render(<MusicPanel asset={asset({ music_vocals: true, music_genres: ['Folk'] })} />)
+    renderPanel(
+      <MusicPanel asset={asset({ music_vocals: true, music_genres: ['Folk'] })} />
+    )
 
     await user.selectOptions(screen.getByLabelText('Vocals'), '')
     await user.clear(screen.getByLabelText('Genres'))
@@ -102,9 +112,42 @@ describe('MusicPanel', () => {
     expect(update).toHaveBeenCalledWith('a1', { music_genres: [], music_vocals: null })
   })
 
+  it('measures the track from its sound on request', async () => {
+    const start = vi.spyOn(enrichmentApi, 'analyzeMusic').mockResolvedValue({
+      id: 'j1',
+      kind: 'enrichment',
+      action: 'analyze_music',
+      status: 'queued',
+      stalled: false,
+      stage: 'Queued',
+      progress: 0,
+      detail: '',
+      asset_id: 'a1',
+      asset_name: 'Caravan theme',
+      model: '',
+      result_asset_id: null,
+      result_asset_ids: [],
+      error_message: null,
+      created_at: '2026-10-26T00:00:00Z',
+      updated_at: '2026-10-26T00:00:00Z',
+    })
+    const user = userEvent.setup()
+    renderPanel(<MusicPanel asset={asset()} />)
+
+    await user.click(
+      screen.getByRole('button', { name: /Measure tempo, key and energy/ })
+    )
+    expect(start).toHaveBeenCalledWith('a1')
+  })
+
+  it('offers no measuring on a clip, which has no sound of its own', () => {
+    renderPanel(<MusicPanel asset={asset({ parent_asset_id: 'p1' })} />)
+    expect(screen.queryByRole('button', { name: /Measure/ })).not.toBeInTheDocument()
+  })
+
   it('will not save a tempo that is not one', async () => {
     const user = userEvent.setup()
-    render(<MusicPanel asset={asset()} />)
+    renderPanel(<MusicPanel asset={asset()} />)
 
     await user.type(screen.getByLabelText('Tempo (BPM)'), '2019')
 

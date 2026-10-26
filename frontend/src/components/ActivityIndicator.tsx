@@ -21,6 +21,9 @@ const LABELS: Record<string, string> = {
   extract_text: 'Reading text',
   import_url: 'Importing',
   generate: 'Generating',
+  harvest_attribution: 'Reading file metadata',
+  analyze_music: 'Analysing music',
+  analyze_music_library: 'Analysing your music',
 }
 
 function subject(job: ActivityJob): string {

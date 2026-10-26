@@ -18,6 +18,7 @@ from app.auth import CurrentUser
 from app.database import get_session
 from app.embeddings import build_embedder
 from app.enrichment import bulk
+from app.enrichment.analyze_music import analysable
 from app.enrichment.describe import describable
 from app.enrichment.extract_text import extractable
 from app.enrichment.summarize import summarisable
@@ -25,6 +26,7 @@ from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
 from app.models.job import (
+    KIND_ANALYZE_MUSIC,
     KIND_ATTRIBUTE,
     KIND_AUTOTAG,
     KIND_BULK_ENRICH,
@@ -176,6 +178,39 @@ def start_attribute(
         )
 
     job = enrichment_jobs.submit(session, asset, KIND_ATTRIBUTE)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.post(
+    "/{asset_id}/analyze-music", response_model=DataResponse[ActivityJobRead], status_code=202
+)
+def start_analyze_music(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Measure one track's tempo, key and energy, filling whichever are still blank.
+
+    No provider check, unlike the endpoints around it: nothing here calls one.
+    """
+    asset = _owned_asset(asset_id, user.id, session)
+
+    if not analysable(asset):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_analysable",
+                "message": "Only audio files up to 20 minutes long are analysed as music",
+            },
+        )
+
+    if enrichment_jobs.active_job(session, asset.id, KIND_ANALYZE_MUSIC) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"code": "already_running", "message": "This track is already being analysed"},
+        )
+
+    job = enrichment_jobs.submit(session, asset, KIND_ANALYZE_MUSIC)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
 
 

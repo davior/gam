@@ -24,6 +24,8 @@ from app.config import settings
 from app.database import engine
 from app.embeddings import EmbeddingError, build_embedder
 from app.enrichment.embed import EmbeddingUnavailable
+from app.enrichment.analyze_music import run as run_analyze_music
+from app.enrichment.analyze_music import run_library as run_analyze_music_library
 from app.enrichment.attribute import run as run_attribute
 from app.enrichment.backfill import run as run_backfill
 from app.enrichment.harvest_attribution import run as run_harvest_attribution
@@ -42,6 +44,7 @@ from app.enrichment.summarize import run as run_summarize
 from app.enrichment.transcribe import TranscriptionError
 from app.enrichment.transcribe import run as run_transcribe
 from app.generation.errors import GenerationError
+from app.ingest.audio_analysis import AudioAnalysisError
 from app.generation.run import run as run_generate
 from app.ingest.ytdlp import UrlImportError
 from app.providers.base import ProviderError
@@ -55,6 +58,8 @@ from app.jobs.runner import (
 from app.models.asset import Asset
 from app.models.job import (
     EnrichmentJob,
+    KIND_ANALYZE_MUSIC,
+    KIND_ANALYZE_MUSIC_LIBRARY,
     KIND_AUTOTAG,
     KIND_ATTRIBUTE,
     KIND_BACKFILL_EMBEDDINGS,
@@ -360,6 +365,16 @@ def _run(job_id: str, q: JobQueue) -> None:
                 if harvested.failed:
                     # Surfaced rather than swallowed, same as the two runs above.
                     detail += f", {harvested.failed} unreadable"
+            elif job.kind == KIND_ANALYZE_MUSIC:
+                detail = run_analyze_music(session, asset, progress)
+            elif job.kind == KIND_ANALYZE_MUSIC_LIBRARY:
+                analysed = run_analyze_music_library(session, job.user_id, progress)
+                detail = f"{analysed.filled} filled in of {analysed.scanned} analysed"
+                if analysed.not_music:
+                    detail += f", {analysed.not_music} with no beat or key"
+                if analysed.failed:
+                    # Surfaced rather than swallowed, same as the runs above.
+                    detail += f", {analysed.failed} unreadable"
             else:
                 raise TranscriptionError(f"Unknown enrichment kind: {job.kind}")
 
@@ -417,6 +432,11 @@ def _run(job_id: str, q: JobQueue) -> None:
         except TextExtractionError as exc:
             message = str(exc)
             _mark_asset_failed(session, asset, job)
+            set_fields(session, job, status="error", stage="", error_message=message)
+            logger.info("Enrichment job %s failed: %s", job_id, message)
+
+        except AudioAnalysisError as exc:
+            message = str(exc)
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
 

@@ -262,4 +262,12 @@ export const assetsApi = {
       .post<DataResponse<ActivityJob>>('/assets/harvest-attribution')
       .then((r) => r.data.data)
   },
+
+  /** Measure tempo, key and energy for every track still missing one. New uploads are
+   *  analysed as they land; this is for the ones that came before. */
+  analyzeMusicLibrary(): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>('/assets/analyze-music')
+      .then((r) => r.data.data)
+  },
 }
