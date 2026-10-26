@@ -66,6 +66,13 @@ KIND_IMPORT_URL = "import_url"
 # request, fal's request ids and the assets made all ride in `payload`. Outside
 # `ENRICHMENT_KINDS`: it enriches nothing. See docs/m8-ai-generation.md.
 KIND_GENERATE = "generate"
+# Measuring an audio file's tempo, key and energy from its sound (docs/music-profile.md).
+# Per-asset, queued after every audio upload, and in `ENRICHMENT_KINDS` because it acts on
+# one asset; it calls no provider and costs nothing but a second of CPU.
+KIND_ANALYZE_MUSIC = "analyze_music"
+# The same over every audio file in a library, for the ones uploaded before it existed.
+# Library-wide for the reasons `KIND_HARVEST_ATTRIBUTION` is.
+KIND_ANALYZE_MUSIC_LIBRARY = "analyze_music_library"
 
 # Kinds that run on the generation queue rather than the enrichment one. A generation
 # is minutes of waiting on fal, and on the shared queue at concurrency 1 a video would
@@ -83,6 +90,7 @@ ENRICHMENT_KINDS = frozenset(
         KIND_EXTRACT_TEXT,
         KIND_GENERATE_ALL,
         KIND_ATTRIBUTE,
+        KIND_ANALYZE_MUSIC,
     }
 )
 
@@ -95,6 +103,7 @@ LIBRARY_KINDS = frozenset(
         KIND_BACKFILL_EMBEDDINGS,
         KIND_BULK_ENRICH,
         KIND_HARVEST_ATTRIBUTION,
+        KIND_ANALYZE_MUSIC_LIBRARY,
         KIND_IMPORT_URL,
         KIND_GENERATE,
     }

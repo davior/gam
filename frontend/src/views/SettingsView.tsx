@@ -11,6 +11,7 @@ import { apiErrorMessage } from '@/api/client'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { isActive, useActivityStore } from '@/stores/activity'
 import GenerationSettingsPanel from '@/components/GenerationSettings'
+import LibraryScanPanel from '@/components/LibraryScanPanel'
 import ProviderPanel from '@/components/ProviderPanel'
 import StoragePanel from '@/components/StoragePanel'
 import TagPanel from '@/components/TagPanel'
@@ -512,6 +513,7 @@ export default function SettingsView() {
       <UsagePanel />
       <StoragePanel />
       <EmbeddingPanel />
+      <LibraryScanPanel />
       <SpeechPanel />
       <GenerationSettingsPanel />
       <TagPanel />

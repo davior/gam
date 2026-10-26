@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
-import { Check } from 'lucide-react'
+import { AudioWaveform, Check } from 'lucide-react'
 import { MUSIC_ENERGY_LEVELS } from '@/api/assets'
 import type { Asset, AssetUpdate, MusicEnergy } from '@/api/assets'
+import { enrichmentApi } from '@/api/enrichment'
+import EnrichmentButton from '@/components/EnrichmentButton'
 import { useLibraryStore } from '@/stores/library'
 import { splitTerms } from '@/utils/terms'
 import { useSavedFlash } from '@/utils/useSavedFlash'
@@ -139,6 +141,23 @@ export default function MusicPanel({ asset }: Props) {
       <p className="text-xs text-gray-500 dark:text-gray-400">
         What this track sounds like, so Video Creator can find music that fits a scene.
         Anything the file&apos;s own tags said is already filled in.
+      </p>
+
+      {/* Measures from the sound and fills only what is blank, so it can never undo a
+          correction. Tempo, key and energy only: vocals, genre and mood need a person. */}
+      {!asset.parent_asset_id && (
+        <EnrichmentButton
+          assetId={asset.id}
+          action="analyze_music"
+          icon={AudioWaveform}
+          label="Measure tempo, key and energy"
+          runningLabel="Listening…"
+          start={enrichmentApi.analyzeMusic}
+          failureMessage="Could not start the analysis"
+        />
+      )}
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        Measuring fills only empty fields. Clear one first to measure it again.
       </p>
 
       {LIST_FIELDS.map((field) => (

@@ -16,7 +16,11 @@ from app.ingest.filetypes import ASSET_TYPES, SOURCE_GVC, SOURCE_UPLOAD
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_HARVEST_ATTRIBUTION
+from app.models.job import (
+    KIND_ANALYZE_MUSIC_LIBRARY,
+    KIND_EXTRACT_SUBVIDEO,
+    KIND_HARVEST_ATTRIBUTION,
+)
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult
@@ -574,4 +578,30 @@ def start_attribution_harvest(
         )
 
     job = enrichment_jobs.submit_library(session, user.id, KIND_HARVEST_ATTRIBUTION)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+@router.post(
+    "/analyze-music",
+    response_model=DataResponse[ActivityJobRead],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_music_analysis(
+    user: CurrentUser, session: Session = Depends(get_session)
+) -> DataResponse[ActivityJobRead]:
+    """Measure tempo, key and energy for every track in this library still missing one.
+
+    New uploads are analysed as they land, so this is for the ones that came before.
+    Safe to repeat for the reason the harvest above is: it only fills blanks.
+    """
+    if enrichment_jobs.active_library_job(session, user.id, KIND_ANALYZE_MUSIC_LIBRARY):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "Your music is already being analysed",
+            },
+        )
+
+    job = enrichment_jobs.submit_library(session, user.id, KIND_ANALYZE_MUSIC_LIBRARY)
     return DataResponse(data=KINDS["enrichment"].to_activity(job))

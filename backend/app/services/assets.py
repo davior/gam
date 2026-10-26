@@ -38,6 +38,7 @@ from app.ingest.filetypes import (
 from app.ingest.probe import ProbeResult, probe
 from app.models.asset import (
     PROVENANCE_AI,
+    PROVENANCE_ANALYSIS,
     PROVENANCE_EMBEDDED,
     PROVENANCE_HUMAN,
     Asset,
@@ -180,6 +181,7 @@ def _catalogue(
     _reindex(session, asset)
     _describe(session, storage, asset)
     _chain_transcription(session, asset)
+    _chain_music_analysis(session, asset)
     return asset
 
 
@@ -322,6 +324,33 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
         enrichment_jobs.submit(session, asset, KIND_TRANSCRIBE)
     except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
         logger.warning("Could not queue transcription for asset %s", asset.id, exc_info=True)
+
+
+def _chain_music_analysis(session: Session, asset: Asset) -> None:
+    """Measure an audio file's tempo, key and energy the moment it lands.
+
+    Unconditional where transcription is guarded on a key: it calls no provider, costs a
+    second of CPU, and needs nothing configured. It runs after `_describe` has applied the
+    file's own tags, and only fills what they left blank.
+
+    Not every audio file is music. `analyze_music.analysable` keeps long recordings out
+    (a podcast is not going to be a soundtrack), and the analysis itself writes nothing
+    when it finds neither a beat nor a key, which is what speech looks like to it.
+
+    Imports lazily, for the cycle `_chain_transcription` describes.
+    """
+    from app.enrichment.analyze_music import analysable
+    from app.jobs import enrichment as enrichment_jobs
+    from app.models.job import KIND_ANALYZE_MUSIC
+
+    if not analysable(asset):
+        return
+    try:
+        if enrichment_jobs.active_job(session, asset.id, KIND_ANALYZE_MUSIC) is not None:
+            return
+        enrichment_jobs.submit(session, asset, KIND_ANALYZE_MUSIC)
+    except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
+        logger.warning("Could not queue music analysis for asset %s", asset.id, exc_info=True)
 
 
 def _reindex(session: Session, asset: Asset) -> None:
@@ -547,8 +576,18 @@ def apply_embedded_metadata(session: Session, asset: Asset, changes: dict) -> li
     return list(changes.keys())
 
 
+def apply_measured_metadata(session: Session, asset: Asset, changes: dict) -> list[str]:
+    """Write fields GAM measured from the file's content (a tempo, a key, an energy).
+
+    The fourth writer. Callers filter to blank fields first, as `apply_embedded_metadata`'s
+    do: a measurement never overrides a tag, a person or a model.
+    """
+    _apply(session, asset, changes, PROVENANCE_ANALYSIS)
+    return list(changes.keys())
+
+
 def _apply(session: Session, asset: Asset, changes: dict, provenance_value: str) -> None:
-    """The shared body of the three writers above: set the fields, stamp who set them.
+    """The shared body of the writers above: set the fields, stamp who set them.
 
     A malformed `field_provenance` is rebuilt rather than raising. It is a record *about*
     the metadata, and losing that record must never cost the write it describes.

@@ -20,6 +20,11 @@ from app.clock import utcnow
 PROVENANCE_HUMAN = "human"
 PROVENANCE_AI = "ai"
 PROVENANCE_EMBEDDED = "embedded"
+# Measured from the file's content by GAM itself: a tempo, key or energy computed from
+# the audio. Not "ai" (no model guessed it, and nothing was proposed for review) and not
+# "embedded" (no one wrote it into the file). Fills blanks only, like "embedded", because
+# a tag written by someone who heard the track is the better source.
+PROVENANCE_ANALYSIS = "analysis"
 
 
 def new_asset_id() -> str:
