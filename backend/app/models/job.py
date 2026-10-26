@@ -73,6 +73,10 @@ KIND_ANALYZE_MUSIC = "analyze_music"
 # The same over every audio file in a library, for the ones uploaded before it existed.
 # Library-wide for the reasons `KIND_HARVEST_ATTRIBUTION` is.
 KIND_ANALYZE_MUSIC_LIBRARY = "analyze_music_library"
+# One track chosen from a music library's page (enrichment/page_import.py): downloaded,
+# catalogued, and given what the page said about it. A library kind for the reason an
+# import is: the asset does not exist until it has run. The track rides in `payload`.
+KIND_IMPORT_TRACK = "import_track"
 
 # Kinds that run on the generation queue rather than the enrichment one. A generation
 # is minutes of waiting on fal, and on the shared queue at concurrency 1 a video would
@@ -105,6 +109,7 @@ LIBRARY_KINDS = frozenset(
         KIND_HARVEST_ATTRIBUTION,
         KIND_ANALYZE_MUSIC_LIBRARY,
         KIND_IMPORT_URL,
+        KIND_IMPORT_TRACK,
         KIND_GENERATE,
     }
 )

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<!-- Trimmed to the structure of incompetech.com/music/royalty-free/music.html as saved on
+     2026-10-26: the page lists nothing itself; its script holds the genre and album
+     lookup tables and fetches pieces.json beside it. -->
+<html><body><div id="list"></div>
+<script>
+const genres = [
+  { "id": 7, "genre": "Electronica" },
+  { "id": 22, "genre": "Soundtrack" },
+  { "id": 24, "genre": "Unclassifiable" }
+];
+const collections = [
+  {"id":"1","collection_name":"Hard Electronic","collection_category":"Electronic and Rock","code":"12"},
+  {"id":"999","collection_name":"not in a collection","collection_category":"not in a collection","code":"999"}
+];
+fetch('pieces.json').then(r=>r.json()).then(data=>{ allPieces = data; refresh(); });
+</script></body></html>

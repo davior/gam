@@ -21,7 +21,13 @@ from typing import Any, Callable, Dict, List, Optional, Type
 from sqlmodel import Session, col, select
 
 from app.jobs.runner import ACTIVE_STATUSES, JobQueue, is_stale
-from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_GENERATE, KIND_IMPORT_URL, EnrichmentJob
+from app.models.job import (
+    KIND_EXTRACT_SUBVIDEO,
+    KIND_GENERATE,
+    KIND_IMPORT_TRACK,
+    KIND_IMPORT_URL,
+    EnrichmentJob,
+)
 from app.schemas_jobs import ActivityJobRead
 
 
@@ -48,7 +54,9 @@ class JobKind:
 # when the job was queued, so `asset_id` cannot carry them: for an extraction it stays
 # pointed at the source, and an import or a generation has no asset at all until it is
 # done.
-_CREATES_AN_ASSET = frozenset({KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, KIND_GENERATE})
+_CREATES_AN_ASSET = frozenset(
+    {KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, KIND_IMPORT_TRACK, KIND_GENERATE}
+)
 
 
 def _result_asset_ids(job: EnrichmentJob) -> List[str]:

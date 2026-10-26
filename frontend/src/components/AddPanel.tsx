@@ -1,5 +1,6 @@
 import { X } from 'lucide-react'
 import GenerateForm from '@/components/GenerateForm'
+import PageImport from '@/components/PageImport'
 import UploadZone from '@/components/UploadZone'
 import UrlImport from '@/components/UrlImport'
 
@@ -11,8 +12,8 @@ interface Props {
 }
 
 /**
- * The three ways into the library — files, links, and M8's text → image generation —
- * folded behind the library's + button. Generating from existing images starts from
+ * The ways into the library — files, links, pages of music tracks, and M8's text → image
+ * generation — folded behind the library's + button. Generating from existing images starts from
  * those images instead (the selection bar, an asset's Generate tab), since that is where
  * they are picked.
  *
@@ -55,6 +56,7 @@ export default function AddPanel({ open, onClose }: Props) {
       <div className="space-y-3">
         <UploadZone />
         <UrlImport />
+        <PageImport />
         <GenerateForm title="Generate an image" />
       </div>
     </section>
