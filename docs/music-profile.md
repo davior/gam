@@ -67,6 +67,28 @@ a guess would put songs under narration), genre and mood.
 **By hand,** in the asset's Music tab (audio assets only), or through `PATCH
 /api/assets/{id}`, where a list replaces the stored one and `[]` clears it.
 
+## Audio kind
+
+`audio_kind`: `music`, `speech`, `sfx`, or NULL for not known. It decides what happens to
+an audio upload:
+
+| Kind | Set by | Transcribed on upload | Analysed for tempo/key/energy |
+|---|---|---|---|
+| music | A genre or BPM tag; a music page import; by hand | No | Yes |
+| speech | A speech genre tag (Podcast, Speech, Spoken Word, Audiobook…); by hand | Yes | No |
+| sfx | By hand | No | No |
+| not known | Anything else | **Yes**, as before the kind existed | Yes |
+
+Unknown is transcribed on purpose: a voice recording losing its transcript is the costly
+mistake, so only a confident kind skips it. The kind is never guessed from the sound,
+because a podcast over a music bed has a beat and a key. It is decided at upload, from
+tags or from the importer, because transcription is queued the moment a file lands.
+
+Changing it in the Music tab ("This is") catches up: marked speech, an untranscribed
+file is transcribed; marked music, it is measured. Nothing is undone, and the Transcribe
+button works on any kind. Video Creator reads it to offer music, not voice memos, as a
+soundtrack.
+
 ## Search
 
 Genres, moods, instruments, "instrumental"/"vocals" and "<level> energy" go into a new

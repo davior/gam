@@ -147,6 +147,12 @@ class Asset(SQLModel, table=True):
     # "instrumental", or every untagged song would match a search for music without words.
     music_vocals: Optional[bool] = None
     music_energy: Optional[str] = None  # low | medium | high
+    # What the audio is: music | speech | sfx, NULL when not known. Decides whether an
+    # upload is transcribed (music and sound effects are not) and lets Video Creator keep
+    # voice recordings out of a soundtrack search. Set from the file's tags, by a music
+    # page import, or by hand; never guessed from the sound, since a podcast with a music
+    # bed has a beat and a key and would lose its transcript. See app/music.py.
+    audio_kind: Optional[str] = None
 
     # ─── AI generation (M8) ──────────────────────────────────────────────────
     # What made this file, kept so it can be made again. Specified in

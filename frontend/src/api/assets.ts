@@ -92,6 +92,9 @@ export interface Asset {
   /** Null is "not known", which is not the same as false, "instrumental". */
   music_vocals: boolean | null
   music_energy: MusicEnergy | null
+  /** What the audio is. Music and sound effects are not transcribed on upload; null
+   *  ("not known") is, like speech. Set from tags, by a music page import, or by hand. */
+  audio_kind: AudioKind | null
 
   /** M8. How a generated asset was made — enough to make it again. Null for anything
    *  fal did not produce. The bases are named inside it, not as `parent_asset_id`: a
@@ -175,7 +178,12 @@ export interface AssetUpdate {
   music_key?: string | null
   music_vocals?: boolean | null
   music_energy?: MusicEnergy | null
+  audio_kind?: AudioKind | null
 }
+
+export const AUDIO_KINDS = ['music', 'speech', 'sfx'] as const
+
+export type AudioKind = (typeof AUDIO_KINDS)[number]
 
 export const MUSIC_ENERGY_LEVELS = ['low', 'medium', 'high'] as const
 

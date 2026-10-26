@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { AudioWaveform, Check } from 'lucide-react'
 import { MUSIC_ENERGY_LEVELS } from '@/api/assets'
-import type { Asset, AssetUpdate, MusicEnergy } from '@/api/assets'
+import type { Asset, AssetUpdate, AudioKind, MusicEnergy } from '@/api/assets'
 import { enrichmentApi } from '@/api/enrichment'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import { useLibraryStore } from '@/stores/library'
@@ -43,6 +43,13 @@ interface Draft {
   music_key: string
   music_vocals: Vocals
   music_energy: '' | MusicEnergy
+  audio_kind: '' | AudioKind
+}
+
+const KIND_LABELS: Record<AudioKind, string> = {
+  music: 'Music',
+  speech: 'Speech',
+  sfx: 'Sound effect',
 }
 
 function draftFrom(asset: Asset): Draft {
@@ -55,6 +62,7 @@ function draftFrom(asset: Asset): Draft {
     music_vocals:
       asset.music_vocals === null ? '' : asset.music_vocals ? 'vocals' : 'instrumental',
     music_energy: asset.music_energy ?? '',
+    audio_kind: asset.audio_kind ?? '',
   }
 }
 
@@ -121,6 +129,9 @@ export default function MusicPanel({ asset }: Props) {
       if (draft.music_energy !== current.music_energy) {
         changes.music_energy = draft.music_energy || null
       }
+      if (draft.audio_kind !== current.audio_kind) {
+        changes.audio_kind = draft.audio_kind || null
+      }
 
       await update(asset.id, changes)
       flashSaved()
@@ -142,6 +153,29 @@ export default function MusicPanel({ asset }: Props) {
         What this track sounds like, so Video Creator can find music that fits a scene.
         Anything the file&apos;s own tags said is already filled in.
       </p>
+
+      <div>
+        <label className="label" htmlFor="music-audio_kind">
+          This is
+        </label>
+        <select
+          id="music-audio_kind"
+          className="input"
+          value={draft.audio_kind}
+          onChange={(e) => set('audio_kind', e.target.value as Draft['audio_kind'])}
+        >
+          <option value="">Not known</option>
+          {(Object.keys(KIND_LABELS) as AudioKind[]).map((kind) => (
+            <option key={kind} value={kind}>
+              {KIND_LABELS[kind]}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Speech, and anything not known, is transcribed. Music and sound effects are not;
+          marking a file as speech transcribes it.
+        </p>
+      </div>
 
       {/* Measures from the sound and fills only what is blank, so it can never undo a
           correction. Tempo, key and energy only: vocals, genre and mood need a person. */}

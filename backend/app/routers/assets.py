@@ -369,7 +369,15 @@ def update_asset(
     """
     asset = _owned(asset_id, user.id, session)
     changes = music.to_columns(payload.model_dump(exclude_unset=True))
+    if changes.get("audio_kind") and asset.asset_type != "audio":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "not_audio", "message": "Only audio files have an audio kind"},
+        )
+    kind_before = asset.audio_kind
     asset = service.apply_metadata(session, asset, changes)
+    if "audio_kind" in changes and asset.audio_kind != kind_before:
+        service.follow_kind_change(session, asset)
     # Same reason as the read above, and it bites harder here: the library store replaces
     # its copy with whatever this returns, so a response with empty tags makes an
     # asset's tags disappear from the grid after a rename until the page is reloaded.

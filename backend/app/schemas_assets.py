@@ -86,6 +86,8 @@ class AssetRead(BaseModel):
     # Null is "not known", which is different from False, "instrumental".
     music_vocals: Optional[bool] = None
     music_energy: Optional[str] = None
+    # music | speech | sfx, null when not known. Decides transcription; see app/music.py.
+    audio_kind: Optional[str] = None
 
     # Batch-loaded for a listing, never per row: sixty assets a page each asking for
     # their own tags is sixty queries that grow with the page.
@@ -170,6 +172,7 @@ class AssetUpdate(BaseModel):
     music_key: Optional[str] = Field(default=None, max_length=music.MAX_KEY_LENGTH)
     music_vocals: Optional[bool] = None
     music_energy: Optional[Literal["low", "medium", "high"]] = None
+    audio_kind: Optional[Literal["music", "speech", "sfx"]] = None
 
     @field_validator("music_genres", "music_moods", "music_instruments")
     @classmethod
