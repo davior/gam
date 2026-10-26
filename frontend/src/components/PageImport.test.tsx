@@ -130,6 +130,20 @@ describe('PageImport', () => {
     expect(screen.getByText('In library')).toBeInTheDocument()
   })
 
+  it('flags a familiar title but still lets it be chosen, one at a time', async () => {
+    const start = vi.spyOn(importsApi, 'importTracks').mockResolvedValue([])
+    const familiar = { ...texas, similar_asset_id: 'a5' }
+    await find([track(), familiar])
+
+    expect(await screen.findByText('Maybe in library')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Tick shown' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Import 1 track' }))
+    expect(start).toHaveBeenLastCalledWith([track()])
+
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Bigger than Texas' }))
+    expect(screen.getByRole('checkbox', { name: 'Bigger than Texas' })).toBeChecked()
+  })
+
   it('says when the details are only the bare links', async () => {
     await find([track({ genres: [], moods: [], instruments: [] })], {
       method: 'links',

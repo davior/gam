@@ -19,6 +19,12 @@ import { useActivityStore } from '@/stores/activity'
  * catalogue (one page) usable; it searches the details too, so "dark piano" narrows to
  * tracks whose moods and instruments say so.
  *
+ * Duplicates are caught three ways. "In library" is a track already imported from this
+ * URL and cannot be ticked. "Maybe in library" is a title (and artist) the library
+ * already has, probably the same piece from elsewhere; it can still be ticked. And the
+ * import job itself compares the downloaded file's checksum with the library, so the
+ * same file under another URL, or one uploaded by hand, is never stored twice.
+ *
  * Details are corrected after import, in the asset's Music and Source tabs, rather than
  * here: the review is for choosing, and an edit form per row would bury the list.
  */
@@ -116,7 +122,9 @@ export default function PageImport() {
       const next = new Set(previous)
       for (const track of shown) {
         if (next.size >= MAX_TRACKS_PER_IMPORT) break
-        if (!track.existing_asset_id) next.add(track.audio_url)
+        // Skips the likely duplicates too: ticking one of those is a choice to make one
+        // at a time, not in bulk.
+        if (!track.existing_asset_id && !track.similar_asset_id) next.add(track.audio_url)
       }
       return next
     })
@@ -217,6 +225,7 @@ export default function PageImport() {
               >
                 {shown.map((track) => {
                   const inLibrary = Boolean(track.existing_asset_id)
+                  const maybeInLibrary = !inLibrary && Boolean(track.similar_asset_id)
                   const ticked = chosen.has(track.audio_url)
                   return (
                     <li key={track.audio_url}>
@@ -244,7 +253,18 @@ export default function PageImport() {
                               </span>
                             )}
                             <span className="ml-auto shrink-0 text-gray-500">
-                              {inLibrary ? 'In library' : clock(track.duration_seconds)}
+                              {inLibrary ? (
+                                'In library'
+                              ) : maybeInLibrary ? (
+                                <span
+                                  className="text-amber-700 dark:text-amber-400"
+                                  title="A track with this title is already in your library"
+                                >
+                                  Maybe in library
+                                </span>
+                              ) : (
+                                clock(track.duration_seconds)
+                              )}
                             </span>
                           </span>
                           {summary(track) && (

@@ -16,6 +16,7 @@ importing what they chose, at the pace of one worker, is the use those licences 
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -25,13 +26,13 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import urljoin
 
-from sqlmodel import Session, col, select
+from sqlmodel import Session, col, func, select
 
 from app import music
 from app.clock import utcnow
 from app.ingest import page_tracks, web
 from app.ingest.embedded_metadata import normalise_partial_date
-from app.ingest.filetypes import SOURCE_URL
+from app.ingest.filetypes import SOURCE_URL, TYPE_AUDIO
 from app.ingest.page_tracks import PageExtraction, PageTrack
 from app.models.asset import Asset
 from app.models.job import EnrichmentJob
@@ -119,6 +120,57 @@ def already_imported(session: Session, user_id: str, tracks: list[PageTrack]) ->
         )
     ).all()
     return {keys[source_url]: asset_id for source_url, asset_id in rows}
+
+
+def similar_in_library(session: Session, user_id: str, tracks: list[PageTrack]) -> dict[str, str]:
+    """{audio_url: asset id} for tracks whose title (and artist, when both are known)
+    match an audio file already in the library.
+
+    A warning, not a refusal. The same piece downloaded from somewhere else is a
+    different file, so neither its URL nor its checksum can recognise it; its name can.
+    Names also collide by accident ("Intro"), which is why this only flags.
+    """
+    titles = {t.title.strip().lower() for t in tracks if t.title.strip()}
+    if not titles:
+        return {}
+    rows = session.exec(
+        select(Asset.id, Asset.name, Asset.creator).where(
+            Asset.user_id == user_id,
+            Asset.asset_type == TYPE_AUDIO,
+            col(Asset.storage_key).is_not(None),
+            func.lower(Asset.name).in_(titles),
+        )
+    ).all()
+    by_title: dict[str, list[tuple[str, Optional[str]]]] = {}
+    for asset_id, name, creator in rows:
+        by_title.setdefault(name.strip().lower(), []).append((asset_id, creator))
+
+    found: dict[str, str] = {}
+    for track in tracks:
+        for asset_id, creator in by_title.get(track.title.strip().lower(), []):
+            if track.creator and creator and track.creator.strip().lower() != creator.strip().lower():
+                continue
+            found[track.audio_url] = asset_id
+            break
+    return found
+
+
+def _same_file(session: Session, user_id: str, path: Path) -> Optional[Asset]:
+    """An asset in this library with exactly these bytes, if there is one.
+
+    The checksum every stored file already carries is what catches a duplicate the URL
+    cannot: the same MP3 from a mirror, a different link to one file, or a track
+    uploaded by hand before it was imported.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return session.exec(
+        select(Asset).where(
+            Asset.user_id == user_id, Asset.checksum_sha256 == digest.hexdigest()
+        )
+    ).first()
 
 
 # ─── the AI fallback ─────────────────────────────────────────────────────────
@@ -275,6 +327,18 @@ def run_track(session: Session, job: EnrichmentJob, progress: Progress) -> Track
         except web.WebFetchError as exc:
             raise PageImportError(str(exc)) from exc
 
+        progress("Checking for a copy already here", 86, "")
+        duplicate = _same_file(session, job.user_id, path)
+        if duplicate is not None:
+            # The download is thrown away with the temp directory. What the page said
+            # still fills the copy's blanks, so a track uploaded bare gains its credits
+            # and its profile, and its source URL is recorded for next time.
+            apply_track_metadata(session, duplicate, track, fill_blanks_only=True)
+            return TrackImportResult(
+                f"Already in your library as “{duplicate.name}” (the same file)",
+                duplicate.id,
+            )
+
         progress("Saving", 88, "")
         stem = re.sub(r"[\\/]+", "-", track.title).strip() or "track"
         try:
@@ -298,12 +362,16 @@ def run_track(session: Session, job: EnrichmentJob, progress: Progress) -> Track
     return TrackImportResult(detail, asset.id)
 
 
-def apply_track_metadata(session: Session, asset: Asset, track: PageTrack) -> int:
+def apply_track_metadata(
+    session: Session, asset: Asset, track: PageTrack, *, fill_blanks_only: bool = False
+) -> int:
     """What the page said about the track, stamped `embedded`, and its tags attached.
 
     `embedded` for the same reason an imported video's site metadata is: a statement from
-    the source that nobody here checked. Written over whatever the file's own tags said:
-    the site describing its own track is the better authority. Returns the tag count.
+    the source that nobody here checked. On a fresh import it is written over whatever
+    the file's own tags said: the site describing its own track is the better authority.
+    On a duplicate (`fill_blanks_only`) the asset may hold a person's corrections, so it
+    only fills what is empty. Returns the tag count.
     """
     changes: dict[str, Any] = {
         "source_url": track.source_url or track.audio_url,
@@ -327,8 +395,15 @@ def apply_track_metadata(session: Session, asset: Asset, track: PageTrack) -> in
     if track.bpm is not None:
         changes["music_bpm"] = track.bpm
 
+    if fill_blanks_only:
+        changes = {
+            name: value
+            for name, value in changes.items()
+            if getattr(asset, name, None) in (None, "") and name != "retrieved_at"
+        }
     try:
-        asset_service.apply_embedded_metadata(session, asset, changes)
+        if changes:
+            asset_service.apply_embedded_metadata(session, asset, changes)
     except Exception:  # noqa: BLE001 - the track is in; losing its metadata must not undo that
         logger.warning("Could not store page metadata for %s", asset.id, exc_info=True)
 

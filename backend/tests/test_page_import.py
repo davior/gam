@@ -275,6 +275,82 @@ def test_a_track_already_in_the_library_is_not_downloaded_twice(
     assert session.get(EnrichmentJob, second["id"]).detail == "Already in your library"
 
 
+def test_the_same_file_from_another_url_is_not_imported_twice(
+    library, session, downloads, monkeypatch
+):
+    """A mirror, or a second link to one file: the URL differs, the bytes do not."""
+    first = {"audio_url": "https://a.example.org/song.mp3", "title": "Song"}
+    second = {
+        "audio_url": "https://mirror.example.net/other-name.mp3",
+        "title": "Song (mirror)",
+        "creator": "Jane Doe",
+        "moods": ["Calm"],
+    }
+    job = library.post("/api/assets/import-page", json={"tracks": [first]}).json()["data"][0]
+    _run_job(job["id"], session, monkeypatch)
+    job = library.post("/api/assets/import-page", json={"tracks": [second]}).json()["data"][0]
+    _run_job(job["id"], session, monkeypatch)
+
+    [asset] = session.exec(select(Asset).where(Asset.asset_type == "audio")).all()
+    finished = session.get(EnrichmentJob, job["id"])
+    assert finished.status == "done"
+    assert finished.detail == "Already in your library as \u201cSong\u201d (the same file)"
+    # The page's details fill the copy's blanks, and the job points at it.
+    assert asset.creator == "Jane Doe" and music.decode_terms(asset.music_moods) == ["Calm"]
+    assert library.get("/api/activity").json()["data"][0]["result_asset_id"] == asset.id
+
+
+def test_a_file_uploaded_by_hand_is_recognised_and_keeps_its_corrections(
+    library, session, downloads, monkeypatch
+):
+    files = [("files", ("mine.mp3", SAMPLE_MP3.read_bytes(), "audio/mpeg"))]
+    mine = library.post("/api/assets", files=files).json()["created"][0]
+    library.patch(f"/api/assets/{mine['id']}", json={"creator": "Who I say it is"})
+
+    track = {"audio_url": "https://a.example.org/x.mp3", "title": "X", "creator": "The site"}
+    job = library.post("/api/assets/import-page", json={"tracks": [track]}).json()["data"][0]
+    _run_job(job["id"], session, monkeypatch)
+
+    assert len(session.exec(select(Asset).where(Asset.asset_type == "audio")).all()) == 1
+    stored = session.get(Asset, mine["id"])
+    assert stored.creator == "Who I say it is"
+    # A blank is still filled, so the next import recognises it by URL alone.
+    assert stored.source_url == "https://a.example.org/x.mp3"
+
+
+def test_the_same_track_ticked_twice_is_one_job(library, session):
+    track = {"audio_url": "https://a.example.org/song.mp3", "title": "Song"}
+    jobs = library.post("/api/assets/import-page", json={"tracks": [track, track]}).json()["data"]
+    assert len(jobs) == 1
+
+
+def test_a_track_with_a_familiar_title_is_flagged_in_the_review(library, session, pages, monkeypatch):
+    """Same piece, different file (downloaded elsewhere): only its name can tell."""
+    files = [("files", ("x.mp3", SAMPLE_MP3.read_bytes(), "audio/mpeg"))]
+    mine = library.post("/api/assets", files=files).json()["created"][0]
+    library.patch(f"/api/assets/{mine['id']}", json={"name": "Bigger Than Texas"})
+
+    tracks = library.post(
+        "/api/assets/import-page/preview", json={"url": MIXKIT_URL}
+    ).json()["data"]["tracks"]
+    by_title = {t["title"]: t for t in tracks}
+    assert by_title["Bigger than Texas"]["similar_asset_id"] == mine["id"]
+    assert by_title["Bigger than Texas"]["existing_asset_id"] is None
+    assert by_title["I'm Still Waitin'"]["similar_asset_id"] is None
+
+
+def test_a_familiar_title_by_another_artist_is_not_flagged(library, session, pages):
+    files = [("files", ("x.mp3", SAMPLE_MP3.read_bytes(), "audio/mpeg"))]
+    mine = library.post("/api/assets", files=files).json()["created"][0]
+    library.patch(
+        f"/api/assets/{mine['id']}", json={"name": "Bigger than Texas", "creator": "Someone Else"}
+    )
+    tracks = library.post(
+        "/api/assets/import-page/preview", json={"url": MIXKIT_URL}
+    ).json()["data"]["tracks"]
+    assert all(t["similar_asset_id"] is None for t in tracks)
+
+
 def test_a_date_from_the_browser_is_normalised_not_trusted(library, session, downloads, monkeypatch):
     track = {"audio_url": "https://music.example.org/a.mp3", "title": "A", "published_date": "summer"}
     job = library.post("/api/assets/import-page", json={"tracks": [track]}).json()["data"][0]

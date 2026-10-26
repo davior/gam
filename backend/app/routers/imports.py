@@ -105,6 +105,9 @@ class PageTrackRead(PageTrackBody):
     # The asset this library already holds for the track, so the review list can show it
     # as imported rather than offering it twice.
     existing_asset_id: Optional[str] = None
+    # An audio file with the same title (and artist) is already here: probably the same
+    # piece from somewhere else. Flagged, not refused, since titles collide.
+    similar_asset_id: Optional[str] = None
 
 
 class PagePreviewRequest(BaseModel):
@@ -152,6 +155,7 @@ def preview_page_import(
         raise _page_error(exc) from exc
 
     existing = page_import.already_imported(session, user.id, extraction.tracks)
+    similar = page_import.similar_in_library(session, user.id, extraction.tracks)
     return DataResponse(
         data=PagePreview(
             page_url=extraction.page_url,
@@ -159,7 +163,13 @@ def preview_page_import(
             source=extraction.source,
             note=extraction.note,
             tracks=[
-                PageTrackRead(**t.to_dict(), existing_asset_id=existing.get(t.audio_url))
+                PageTrackRead(
+                    **t.to_dict(),
+                    existing_asset_id=existing.get(t.audio_url),
+                    similar_asset_id=(
+                        None if t.audio_url in existing else similar.get(t.audio_url)
+                    ),
+                )
                 for t in extraction.tracks
             ],
         )
@@ -185,8 +195,11 @@ def start_page_import(
     for track in payload.tracks:
         require_safe_external_url(track.audio_url)
 
+    # The same track ticked twice (a page that lists it under two moods) is one job.
+    unique = list({body.audio_url: body for body in payload.tracks}.values())
+
     jobs = []
-    for body in payload.tracks:
+    for body in unique:
         track = PageTrack(**body.model_dump())
         job = enrichment_jobs.submit_library(
             session,

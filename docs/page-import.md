@@ -34,13 +34,25 @@ imported video's site metadata has: a statement from the source nobody here chec
 | `name` | title |
 | `creator`, `publisher`, `source_title` | artist, site, album |
 | `license`, `credit_line` | as the page states them; incompetech's credit is its own attribution wording |
-| `source_url` | the track's own page when there is one, else the audio file. Also what recognises a re-import: a track already in the library is marked "In library" and not downloaded twice. |
+| `source_url` | the track's own page when there is one, else the audio file. Also what the URL duplicate check matches (below). |
 | `retrieved_at` | now |
 | `music_genres`, `music_moods`, `music_instruments`, `music_bpm` | the page's |
 | tags | the page's tags (Mixkit's "Road Trip", "Lifestyle") |
 
 Tempo, key and energy the page did not give are measured from the sound afterwards, by
 the analysis every audio upload gets.
+
+## Duplicates
+
+Caught three ways, because each misses something the others catch:
+
+| Check | When | Catches | Then |
+|---|---|---|---|
+| **URL** | In the review list, and again in the job | A track imported from this address before | Shown "In library", cannot be ticked; a job finds it and points at the copy |
+| **Checksum** | In the job, after downloading | The same file at another URL (a mirror, a second link), or one uploaded by hand | The download is discarded; the page's details only fill the copy's blanks (a person's corrections stay), and its source URL is recorded so the URL check catches it next time |
+| **Title and artist** | In the review list | The same piece downloaded from somewhere else, a different file | Shown "Maybe in library". Still tickable, since titles collide ("Intro"), but "Tick shown" skips it |
+
+A track ticked twice in one import is one job.
 
 ## Downloading
 

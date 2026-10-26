@@ -41,6 +41,9 @@ export interface PageTrack {
   bpm: number | null
   /** Set when the library already holds this track. */
   existing_asset_id?: string | null
+  /** Set when an audio file with the same title (and artist) is already in the library:
+   *  probably the same piece from elsewhere. A warning; it can still be imported. */
+  similar_asset_id?: string | null
 }
 
 export interface PagePreview {
