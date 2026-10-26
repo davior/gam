@@ -192,6 +192,12 @@ def _music_from_tags(tags: Mapping[str, str]) -> dict[str, Any]:
     ):
         found["music_vocals"] = True
 
+    # Decided here, at upload, because transcription is queued the moment the file lands
+    # and the kind is what decides whether it is.
+    kind = music.kind_from_tags(music.decode_terms(found.get("music_genres")), found.get("music_bpm"))
+    if kind:
+        found["audio_kind"] = kind
+
     return found
 
 

@@ -45,6 +45,27 @@ ENERGY_LEVELS: tuple[str, ...] = ("low", "medium", "high")
 MIN_BPM = 20.0
 MAX_BPM = 300.0
 
+# What an audio file is, which decides what GAM does with it. `audio_kind` on the asset;
+# NULL is "not known" and is treated as it always was (transcribed, analysed).
+AUDIO_KIND_MUSIC = "music"
+AUDIO_KIND_SPEECH = "speech"
+AUDIO_KIND_SFX = "sfx"
+AUDIO_KINDS: tuple[str, ...] = (AUDIO_KIND_MUSIC, AUDIO_KIND_SPEECH, AUDIO_KIND_SFX)
+
+# Kinds that are not transcribed on upload. Transcribing a song bills Deepgram per
+# minute for, at best, its lyrics; a sound effect has nothing to say at all. Unknown is
+# deliberately not here: losing a talk's transcript is the costly mistake, so only a
+# confident "music" or "sound effect" skips it. The Transcribe button still works.
+UNTRANSCRIBED_KINDS = frozenset({AUDIO_KIND_MUSIC, AUDIO_KIND_SFX})
+
+# Genres that tag a recording of speech rather than music. ID3v1's own list has "Speech"
+# (101) and "Audiobook"; podcast tools write "Podcast". A file tagged with one of these is
+# speech however else it is tagged.
+SPEECH_GENRES = frozenset(
+    {"speech", "spoken word", "spoken", "podcast", "audiobook", "audio book", "talk",
+     "lecture", "interview", "news", "comedy", "books & spoken"}
+)
+
 MAX_TERMS = 20
 MAX_TERM_LENGTH = 60
 # Long enough for "F# minor", "Abm", Camelot "12B" or Open Key "10d"; anything longer is
@@ -182,3 +203,17 @@ def index_text(asset: Any) -> str:
         parts.append(f"{energy} energy")
 
     return " ".join(parts)
+
+
+def kind_from_tags(genres: list[str], bpm: Optional[float]) -> Optional[str]:
+    """What a file's own tags say it is, or None when they say nothing either way.
+
+    A speech genre wins. Otherwise a genre or a tempo means music: nobody tags a voice
+    memo with a BPM, and a genre on a non-speech file is a music genre. Untagged files
+    stay unknown, which keeps them transcribed.
+    """
+    if any(genre.strip().lower() in SPEECH_GENRES for genre in genres):
+        return AUDIO_KIND_SPEECH
+    if genres or bpm is not None:
+        return AUDIO_KIND_MUSIC
+    return None

@@ -145,6 +145,17 @@ describe('MusicPanel', () => {
     expect(screen.queryByRole('button', { name: /Measure/ })).not.toBeInTheDocument()
   })
 
+  it('says what the audio is, and saves a change of kind', async () => {
+    const user = userEvent.setup()
+    renderPanel(<MusicPanel asset={asset({ audio_kind: 'music' })} />)
+
+    expect(screen.getByLabelText('This is')).toHaveValue('music')
+    await user.selectOptions(screen.getByLabelText('This is'), 'speech')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(update).toHaveBeenCalledWith('a1', { audio_kind: 'speech' })
+  })
+
   it('will not save a tempo that is not one', async () => {
     const user = userEvent.setup()
     renderPanel(<MusicPanel asset={asset()} />)

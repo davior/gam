@@ -110,6 +110,7 @@ def ingest_file(
     name: Optional[str] = None,
     source: str = SOURCE_UPLOAD,
     content_type: Optional[str] = None,
+    audio_kind: Optional[str] = None,
 ) -> Asset:
     """`ingest_upload` for bytes that are already a file on disk.
 
@@ -121,6 +122,10 @@ def ingest_file(
 
     `name` overrides the filename-derived default. An import knows the real title, and
     deriving it back out of a filename would lose anything the filename could not hold.
+
+    `audio_kind` is for a caller that knows what the audio is before it lands, a music
+    page import: set on the row before transcription is decided, which is the moment
+    after cataloguing, so a song from a music library is never sent to Deepgram.
     """
     asset_type = _require_supported(filename)
     stored = storage.write_file(new_key(user_id, extension_of(filename)), source_path)
@@ -134,6 +139,7 @@ def ingest_file(
         source=source,
         content_type=content_type,
         name=name,
+        audio_kind=audio_kind,
     )
 
 
@@ -157,6 +163,7 @@ def _catalogue(
     name: Optional[str] = None,
     origin_project_id: Optional[str] = None,
     origin_reference_id: Optional[str] = None,
+    audio_kind: Optional[str] = None,
 ) -> Asset:
     """Everything that happens once the bytes are safely stored."""
     extension = extension_of(filename)
@@ -173,6 +180,7 @@ def _catalogue(
         checksum_sha256=stored.sha256,
         origin_project_id=origin_project_id,
         origin_reference_id=origin_reference_id,
+        audio_kind=audio_kind if asset_type == TYPE_AUDIO else None,
     )
     session.add(asset)
     session.commit()
@@ -272,7 +280,9 @@ def apply_embedded_fields(session: Session, asset: Asset, embedded: dict) -> Non
 
 
 # What a harvest may fill. Not `name` or `description`: see ingest/embedded_metadata.py.
-_EMBEDDED_FIELDS = frozenset(attribution.ATTRIBUTION_FIELDS) | frozenset(music.MUSIC_FIELDS)
+_EMBEDDED_FIELDS = (
+    frozenset(attribution.ATTRIBUTION_FIELDS) | frozenset(music.MUSIC_FIELDS) | {"audio_kind"}
+)
 
 
 def _is_unset(value) -> bool:
@@ -310,6 +320,11 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
     if asset.source == SOURCE_AI:
         return
 
+    # Music and sound effects, by their tags, a music page import, or a person's say-so.
+    # Unknown is still transcribed: see `music.UNTRANSCRIBED_KINDS`.
+    if asset.audio_kind in music.UNTRANSCRIBED_KINDS:
+        return
+
     try:
         if not load_deepgram_key(session, asset.user_id):
             logger.info(
@@ -324,6 +339,19 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
         enrichment_jobs.submit(session, asset, KIND_TRANSCRIBE)
     except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
         logger.warning("Could not queue transcription for asset %s", asset.id, exc_info=True)
+
+
+def follow_kind_change(session: Session, asset: Asset) -> None:
+    """Catch up on what an audio file's new kind says should have happened at upload.
+
+    Marked speech: transcribe it, if it never was. Marked music: measure it. Neither
+    undoes anything; a transcript already made stays, since the person may want lyrics
+    searchable, and the guards inside each chain keep a second job from being queued.
+    """
+    if asset.audio_kind == music.AUDIO_KIND_SPEECH and asset.transcript_status in (None, "none"):
+        _chain_transcription(session, asset)
+    elif asset.audio_kind == music.AUDIO_KIND_MUSIC:
+        _chain_music_analysis(session, asset)
 
 
 def _chain_music_analysis(session: Session, asset: Asset) -> None:
@@ -343,7 +371,7 @@ def _chain_music_analysis(session: Session, asset: Asset) -> None:
     from app.jobs import enrichment as enrichment_jobs
     from app.models.job import KIND_ANALYZE_MUSIC
 
-    if not analysable(asset):
+    if not analysable(asset) or asset.audio_kind in (music.AUDIO_KIND_SPEECH, music.AUDIO_KIND_SFX):
         return
     try:
         if enrichment_jobs.active_job(session, asset.id, KIND_ANALYZE_MUSIC) is not None:
@@ -953,6 +981,7 @@ def to_read_model(
         music_key=asset.music_key,
         music_vocals=asset.music_vocals,
         music_energy=asset.music_energy,
+        audio_kind=asset.audio_kind,
         tags=[
             AssetTagRead(id=t.id, name=t.name, category_id=t.category_id)
             for t in (asset_tags or [])

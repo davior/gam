@@ -350,6 +350,9 @@ def run_track(session: Session, job: EnrichmentJob, progress: Progress) -> Track
                 filename=f"{stem[:200]}{path.suffix.lower()}",
                 name=track.title,
                 source=SOURCE_URL,
+                # A music library's track is music: never sent to Deepgram, and offered
+                # to a soundtrack search as what it is.
+                audio_kind=music.AUDIO_KIND_MUSIC,
             )
         except asset_service.UnsupportedFile as exc:
             raise PageImportError("The site sent a file the library does not accept") from exc
@@ -376,6 +379,9 @@ def apply_track_metadata(
     changes: dict[str, Any] = {
         "source_url": track.source_url or track.audio_url,
         "retrieved_at": utcnow(),
+        # Already set on a fresh import; this is for the copy found by checksum, which
+        # was perhaps uploaded by hand and never said what it was.
+        "audio_kind": music.AUDIO_KIND_MUSIC,
     }
     for name in ("creator", "publisher", "source_title", "license", "credit_line", "description"):
         value = getattr(track, name)

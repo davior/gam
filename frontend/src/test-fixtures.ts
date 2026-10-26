@@ -35,6 +35,7 @@ export const noAttribution: Pick<
   | 'music_key'
   | 'music_vocals'
   | 'music_energy'
+  | 'audio_kind'
 > = {
   source_url: null,
   creator: null,
@@ -54,6 +55,7 @@ export const noAttribution: Pick<
   music_key: null,
   music_vocals: null,
   music_energy: null,
+  audio_kind: null,
 }
 
 /**
