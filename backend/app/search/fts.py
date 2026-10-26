@@ -50,7 +50,8 @@ SEGMENT_FTS = "segment_fts"
 # `attribution_text` is appended rather than slotted in beside `name`, and that position
 # is load-bearing: `search_assets` passes a *column index* to snippet() (2, for `name`),
 # so inserting a column anywhere before it would silently start excerpting the wrong
-# field. Appending keeps every existing index valid.
+# field. Appending keeps every existing index valid. `music_text` came later and is
+# appended after it for the same reason.
 ASSET_FTS_DDL = """
 CREATE VIRTUAL TABLE asset_fts USING fts5(
     asset_id UNINDEXED,
@@ -60,6 +61,7 @@ CREATE VIRTUAL TABLE asset_fts USING fts5(
     summary,
     tags_text,
     attribution_text,
+    music_text,
     tokenize='porter unicode61'
 )
 """
@@ -83,6 +85,7 @@ ASSET_FTS_COLUMNS = (
     "summary",
     "tags_text",
     "attribution_text",
+    "music_text",
 )
 SEGMENT_FTS_COLUMNS = ("segment_id", "asset_id", "user_id", "body", "start_time")
 
@@ -134,21 +137,27 @@ class FtsHit:
 
 
 def index_asset(
-    session: Session, asset: Asset, tags_text: str = "", attribution_text: str = ""
+    session: Session,
+    asset: Asset,
+    tags_text: str = "",
+    attribution_text: str = "",
+    music_text: str = "",
 ) -> None:
     """Re-index one asset's own metadata. Safe to call repeatedly.
 
-    `attribution_text` is passed in rather than composed here for the same reason
-    `tags_text` is: this module knows about the index, not about what the application
-    considers worth indexing. `services/assets._reindex` builds both.
+    `attribution_text` and `music_text` are passed in rather than composed here for the
+    same reason `tags_text` is: this module knows about the index, not about what the
+    application considers worth indexing. `services/assets._reindex` builds all three.
     """
     remove_asset(session, asset.id)
     session.execute(
         text(
             f"INSERT INTO {ASSET_FTS}"
-            " (asset_id, user_id, name, description, summary, tags_text, attribution_text)"
+            " (asset_id, user_id, name, description, summary, tags_text, attribution_text,"
+            " music_text)"
             " VALUES"
-            " (:asset_id, :user_id, :name, :description, :summary, :tags_text, :attribution_text)"
+            " (:asset_id, :user_id, :name, :description, :summary, :tags_text,"
+            " :attribution_text, :music_text)"
         ),
         {
             "asset_id": asset.id,
@@ -158,6 +167,7 @@ def index_asset(
             "summary": asset.summary or "",
             "tags_text": tags_text,
             "attribution_text": attribution_text,
+            "music_text": music_text,
         },
     )
     session.commit()

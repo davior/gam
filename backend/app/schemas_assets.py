@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app import music
 
 # A whole year, a year and month, or a full date. Months 01-12 and days 01-31 are
 # enforced here so the string column cannot hold "2019-13" and sort between "2019-12"
@@ -70,6 +72,20 @@ class AssetRead(BaseModel):
     # something typed on the clip — which is what would make a user "correct" it here
     # and quietly break the link to the source.
     attribution_inherited: List[str] = Field(default_factory=list)
+
+    # ─── music profile ───────────────────────────────────────────────────────
+    # Lists decoded from their JSON columns; empty when nothing is known. Not inherited
+    # by a clip, unlike attribution: thirty seconds cut from a song can be the quiet
+    # intro of a high-energy track, so the parent's profile would be a claim about the
+    # wrong music.
+    music_genres: List[str] = Field(default_factory=list)
+    music_moods: List[str] = Field(default_factory=list)
+    music_instruments: List[str] = Field(default_factory=list)
+    music_bpm: Optional[float] = None
+    music_key: Optional[str] = None
+    # Null is "not known", which is different from False, "instrumental".
+    music_vocals: Optional[bool] = None
+    music_energy: Optional[str] = None
 
     # Batch-loaded for a listing, never per row: sixty assets a page each asking for
     # their own tags is sixty queries that grow with the page.
@@ -144,6 +160,33 @@ class AssetUpdate(BaseModel):
     retrieved_at: Optional[datetime] = None
     license: Optional[str] = Field(default=None, max_length=500)
     credit_line: Optional[str] = Field(default=None, max_length=2_000)
+
+    # Music profile. A list replaces the stored one whole, and an empty list or null
+    # clears it. The router turns lists into their JSON columns (`music.to_columns`).
+    music_genres: Optional[List[str]] = Field(default=None, max_length=music.MAX_TERMS)
+    music_moods: Optional[List[str]] = Field(default=None, max_length=music.MAX_TERMS)
+    music_instruments: Optional[List[str]] = Field(default=None, max_length=music.MAX_TERMS)
+    music_bpm: Optional[float] = Field(default=None, ge=music.MIN_BPM, le=music.MAX_BPM)
+    music_key: Optional[str] = Field(default=None, max_length=music.MAX_KEY_LENGTH)
+    music_vocals: Optional[bool] = None
+    music_energy: Optional[Literal["low", "medium", "high"]] = None
+
+    @field_validator("music_genres", "music_moods", "music_instruments")
+    @classmethod
+    def _terms_are_short(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        """Refuse an over-long term rather than letting `clean_terms` drop it silently:
+        a person who typed it should be told, where a tag writer's junk need not be."""
+        if value is None:
+            return None
+        for term in value:
+            if len(term.strip()) > music.MAX_TERM_LENGTH:
+                raise ValueError(f"each term must be at most {music.MAX_TERM_LENGTH} characters")
+        return value
+
+    @field_validator("music_key")
+    @classmethod
+    def _key_blank_is_none(cls, value: Optional[str]) -> Optional[str]:
+        return music.clean_key(value) if value is not None else None
 
     @field_validator("published_date")
     @classmethod

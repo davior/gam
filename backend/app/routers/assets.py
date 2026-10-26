@@ -9,6 +9,7 @@ from typing import AsyncIterator, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from sqlmodel import Session, col, func, select
 
+from app import music
 from app.auth import CurrentUser
 from app.database import get_session
 from app.ingest.filetypes import ASSET_TYPES, SOURCE_GVC, SOURCE_UPLOAD
@@ -363,7 +364,8 @@ def update_asset(
     alone" — both arrive as a body without a useful value otherwise.
     """
     asset = _owned(asset_id, user.id, session)
-    asset = service.apply_metadata(session, asset, payload.model_dump(exclude_unset=True))
+    changes = music.to_columns(payload.model_dump(exclude_unset=True))
+    asset = service.apply_metadata(session, asset, changes)
     # Same reason as the read above, and it bites harder here: the library store replaces
     # its copy with whatever this returns, so a response with empty tags makes an
     # asset's tags disappear from the grid after a rename until the page is reloaded.

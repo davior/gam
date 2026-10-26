@@ -125,6 +125,24 @@ class Asset(SQLModel, table=True):
     # clip's inherited attribution one level down.
     credit_line: Optional[str] = None
 
+    # ─── music profile ───────────────────────────────────────────────────────
+    # What a track sounds like, so Video Creator can find music that fits a scene rather
+    # than choosing by title. Parsing and the field list live in app/music.py. Filled from
+    # the file's own tags (ID3 TCON/TBPM/TKEY/TMOO and their Vorbis and MP4 equivalents)
+    # where present, and by hand otherwise.
+    #
+    # JSON lists of short terms, NULL when nothing is known.
+    music_genres: Optional[str] = None
+    music_moods: Optional[str] = None
+    music_instruments: Optional[str] = None
+    music_bpm: Optional[float] = None
+    # As the tag writer spelled it: "Am", "A minor" and Camelot "8A" are all left alone.
+    music_key: Optional[str] = None
+    # A nullable bool, and the NULL is load-bearing: "not known" must not read as
+    # "instrumental", or every untagged song would match a search for music without words.
+    music_vocals: Optional[bool] = None
+    music_energy: Optional[str] = None  # low | medium | high
+
     # ─── AI generation (M8) ──────────────────────────────────────────────────
     # What made this file, kept so it can be made again. Specified in
     # docs/m8-ai-generation.md. All null on anything that was not generated.
