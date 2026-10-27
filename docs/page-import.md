@@ -54,6 +54,45 @@ Caught three ways, because each misses something the others catch:
 
 A track ticked twice in one import is one job.
 
+## Saved pages (sites that block GAM)
+
+Some sites refuse requests that do not come from a browser: Pixabay answers GAM's fetch
+with 403 and its terms rule out automated access. GAM does not disguise itself to get
+past that. The person does the part that needs a browser instead, under **Add → "Or use
+a saved page"**:
+
+1. Open the page and save it (File → Save Page As).
+2. Download the tracks with the site's own Download button.
+3. Choose the saved page and the downloaded files. GAM lists the page's tracks, shows
+   which file matched which, and imports them.
+
+GAM never contacts the site. `page_tracks.extract_saved` reads only the uploaded page:
+
+- **The page's address** comes from its canonical link, `og:url`, or the
+  `<!-- saved from url=… -->` comment Chrome writes, since adapters key on host and path.
+- **Pixabay:** one rendered row per track. Its class names carry build hashes
+  (`audioRow--et3ac`), so only their stable prefixes are matched. Each row gives title,
+  artist, track page, duration, genre and tags, plus the numeric ID at the end of the
+  track link. The listing's `/mood/<x>/` or `/genre/<x>/` applies to every track.
+  Credited "Pixabay" under the Pixabay Content License.
+- **Other sites:** the same structured adapters as a live import, without the network, so
+  a saved Mixkit page works too. incompetech's page only points to `pieces.json`, so a
+  saved copy says to use the link instead.
+
+**Matching files to tracks** (`page_tracks.match_files`, mirrored in the browser by
+`utils/matchFiles.ts` for the preview): by the site's ID in the filename first (Pixabay
+names a download `artist-title-604094.mp3`), then by title contained in the filename,
+longest title first ("Tension Riser" before "Riser"), with one file per track.
+
+**Importing** (`page_import.import_saved`), synchronously like an upload:
+- Every file is stored as **music**, so it is never transcribed, and is queued for
+  tempo/key/energy analysis.
+- A matched file gets the page's details, stamped `embedded`.
+- An unmatched file is still imported and reported as "not on the page".
+- A file whose checksum is already in the library is not stored again; the page only
+  fills that copy's blanks.
+- Non-audio files are refused, and the limit is 50 files per import.
+
 ## Downloading
 
 `backend/app/ingest/web.py`: an SSRF check on every redirect hop, uncompressed bodies

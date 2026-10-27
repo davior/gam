@@ -50,9 +50,14 @@ FetchText = Callable[[str], tuple[str, str]]
 
 @dataclass
 class PageTrack:
-    """One track as a page describes it. Every field but the URL and title optional."""
+    """One track as a page describes it. Every field but the title optional.
 
-    audio_url: str
+    `audio_url` is always set on a live page import, which downloads from it. A saved page
+    can lack one (Pixabay's download is a button, not a link): the file then comes from
+    the person, matched to the track by `match_id` or title (`match_files`).
+    """
+
+    audio_url: Optional[str]
     title: str
     creator: Optional[str] = None
     publisher: Optional[str] = None
@@ -70,6 +75,14 @@ class PageTrack:
     instruments: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     bpm: Optional[float] = None
+    # A site's own id for the track, when its downloaded files carry it in their names
+    # (Pixabay's do: `artist-title-604094.mp3`). What matches a saved page to the files.
+    match_id: Optional[str] = None
+
+    @property
+    def key(self) -> str:
+        """What identifies this track within one page, with or without an audio URL."""
+        return self.audio_url or self.source_url or self.title
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -171,6 +184,171 @@ def page_text(page: str, limit: int = 60_000) -> str:
     body = re.sub(r"[ \t]+", " ", body)
     body = re.sub(r"\n\s*\n+", "\n", body)
     return body.strip()[:limit]
+
+
+def extract_saved(page: str) -> PageExtraction:
+    """Tracks from a page the person saved in their own browser. Never touches the network.
+
+    For sites that refuse automated requests (Pixabay answers a server with 403): the
+    person opens the page, saves it, and downloads the files themselves, so the only
+    thing GAM does with the site is read what they handed it. The page's own address is
+    recovered from the saved file, since adapters key on the host and on the path.
+    """
+    page_url = saved_page_url(page) or ""
+    host = (urlsplit(page_url).hostname or "").lower()
+
+    if _is_host(host, "pixabay.com"):
+        tracks = _pixabay(page_url, page)
+        if tracks:
+            return PageExtraction(page_url, METHOD_STRUCTURED, tracks[:MAX_TRACKS], "pixabay")
+
+    try:
+        found = extract_structured(page_url, page, _no_network)
+    except SavedPageNeedsMore as exc:
+        return PageExtraction(page_url, METHOD_STRUCTURED, [], "saved page", note=str(exc))
+    if found is not None:
+        return found
+    links = extract_links(page_url, page)
+    if not links.tracks:
+        links.note = "No tracks were found in the saved page."
+    return links
+
+
+class SavedPageNeedsMore(Exception):
+    """An adapter needed a second file the saved page only points to."""
+
+
+def _no_network(url: str) -> tuple[str, str]:
+    name = urlsplit(url).path.rsplit("/", 1)[-1] or url
+    raise SavedPageNeedsMore(
+        f"This page loads its track list from {name}. Use the page link instead of a saved copy."
+    )
+
+
+def saved_page_url(page: str) -> Optional[str]:
+    """Where a saved page came from: its canonical link, its og:url, or the comment
+    Chrome and Edge write at the top of a saved page."""
+    for pattern in (
+        r"<link\b[^>]*rel=[\"']canonical[\"'][^>]*href=[\"']([^\"']+)[\"']",
+        r"<link\b[^>]*href=[\"']([^\"']+)[\"'][^>]*rel=[\"']canonical[\"']",
+        r"<meta\b[^>]*property=[\"']og:url[\"'][^>]*content=[\"']([^\"']+)[\"']",
+        r"<!--\s*saved from url=\(\d+\)(\S+?)\s*-->",
+    ):
+        match = re.search(pattern, page, re.I)
+        if match and match.group(1).startswith(("http://", "https://")):
+            return html_lib.unescape(match.group(1))
+    return None
+
+
+# ─── matching files to tracks ────────────────────────────────────────────────
+
+
+def _normalise(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
+
+
+def match_files(tracks: list[PageTrack], filenames: list[str]) -> dict[str, Optional[PageTrack]]:
+    """Which track each downloaded file is. One file per track, one track per file.
+
+    By the site's id in the filename first (Pixabay names a download
+    `artist-title-604094.mp3`), which cannot be wrong. Then by title contained in the
+    filename, longest title first, so a file named for "Tension Riser" is not taken by
+    the track called "Riser". A file matching nothing maps to None.
+    """
+    result: dict[str, Optional[PageTrack]] = {name: None for name in filenames}
+    taken: set[int] = set()
+    by_id = {t.match_id: i for i, t in enumerate(tracks) if t.match_id}
+
+    for name in filenames:
+        stem = name.rsplit(".", 1)[0]
+        for number in re.findall(r"\d+", stem):
+            index = by_id.get(number)
+            if index is not None and index not in taken:
+                result[name] = tracks[index]
+                taken.add(index)
+                break
+
+    titled = sorted(
+        ((i, _normalise(t.title)) for i, t in enumerate(tracks) if _normalise(t.title)),
+        key=lambda pair: len(pair[1]),
+        reverse=True,
+    )
+    for name in filenames:
+        if result[name] is not None:
+            continue
+        stem = f" {_normalise(name.rsplit('.', 1)[0])} "
+        for index, title in titled:
+            if index not in taken and f" {title} " in stem:
+                result[name] = tracks[index]
+                taken.add(index)
+                break
+    return result
+
+
+# ─── pixabay ─────────────────────────────────────────────────────────────────
+
+# A saved copy of a Pixabay music listing, as the browser rendered it: one row per track.
+# The class names carry build hashes (`audioRow--et3ac`) that change every release, so
+# only their stable prefixes are matched. There is no audio URL in a row, since
+# downloading is a button, so the person's own downloads are matched to these rows.
+_PIXABAY_ROW = re.compile(r"class=\"audioRow--")
+_PIXABAY_TITLE = re.compile(r"<a href=\"(/music/[^\"]+)\"[^>]*class=\"title--[^\"]*\"[^>]*>([^<]*)</a>")
+_PIXABAY_ARTIST = re.compile(r"class=\"name--[^\"]*\"[^>]*>([^<]*)</a>")
+_PIXABAY_DURATION = re.compile(r"class=\"duration--[^\"]*\"[^>]*>([^<]*)<")
+_PIXABAY_GENRE = re.compile(r"class=\"theme--[^\"]*\"[^>]*>([^<]*)</a>")
+_PIXABAY_TAGS = re.compile(r"class=\"tags--[^\"]*\"[^>]*>(.*?)</div>", re.S)
+_PIXABAY_LICENSE = "Pixabay Content License (https://pixabay.com/service/license-summary/)"
+
+
+def _pixabay(page_url: str, page: str) -> list[PageTrack]:
+    starts = [m.start() for m in _PIXABAY_ROW.finditer(page)] + [len(page)]
+    kind, label = _pixabay_page_filter(page_url)
+    tracks: list[PageTrack] = []
+    for start, end in zip(starts, starts[1:]):
+        row = page[start:end]
+        title_match = _PIXABAY_TITLE.search(row)
+        if not title_match:
+            continue
+        link = html_lib.unescape(title_match.group(1))
+        title = _plain(title_match.group(2), 255)
+        if not title:
+            continue
+        artist = _PIXABAY_ARTIST.search(row)
+        duration = _PIXABAY_DURATION.search(row)
+        genre = _PIXABAY_GENRE.search(row)
+        tag_block = _PIXABAY_TAGS.search(row)
+        tags = (
+            [html_lib.unescape(t) for t in re.findall(r">([^<]+)</a>", tag_block.group(1))]
+            if tag_block
+            else []
+        )
+        id_match = re.search(r"-(\d+)/?$", link)
+        track = PageTrack(
+            audio_url=None,
+            title=title,
+            creator=_plain(artist.group(1), MAX_TEXT) if artist else None,
+            publisher="Pixabay",
+            duration_seconds=_clock_seconds(duration.group(1)) if duration else None,
+            license=_PIXABAY_LICENSE,
+            source_url=urljoin("https://pixabay.com/", link),
+            genres=music.clean_terms([html_lib.unescape(genre.group(1))]) if genre else [],
+            tags=music.clean_terms(tags),
+            match_id=id_match.group(1) if id_match else None,
+        )
+        if kind == "mood":
+            track.moods = music.clean_terms([*track.moods, label])
+        elif kind == "genre":
+            track.genres = music.clean_terms([*track.genres, label])
+        tracks.append(track)
+    return tracks
+
+
+def _pixabay_page_filter(page_url: str) -> tuple[Optional[str], str]:
+    """`/music/search/mood/mysterious/` says every track listed is mysterious."""
+    parts = [p for p in urlsplit(page_url).path.split("/") if p]
+    if len(parts) >= 4 and parts[:2] == ["music", "search"] and parts[2] in ("mood", "genre"):
+        return parts[2], unquote(parts[3]).replace("-", " ").title()
+    return None, ""
 
 
 # ─── incompetech ─────────────────────────────────────────────────────────────

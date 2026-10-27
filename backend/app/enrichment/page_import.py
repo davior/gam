@@ -23,7 +23,7 @@ import re
 import tempfile
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional
 from urllib.parse import urljoin
 
 from sqlmodel import Session, col, func, select
@@ -32,7 +32,7 @@ from app import music
 from app.clock import utcnow
 from app.ingest import page_tracks, web
 from app.ingest.embedded_metadata import normalise_partial_date
-from app.ingest.filetypes import SOURCE_URL, TYPE_AUDIO
+from app.ingest.filetypes import AUDIO_EXTENSIONS, SOURCE_UPLOAD, SOURCE_URL, TYPE_AUDIO, extension_of
 from app.ingest.page_tracks import PageExtraction, PageTrack
 from app.models.asset import Asset
 from app.models.job import EnrichmentJob
@@ -107,11 +107,12 @@ def preview(session: Session, user_id: str, url: str, *, use_ai: bool = True) ->
 
 
 def already_imported(session: Session, user_id: str, tracks: list[PageTrack]) -> dict[str, str]:
-    """{audio_url: asset id} for the tracks this library already has."""
+    """{track.key: asset id} for the tracks this library already has."""
     keys: dict[str, str] = {}
     for track in tracks:
-        keys[track.source_url or track.audio_url] = track.audio_url
-        keys[track.audio_url] = track.audio_url
+        for url in (track.source_url, track.audio_url):
+            if url:
+                keys[url] = track.key
     if not keys:
         return {}
     rows = session.exec(
@@ -123,7 +124,7 @@ def already_imported(session: Session, user_id: str, tracks: list[PageTrack]) ->
 
 
 def similar_in_library(session: Session, user_id: str, tracks: list[PageTrack]) -> dict[str, str]:
-    """{audio_url: asset id} for tracks whose title (and artist, when both are known)
+    """{track.key: asset id} for tracks whose title (and artist, when both are known)
     match an audio file already in the library.
 
     A warning, not a refusal. The same piece downloaded from somewhere else is a
@@ -150,7 +151,7 @@ def similar_in_library(session: Session, user_id: str, tracks: list[PageTrack]) 
         for asset_id, creator in by_title.get(track.title.strip().lower(), []):
             if track.creator and creator and track.creator.strip().lower() != creator.strip().lower():
                 continue
-            found[track.audio_url] = asset_id
+            found[track.key] = asset_id
             break
     return found
 
@@ -309,8 +310,8 @@ def run_track(session: Session, job: EnrichmentJob, progress: Progress) -> Track
     track = decode_track(job.payload)
 
     existing = already_imported(session, job.user_id, [track])
-    if track.audio_url in existing:
-        return TrackImportResult("Already in your library", existing[track.audio_url])
+    if track.key in existing:
+        return TrackImportResult("Already in your library", existing[track.key])
 
     if not capacity.has_room():
         raise PageImportError(capacity.DISK_FULL_MESSAGE)
@@ -424,3 +425,125 @@ def apply_track_metadata(
     except Exception:  # noqa: BLE001 - same
         logger.warning("Could not attach page tags to %s", asset.id, exc_info=True)
     return attached
+
+
+# ─── a saved page and the files downloaded from it ──────────────────────────
+
+
+SAVED_STATUS_IMPORTED = "imported"
+SAVED_STATUS_DUPLICATE = "duplicate"
+SAVED_STATUS_UNMATCHED = "unmatched"
+SAVED_STATUS_REJECTED = "rejected"
+
+
+@dataclass
+class SavedFileResult:
+    filename: str
+    status: str
+    asset_id: Optional[str] = None
+    track_title: Optional[str] = None
+    message: str = ""
+
+
+def import_saved(
+    session: Session,
+    user_id: str,
+    extraction: PageExtraction,
+    files: list[tuple[str, BinaryIO]],
+) -> list[SavedFileResult]:
+    """Catalogue files the person downloaded, with what their saved page said of each.
+
+    For sites that refuse GAM (see `page_tracks.extract_saved`). Nothing is fetched: the
+    person brought the page and the files, and this only matches one to the other and
+    files them, the way an upload is filed. A file that matches no track on the page is
+    still imported, as music without the page's details; the person chose to upload it.
+    The same three duplicate checks as a live import apply, the checksum one here.
+    """
+    matches = page_tracks.match_files(extraction.tracks, [name for name, _ in files])
+    results: list[SavedFileResult] = []
+    with tempfile.TemporaryDirectory(prefix="gam-saved-") as workdir:
+        for index, (name, stream) in enumerate(files):
+            extension = extension_of(name)
+            if extension not in AUDIO_EXTENSIONS:
+                results.append(SavedFileResult(name, SAVED_STATUS_REJECTED, message="Not an audio file"))
+                continue
+            if not capacity.has_room():
+                results.append(
+                    SavedFileResult(name, SAVED_STATUS_REJECTED, message=capacity.DISK_FULL_MESSAGE)
+                )
+                continue
+
+            path = Path(workdir) / f"{index}{extension}"
+            if not _spool(stream, path, web.MAX_TRACK_BYTES):
+                results.append(
+                    SavedFileResult(
+                        name,
+                        SAVED_STATUS_REJECTED,
+                        message=f"Larger than the {web.MAX_TRACK_BYTES // (1024 * 1024)} MB limit",
+                    )
+                )
+                continue
+
+            track = matches.get(name)
+            duplicate = _same_file(session, user_id, path)
+            if duplicate is not None:
+                if track is not None:
+                    apply_track_metadata(session, duplicate, track, fill_blanks_only=True)
+                results.append(
+                    SavedFileResult(
+                        name,
+                        SAVED_STATUS_DUPLICATE,
+                        asset_id=duplicate.id,
+                        track_title=track.title if track else None,
+                        message=f"Already in your library as \u201c{duplicate.name}\u201d",
+                    )
+                )
+                continue
+
+            try:
+                asset = asset_service.ingest_file(
+                    session,
+                    build_storage(),
+                    user_id=user_id,
+                    source_path=path,
+                    filename=name,
+                    name=track.title if track else None,
+                    source=SOURCE_UPLOAD,
+                    # The person brought it from a music library's page: music, so not
+                    # sent to Deepgram, matched or not.
+                    audio_kind=music.AUDIO_KIND_MUSIC,
+                )
+            except asset_service.UnsupportedFile:
+                results.append(SavedFileResult(name, SAVED_STATUS_REJECTED, message="Not an audio file"))
+                continue
+
+            if track is None:
+                results.append(
+                    SavedFileResult(
+                        name,
+                        SAVED_STATUS_UNMATCHED,
+                        asset_id=asset.id,
+                        message="Imported, but not found on the page, so it has no details from it",
+                    )
+                )
+                continue
+            apply_track_metadata(session, asset, track)
+            results.append(
+                SavedFileResult(name, SAVED_STATUS_IMPORTED, asset_id=asset.id, track_title=track.title)
+            )
+    return results
+
+
+def _spool(stream: BinaryIO, target: Path, max_bytes: int) -> bool:
+    """Copy an upload to disk, giving up past `max_bytes`. False when it was too large."""
+    written = 0
+    with open(target, "wb") as handle:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            written += len(chunk)
+            if written > max_bytes:
+                break
+            handle.write(chunk)
+    if written > max_bytes:
+        target.unlink(missing_ok=True)
+        return False
+    return True
