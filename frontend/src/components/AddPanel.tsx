@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import GenerateForm from '@/components/GenerateForm'
 import PageImport from '@/components/PageImport'
+import SavedPageImport from '@/components/SavedPageImport'
 import UploadZone from '@/components/UploadZone'
 import UrlImport from '@/components/UrlImport'
 
@@ -57,6 +58,7 @@ export default function AddPanel({ open, onClose }: Props) {
         <UploadZone />
         <UrlImport />
         <PageImport />
+        <SavedPageImport />
         <GenerateForm title="Generate an image" />
       </div>
     </section>

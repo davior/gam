@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -18,7 +18,8 @@ from app.auth import CurrentUser
 from app.database import get_session
 from app.enrichment import page_import
 from app.enrichment.import_url import ImportRequest
-from app.ingest.page_tracks import PageTrack
+from app.ingest import page_tracks, web
+from app.ingest.page_tracks import PageExtraction, PageTrack
 from app.ingest.ytdlp import MAX_URL, normalise_url
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
@@ -80,10 +81,12 @@ def start_url_import(
 # ─── tracks from a music library's page ──────────────────────────────────────
 
 
-class PageTrackBody(BaseModel):
-    """One track, as the preview found it and the person corrected it."""
+class PageTrackFields(BaseModel):
+    """One track, as a page describes it."""
 
-    audio_url: str = Field(min_length=1, max_length=MAX_URL)
+    # Optional here because a saved page may have no audio link (Pixabay's download is a
+    # button); `PageTrackBody` requires it, since a live import downloads from it.
+    audio_url: Optional[str] = Field(default=None, max_length=MAX_URL)
     title: str = Field(min_length=1, max_length=255)
     creator: Optional[str] = Field(default=None, max_length=500)
     publisher: Optional[str] = Field(default=None, max_length=500)
@@ -99,9 +102,16 @@ class PageTrackBody(BaseModel):
     instruments: List[str] = Field(default_factory=list, max_length=20)
     tags: List[str] = Field(default_factory=list, max_length=50)
     bpm: Optional[float] = None
+    match_id: Optional[str] = Field(default=None, max_length=64)
 
 
-class PageTrackRead(PageTrackBody):
+class PageTrackBody(PageTrackFields):
+    """One track to download, as the preview found it and the person corrected it."""
+
+    audio_url: str = Field(min_length=1, max_length=MAX_URL)
+
+
+class PageTrackRead(PageTrackFields):
     # The asset this library already holds for the track, so the review list can show it
     # as imported rather than offering it twice.
     existing_asset_id: Optional[str] = None
@@ -154,25 +164,25 @@ def preview_page_import(
     except page_import.PageImportError as exc:
         raise _page_error(exc) from exc
 
-    existing = page_import.already_imported(session, user.id, extraction.tracks)
-    similar = page_import.similar_in_library(session, user.id, extraction.tracks)
-    return DataResponse(
-        data=PagePreview(
-            page_url=extraction.page_url,
-            method=extraction.method,
-            source=extraction.source,
-            note=extraction.note,
-            tracks=[
-                PageTrackRead(
-                    **t.to_dict(),
-                    existing_asset_id=existing.get(t.audio_url),
-                    similar_asset_id=(
-                        None if t.audio_url in existing else similar.get(t.audio_url)
-                    ),
-                )
-                for t in extraction.tracks
-            ],
-        )
+    return DataResponse(data=_preview_of(session, user.id, extraction))
+
+
+def _preview_of(session: Session, user_id: str, extraction: PageExtraction) -> PagePreview:
+    existing = page_import.already_imported(session, user_id, extraction.tracks)
+    similar = page_import.similar_in_library(session, user_id, extraction.tracks)
+    return PagePreview(
+        page_url=extraction.page_url,
+        method=extraction.method,
+        source=extraction.source,
+        note=extraction.note,
+        tracks=[
+            PageTrackRead(
+                **t.to_dict(),
+                existing_asset_id=existing.get(t.key),
+                similar_asset_id=None if t.key in existing else similar.get(t.key),
+            )
+            for t in extraction.tracks
+        ],
     )
 
 
@@ -210,3 +220,77 @@ def start_page_import(
         )
         jobs.append(KINDS["enrichment"].to_activity(job))
     return DataResponse(data=jobs)
+
+
+# ─── from a saved page ───────────────────────────────────────────────────────
+
+
+class SavedFileRead(BaseModel):
+    filename: str
+    # imported | duplicate | unmatched | rejected
+    status: str
+    asset_id: Optional[str] = None
+    track_title: Optional[str] = None
+    message: str = ""
+
+
+class SavedImport(BaseModel):
+    page_url: str
+    source: str
+    results: List[SavedFileRead]
+
+
+def _read_page(page: UploadFile) -> str:
+    """The saved page as text, refusing one too large to be a page."""
+    data = page.file.read(web.MAX_PAGE_BYTES + 1)
+    if len(data) > web.MAX_PAGE_BYTES:
+        raise _page_error(Exception("The saved page is too large to read"))
+    return data.decode("utf-8", errors="replace")
+
+
+@router.post("/import-page/saved/preview", response_model=DataResponse[PagePreview])
+def preview_saved_page(
+    user: CurrentUser,
+    page: UploadFile = File(...),
+    session: Session = Depends(get_session),
+) -> DataResponse[PagePreview]:
+    """List the tracks on a page the person saved in their own browser.
+
+    For sites that refuse GAM's own request (Pixabay). Reads only the uploaded file.
+    """
+    extraction = page_tracks.extract_saved(_read_page(page))
+    return DataResponse(data=_preview_of(session, user.id, extraction))
+
+
+@router.post("/import-page/saved", response_model=DataResponse[SavedImport])
+def import_saved_page(
+    user: CurrentUser,
+    page: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+) -> DataResponse[SavedImport]:
+    """Catalogue downloaded tracks with what their saved page says about each.
+
+    Synchronous, as an upload is: the bytes are already here, and there is nothing to
+    wait on but writing them.
+    """
+    if len(files) > page_import.MAX_TRACKS_PER_IMPORT:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "too_many_files",
+                "message": f"Import at most {page_import.MAX_TRACKS_PER_IMPORT} files at a time",
+            },
+        )
+    capacity.require_room()
+    extraction = page_tracks.extract_saved(_read_page(page))
+    results = page_import.import_saved(
+        session, user.id, extraction, [(f.filename or "track", f.file) for f in files]
+    )
+    return DataResponse(
+        data=SavedImport(
+            page_url=extraction.page_url,
+            source=extraction.source,
+            results=[SavedFileRead(**r.__dict__) for r in results],
+        )
+    )

@@ -58,6 +58,30 @@ export interface PagePreview {
   tracks: PageTrack[]
 }
 
+/** A track read from a page the person saved. It may have no audio URL (Pixabay's
+ *  download is a button); `match_id` is the site's id, which its downloaded filenames
+ *  carry. */
+export type SavedPageTrack = Omit<PageTrack, 'audio_url'> & {
+  audio_url: string | null
+  match_id: string | null
+}
+
+export type SavedPagePreview = Omit<PagePreview, 'tracks'> & { tracks: SavedPageTrack[] }
+
+export interface SavedFileResult {
+  filename: string
+  status: 'imported' | 'duplicate' | 'unmatched' | 'rejected'
+  asset_id: string | null
+  track_title: string | null
+  message: string
+}
+
+export interface SavedImport {
+  page_url: string
+  source: string
+  results: SavedFileResult[]
+}
+
 /** The most tracks one import may queue; the server refuses more. */
 export const MAX_TRACKS_PER_IMPORT = 50
 
@@ -65,7 +89,39 @@ interface DataResponse<T> {
   data: T
 }
 
+function multipart(page: File, files: File[] = []): FormData {
+  const body = new FormData()
+  body.append('page', page)
+  files.forEach((file) => body.append('files', file))
+  return body
+}
+
+// Content-Type left to the browser, which must add the multipart boundary itself.
+const MULTIPART = { headers: { 'Content-Type': undefined } }
+
 export const importsApi = {
+  /** Read a page the person saved in their browser. Uploads only the page. */
+  previewSavedPage(page: File): Promise<SavedPagePreview> {
+    return client
+      .post<DataResponse<SavedPagePreview>>(
+        '/assets/import-page/saved/preview',
+        multipart(page),
+        MULTIPART
+      )
+      .then((r) => r.data.data)
+  },
+
+  /** Import downloaded tracks with the details their saved page gives. */
+  importSavedPage(page: File, files: File[]): Promise<SavedImport> {
+    return client
+      .post<DataResponse<SavedImport>>(
+        '/assets/import-page/saved',
+        multipart(page, files),
+        MULTIPART
+      )
+      .then((r) => r.data.data)
+  },
+
   /** Read a music library's page and list its tracks. Downloads nothing. */
   previewPage(url: string, useAi = true): Promise<PagePreview> {
     return client
