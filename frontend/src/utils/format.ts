@@ -59,3 +59,53 @@ export function formatDate(iso: string): string {
     day: 'numeric',
   })
 }
+
+/** A timecode's four fields, each as typed text, so a half-typed value survives. */
+export interface TimecodeParts {
+  hours: string
+  minutes: string
+  seconds: string
+  millis: string
+}
+
+/**
+ * Seconds as editable HH:MM:SS:mmm parts.
+ *
+ * Rounded to the millisecond once, as a whole, rather than per field: flooring the
+ * seconds and rounding the remainder separately turns 1.9996 into "01:1000".
+ */
+export function toTimecodeParts(seconds: number | null): TimecodeParts {
+  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) {
+    return { hours: '', minutes: '', seconds: '', millis: '' }
+  }
+  const totalMs = Math.round(seconds * 1000)
+  const pad = (n: number, width: number) => String(n).padStart(width, '0')
+  return {
+    hours: pad(Math.floor(totalMs / 3_600_000), 2),
+    minutes: pad(Math.floor((totalMs % 3_600_000) / 60_000), 2),
+    seconds: pad(Math.floor((totalMs % 60_000) / 1000), 2),
+    millis: pad(totalMs % 1000, 3),
+  }
+}
+
+/**
+ * The parts back to seconds, or null if any field is not a whole number.
+ *
+ * Fields are not range-checked: 90 seconds is read as 1:30, the way a typist means
+ * it, and the display normalises once the field is left.
+ */
+export function fromTimecodeParts(parts: TimecodeParts): number | null {
+  const fields = [parts.hours, parts.minutes, parts.seconds, parts.millis]
+  // An empty field is zero, so typing just the seconds of a fresh point works.
+  if (fields.some((f) => f.trim() !== '' && !/^\d+$/.test(f.trim()))) return null
+  const [h, m, s, ms] = fields.map((f) => (f.trim() === '' ? 0 : Number(f)))
+  return (h * 3_600_000 + m * 60_000 + s * 1000 + ms) / 1000
+}
+
+/** Seconds as a fixed-width HH:MM:SS:mmm, for anywhere a precise point is shown. */
+export function formatTimecode(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return ''
+  const p = toTimecodeParts(seconds)
+  if (!p.hours) return ''
+  return `${p.hours}:${p.minutes}:${p.seconds}:${p.millis}`
+}

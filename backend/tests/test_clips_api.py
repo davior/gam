@@ -282,6 +282,107 @@ def test_list_clips_of_someone_elses_asset_is_a_404(library, session):
     assert library.get(f"/api/assets/{other.id}/clips").status_code == 404
 
 
+# ─── re-trimming a clip ────────────────────────────────────────────────────────
+
+
+def _with_duration(session, asset_id: str, seconds: float) -> None:
+    row = session.get(Asset, asset_id)
+    row.duration_seconds = seconds
+    session.add(row)
+    session.commit()
+
+
+def test_set_range_moves_a_clips_bounds(library, session):
+    parent = _upload_video(library)
+    _with_duration(session, parent["id"], 120.0)
+    clip = _clip(library, parent["id"], 1.0, 2.0)
+
+    response = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 61.25, "out_point": 70.5}
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["in_point"] == 61.25
+    assert data["out_point"] == 70.5
+    assert data["duration_seconds"] == pytest.approx(9.25)
+    # Still a window into the parent, and still listed under it.
+    assert data["source"] == "clip"
+    listed = library.get(f"/api/assets/{parent['id']}/clips").json()["data"]
+    assert [c["in_point"] for c in listed] == [61.25]
+
+
+def test_set_range_renames_a_default_name(library, session):
+    parent = _upload_video(library)
+    _with_duration(session, parent["id"], 120.0)
+    clip = _clip(library, parent["id"], 1.0, 2.0)
+
+    data = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 61.0, "out_point": 70.0}
+    ).json()["data"]
+    assert data["name"].endswith("(1:01–1:10)")
+    assert "0:01" not in data["name"]
+
+
+def test_set_range_keeps_a_chosen_name(library):
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"], name="The nano weapons moment")
+
+    data = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 0.1, "out_point": 0.4}
+    ).json()["data"]
+    assert data["name"] == "The nano weapons moment"
+
+
+def test_set_range_refuses_a_backwards_range(library):
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"])
+    response = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 0.4, "out_point": 0.2}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_clip_range"
+
+
+def test_set_range_refuses_past_the_parents_duration(library, session):
+    parent = _upload_video(library)
+    _with_duration(session, parent["id"], 2.0)
+    clip = _clip(library, parent["id"])
+    response = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 0.0, "out_point": 5.0}
+    )
+    assert response.status_code == 400
+
+
+def test_set_range_refuses_a_non_clip(library):
+    asset = _upload_video(library)
+    response = library.put(
+        f"/api/assets/{asset['id']}/range", json={"in_point": 0.0, "out_point": 0.5}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "not_a_clip"
+
+
+def test_set_range_is_refused_while_the_clip_is_being_promoted(library):
+    parent = _upload_video(library)
+    clip = _clip(library, parent["id"])
+    library.post(f"/api/assets/{clip['id']}/promote")
+
+    response = library.put(
+        f"/api/assets/{clip['id']}/range", json={"in_point": 0.1, "out_point": 0.4}
+    )
+    assert response.status_code == 409
+
+
+def test_set_range_of_someone_elses_clip_is_a_404(library, session):
+    other = Asset(user_id="somebody-else", name="Theirs", asset_type="video", source="clip")
+    session.add(other)
+    session.commit()
+    response = library.put(
+        f"/api/assets/{other.id}/range", json={"in_point": 0.0, "out_point": 0.5}
+    )
+    assert response.status_code == 404
+
+
 # ─── starting a sub-video extraction (queues a job) ───────────────────────────
 
 

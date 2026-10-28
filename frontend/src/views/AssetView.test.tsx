@@ -243,7 +243,43 @@ describe('clips (M7)', () => {
     await screen.findByRole('heading', { name: /clip of giordano/i })
 
     await userEvent.click(screen.getByRole('tab', { name: 'Info' }))
-    expect(screen.getByText('1:01–1:10')).toBeInTheDocument()
+    expect(screen.getByText('00:01:01:000 – 00:01:10:000')).toBeInTheDocument()
+  })
+
+  it('re-trims a clip from its own Trim tab, which an ordinary asset does not have', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(clip())
+    const setRange = vi.spyOn(clipsApi, 'setRange').mockResolvedValue(
+      clip({
+        in_point: 62.25,
+        out_point: 70,
+        name: 'Clip of Giordano interview (1:02–1:10)',
+      })
+    )
+    renderAt('/a/clip1')
+    await screen.findByRole('heading', { name: /clip of giordano/i })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Trim' }))
+    expect(screen.getByLabelText('In point seconds')).toHaveValue(1)
+    await userEvent.click(screen.getByRole('button', { name: 'In point +1s' }))
+    const millis = screen.getByLabelText('In point milliseconds')
+    await userEvent.clear(millis)
+    await userEvent.type(millis, '250')
+    await userEvent.click(screen.getByRole('button', { name: 'Save times' }))
+
+    await waitFor(() =>
+      expect(setRange).toHaveBeenCalledWith('clip1', { in_point: 62.25, out_point: 70 })
+    )
+    // The page follows the store's fresh copy: the new default name is the heading.
+    expect(
+      await screen.findByRole('heading', { name: /\(1:02–1:10\)/ })
+    ).toBeInTheDocument()
+  })
+
+  it('has no Trim tab for an ordinary asset', async () => {
+    vi.spyOn(assetsApi, 'get').mockResolvedValue(asset())
+    renderAt('/a/a1')
+    await screen.findByRole('heading', { name: 'Giordano interview' })
+    expect(screen.queryByRole('tab', { name: 'Trim' })).not.toBeInTheDocument()
   })
 
   it('blocks deleting an asset with dependent clips and offers to promote them', async () => {

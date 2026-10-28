@@ -681,6 +681,13 @@ def _format_range(start: float, end: float) -> str:
     return f"{_format_timestamp(start)}–{_format_timestamp(end)}"
 
 
+def _check_range(parent: Asset, in_point: float, out_point: float) -> None:
+    if in_point < 0 or out_point <= in_point:
+        raise ValueError("The out point must be after the in point")
+    if parent.duration_seconds is not None and out_point > parent.duration_seconds:
+        raise ValueError("The out point is past the end of the asset")
+
+
 def create_clip(
     session: Session,
     parent: Asset,
@@ -703,10 +710,7 @@ def create_clip(
         raise ValueError("Only video and audio assets can be clipped")
     if parent.storage_key is None:
         raise ValueError("A clip cannot itself be clipped — clip the original asset")
-    if in_point < 0 or out_point <= in_point:
-        raise ValueError("The out point must be after the in point")
-    if parent.duration_seconds is not None and out_point > parent.duration_seconds:
-        raise ValueError("The out point is past the end of the asset")
+    _check_range(parent, in_point, out_point)
 
     clip = Asset(
         user_id=parent.user_id,
@@ -729,6 +733,31 @@ def create_clip(
         height=parent.height,
         codec=parent.codec,
     )
+    session.add(clip)
+    session.commit()
+    session.refresh(clip)
+    _reindex(session, clip)
+    return clip
+
+
+def set_clip_range(
+    session: Session, clip: Asset, parent: Asset, *, in_point: float, out_point: float
+) -> Asset:
+    """Move a live clip's in and out points, against the same bounds `create_clip` uses.
+
+    Only a live clip: once promoted, the range is baked into a file of its own and
+    changing these columns would describe bytes that do not exist. The default name
+    carries the range it was cut at, so that suffix follows the new range; a name the
+    user chose (anything not ending in the old range) is theirs and is left alone.
+    """
+    _check_range(parent, in_point, out_point)
+    old_suffix = f"({_format_range(clip.in_point or 0.0, clip.out_point or 0.0)})"
+    if clip.name.endswith(old_suffix):
+        clip.name = clip.name[: -len(old_suffix)] + f"({_format_range(in_point, out_point)})"
+    clip.in_point = in_point
+    clip.out_point = out_point
+    clip.duration_seconds = out_point - in_point
+    clip.metadata_modified_date = utcnow()
     session.add(clip)
     session.commit()
     session.refresh(clip)

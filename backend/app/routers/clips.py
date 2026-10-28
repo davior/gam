@@ -57,6 +57,11 @@ class ClipCreate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
 
 
+class ClipRangeUpdate(BaseModel):
+    in_point: float = Field(ge=0)
+    out_point: float = Field(gt=0)
+
+
 class SubvideoCreate(BaseModel):
     in_point: float = Field(ge=0)
     out_point: float = Field(gt=0)
@@ -117,6 +122,46 @@ def list_clips(
         total=len(rows),
         limit=len(rows),
         offset=0,
+    )
+
+
+@router.put("/{clip_id}/range", response_model=DataResponse[AssetRead])
+def set_clip_range(
+    clip_id: str,
+    payload: ClipRangeUpdate,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> DataResponse[AssetRead]:
+    """Re-trim a live clip, from its parent's Clip tab or from the clip's own page.
+
+    Its own route rather than fields on `PATCH /assets/{id}`: the range is validated
+    against the parent, means nothing on anything but a live clip, and a name derived
+    from it has to follow — none of which the generic metadata edit knows about.
+    """
+    clip = _owned_asset(clip_id, user.id, session)
+    parent = session.get(Asset, clip.parent_asset_id) if clip.parent_asset_id else None
+    if clip.storage_key is not None or parent is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "not_a_clip", "message": "This asset is not a clip"},
+        )
+    # A promote reads the range when it runs, so moving it underneath one would cut a
+    # file that matches neither the old range nor the new one the user is looking at.
+    _require_no_active_extraction(session, clip.id)
+    try:
+        clip = asset_service.set_clip_range(
+            session, clip, parent, in_point=payload.in_point, out_point=payload.out_point
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "invalid_clip_range", "message": str(exc)},
+        ) from exc
+    return DataResponse(
+        data=asset_service.to_read_model(
+            clip, storage, tag_service.tags_for(session, clip.id), parent=parent
+        )
     )
 
 
