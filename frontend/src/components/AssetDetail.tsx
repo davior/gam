@@ -25,11 +25,18 @@ import { formatCost, usageApi, type UsageTotals } from '@/api/usage'
 import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
-import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
+import {
+  formatBytes,
+  formatDate,
+  formatDimensions,
+  formatDuration,
+  formatTimecode,
+} from '@/utils/format'
 import { useAutoGrow } from '@/utils/useAutoGrow'
 import AssetThumb from '@/components/AssetThumb'
 import AttributionPanel from '@/components/AttributionPanel'
 import ClipEditor from '@/components/ClipEditor'
+import ClipRangeForm from '@/components/ClipRangeForm'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
@@ -513,7 +520,7 @@ export default function AssetDetail({
         {asset.in_point !== null && asset.out_point !== null && (
           <Fact
             label="Clip"
-            value={`${formatDuration(asset.in_point)}–${formatDuration(asset.out_point)}`}
+            value={`${formatTimecode(asset.in_point)} – ${formatTimecode(asset.out_point)}`}
           />
         )}
         <Fact label="Format" value={asset.file_format ?? ''} />
@@ -660,6 +667,33 @@ export default function AssetDetail({
             icon: Scissors,
             content: (
               <ClipEditor asset={asset} currentTime={currentTime} onSeek={seekTo} />
+            ),
+          },
+        ]
+      : []),
+    // The clip's own page can re-trim it, not only its parent's Clip tab. Same form,
+    // same player: a clip plays its parent's file, so the playhead is already in the
+    // parent's timeline, which is the one in/out points are measured in. The parent's
+    // length is not on a clip's row, so the player's own duration bounds the nudges.
+    ...(ownsNoFile(asset) && asset.in_point !== null
+      ? [
+          {
+            id: 'trim',
+            label: 'Trim',
+            icon: Scissors,
+            content: (
+              <div className="min-h-0 flex-1 overflow-auto p-4">
+                <ClipRangeForm
+                  clip={asset}
+                  currentTime={currentTime}
+                  onSeek={seekTo}
+                  max={
+                    player && Number.isFinite(player.duration)
+                      ? player.duration
+                      : undefined
+                  }
+                />
+              </div>
             ),
           },
         ]

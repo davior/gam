@@ -87,6 +87,10 @@ interface LibraryState {
   /** Put an asset made somewhere other than the grid — a clip saved from the Clip
    *  tab — at the top of it. */
   prepend: (asset: Asset) => void
+  /** Move a live clip's in and out points and put the server's copy in the grid.
+   *  Rejects with the server's error and sets no store `error`, as `remove` does: the
+   *  form that asked shows it. */
+  setClipRange: (clipId: string, inPoint: number, outPoint: number) => Promise<Asset>
   /** Replace one asset's tags with the authoritative set the server just returned. */
   setAssetTags: (assetId: string, tags: Tag[]) => void
   /** Re-read one asset from the server, for when something other than the user
@@ -349,6 +353,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
         ? state
         : { assets: [asset, ...state.assets], total: state.total + 1 }
     )
+  },
+
+  async setClipRange(clipId, inPoint, outPoint) {
+    // Not optimistic, unlike `update`: the server may refuse the range (past the end,
+    // a promote running), and the player bounds itself by these values the moment they
+    // land, so it should only ever be bounded by a range that was accepted.
+    const saved = await clipsApi.setRange(clipId, {
+      in_point: inPoint,
+      out_point: outPoint,
+    })
+    set((state) => ({
+      assets: state.assets.map((a) => (a.id === clipId ? saved : a)),
+    }))
+    return saved
   },
 
   async openById(id) {

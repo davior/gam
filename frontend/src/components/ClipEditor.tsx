@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Film, Play, Scissors, Trash2 } from 'lucide-react'
+import { Film, Pencil, Play, Scissors, Trash2 } from 'lucide-react'
 import { clipsApi } from '@/api/clips'
 import type { ActivityJob } from '@/api/transcripts'
 import { apiErrorMessage } from '@/api/client'
 import type { Asset } from '@/api/assets'
 import { useLibraryStore } from '@/stores/library'
-import { formatDuration } from '@/utils/format'
+import { formatTimecode } from '@/utils/format'
+import ClipRangeForm from '@/components/ClipRangeForm'
 import EnrichmentButton from '@/components/EnrichmentButton'
+import TimecodeInput from '@/components/TimecodeInput'
 
 /**
  * Cutting a clip or a sub-video from the asset open in the player above.
@@ -18,9 +20,10 @@ import EnrichmentButton from '@/components/EnrichmentButton'
  * hides this tab for a clip, since M7 does not support clipping a clip.
  *
  * Each row's name opens that clip's own page. A live-clip row can also be played here,
- * promoted to a real file (`promote`), or deleted. Deleting a clip never touches the
- * file it was cut from, nor the poster it shares with it — the server only unlinks a
- * key no surviving row still points at. An extracted sub-video gets no delete here: it
+ * re-trimmed (the same form the clip's own Trim tab shows), promoted to a real file
+ * (`promote`), or deleted. Deleting a clip never touches the file it was cut from, nor
+ * the poster it shares with it — the server only unlinks a key no surviving row still
+ * points at. An extracted sub-video gets no delete here: it
  * owns real bytes, and that goes through its own page's confirm.
  */
 
@@ -43,6 +46,8 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
   // One row at a time: asking about a second clip abandons the first question.
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  // One row's times open at a time, for the same reason as `confirmingId`.
+  const [editingId, setEditingId] = useState<string | null>(null)
   const openById = useLibraryStore((s) => s.openById)
   const remove = useLibraryStore((s) => s.remove)
   const prepend = useLibraryStore((s) => s.prepend)
@@ -66,6 +71,7 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
     setOutPoint(null)
     setCreated(null)
     setConfirmingId(null)
+    setEditingId(null)
     void load()
   }, [load])
 
@@ -131,36 +137,32 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="space-y-2.5 border-b border-gray-200 p-3 dark:border-gray-700">
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-secondary flex-1 px-2 py-1.5 text-xs"
-            onClick={() => setInPoint(currentTime)}
-          >
-            Set in point
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary flex-1 px-2 py-1.5 text-xs"
-            onClick={() => setOutPoint(currentTime)}
-          >
-            Set out point
-          </button>
-        </div>
+        {/* Bounded by the asset's own length, so a nudge cannot run off its end; the
+            server checks the same bound on save. */}
+        <TimecodeInput
+          label="In point"
+          setLabel="Set in point"
+          value={inPoint}
+          onChange={setInPoint}
+          max={asset.duration_seconds ?? undefined}
+          currentTime={currentTime}
+          onSeek={onSeek}
+        />
+        <TimecodeInput
+          label="Out point"
+          setLabel="Set out point"
+          value={outPoint}
+          onChange={setOutPoint}
+          max={asset.duration_seconds ?? undefined}
+          currentTime={currentTime}
+          onSeek={onSeek}
+        />
 
-        <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
-          <span>In: {inPoint === null ? '—' : formatDuration(inPoint)}</span>
-          <span>Out: {outPoint === null ? '—' : formatDuration(outPoint)}</span>
-          {rangeValid && (
-            <button
-              type="button"
-              className="text-blue-600 hover:underline dark:text-blue-400"
-              onClick={() => onSeek(inPoint)}
-            >
-              Preview
-            </button>
-          )}
-        </div>
+        {inPoint !== null && outPoint !== null && !rangeValid && (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            The out point must be after the in point.
+          </p>
+        )}
 
         <div className="flex items-center gap-2">
           <button
@@ -216,89 +218,130 @@ export default function ClipEditor({ asset, currentTime, onSeek }: Props) {
             {clips.map((clip) => {
               const isLiveClip = clip.source === 'clip'
               return (
-                <li key={clip.id} className="flex items-center gap-2 px-3 py-2 text-xs">
-                  {isLiveClip ? (
-                    <button
-                      type="button"
-                      onClick={() => clip.in_point !== null && onSeek(clip.in_point)}
-                      className="shrink-0 text-blue-600 hover:underline dark:text-blue-400"
-                      title="Play this clip"
-                      aria-label="Play this clip"
-                    >
-                      <Play className="h-3.5 w-3.5" />
-                    </button>
-                  ) : (
-                    <Link
-                      to={`/a/${clip.id}`}
-                      className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                      title="Extracted as a standalone file — open it"
-                      aria-label="Open this sub-video"
-                    >
-                      <Film className="h-3.5 w-3.5" />
-                    </Link>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    {/* Every row, a live clip's included: its own page is where its tags,
-                        attribution and bounded player are, and the Info-tab Delete too. */}
-                    <Link
-                      to={`/a/${clip.id}`}
-                      className="block truncate text-gray-800 hover:underline dark:text-gray-200"
-                      title="Open this clip"
-                    >
-                      {clip.name}
-                    </Link>
-                    {isLiveClip && clip.in_point !== null && clip.out_point !== null && (
-                      <p className="text-[11px] text-gray-400 dark:text-gray-500">
-                        {formatDuration(clip.in_point)}–{formatDuration(clip.out_point)}
-                      </p>
-                    )}
-                  </div>
-                  {isLiveClip && (
-                    // In place: the row stops being a live clip and becomes a file of its
-                    // own, so reload on finish for the list to show it as one.
-                    <EnrichmentButton
-                      assetId={clip.id}
-                      action="extract_subvideo"
-                      icon={Scissors}
-                      label="Extract as file"
-                      runningLabel="Extracting…"
-                      start={clipsApi.promote}
-                      failureMessage="Could not start extracting"
-                      onFinish={() => void load()}
-                      iconOnly
-                    />
-                  )}
-                  {isLiveClip &&
-                    (confirmingId === clip.id ? (
-                      <span className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-danger px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={deletingId === clip.id}
-                          onClick={() => void deleteClip(clip)}
-                        >
-                          {deletingId === clip.id ? 'Deleting…' : 'Delete clip'}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-secondary px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
-                          disabled={deletingId === clip.id}
-                          onClick={() => setConfirmingId(null)}
-                        >
-                          Cancel
-                        </button>
-                      </span>
-                    ) : (
+                <li key={clip.id} className="px-3 py-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    {isLiveClip ? (
                       <button
                         type="button"
-                        onClick={() => setConfirmingId(clip.id)}
-                        className="shrink-0 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
-                        title="Delete this clip"
-                        aria-label="Delete this clip"
+                        onClick={() => clip.in_point !== null && onSeek(clip.in_point)}
+                        className="shrink-0 text-blue-600 hover:underline dark:text-blue-400"
+                        title="Play this clip"
+                        aria-label="Play this clip"
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
+                        <Play className="h-3.5 w-3.5" />
                       </button>
-                    ))}
+                    ) : (
+                      <Link
+                        to={`/a/${clip.id}`}
+                        className="shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                        title="Extracted as a standalone file — open it"
+                        aria-label="Open this sub-video"
+                      >
+                        <Film className="h-3.5 w-3.5" />
+                      </Link>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      {/* Every row, a live clip's included: its own page is where its tags,
+                        attribution and bounded player are, and the Info-tab Delete too. */}
+                      <Link
+                        to={`/a/${clip.id}`}
+                        className="block truncate text-gray-800 hover:underline dark:text-gray-200"
+                        title="Open this clip"
+                      >
+                        {clip.name}
+                      </Link>
+                      {isLiveClip &&
+                        clip.in_point !== null &&
+                        clip.out_point !== null && (
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                            {formatTimecode(clip.in_point)} –{' '}
+                            {formatTimecode(clip.out_point)}
+                          </p>
+                        )}
+                    </div>
+                    {isLiveClip && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditingId((current) =>
+                            current === clip.id ? null : clip.id
+                          )
+                        }
+                        className={`shrink-0 hover:text-blue-600 dark:hover:text-blue-400 ${
+                          editingId === clip.id
+                            ? 'text-blue-600 dark:text-blue-400'
+                            : 'text-gray-400'
+                        }`}
+                        title="Edit this clip's times"
+                        aria-label="Edit this clip's times"
+                        aria-expanded={editingId === clip.id}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    {isLiveClip && (
+                      // In place: the row stops being a live clip and becomes a file of its
+                      // own, so reload on finish for the list to show it as one.
+                      <EnrichmentButton
+                        assetId={clip.id}
+                        action="extract_subvideo"
+                        icon={Scissors}
+                        label="Extract as file"
+                        runningLabel="Extracting…"
+                        start={clipsApi.promote}
+                        failureMessage="Could not start extracting"
+                        onFinish={() => void load()}
+                        iconOnly
+                      />
+                    )}
+                    {isLiveClip &&
+                      (confirmingId === clip.id ? (
+                        <span className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-danger px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={deletingId === clip.id}
+                            onClick={() => void deleteClip(clip)}
+                          >
+                            {deletingId === clip.id ? 'Deleting…' : 'Delete clip'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary px-2 py-1 text-[11px] disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={deletingId === clip.id}
+                            onClick={() => setConfirmingId(null)}
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmingId(clip.id)}
+                          className="shrink-0 text-gray-400 hover:text-red-600 dark:hover:text-red-400"
+                          title="Delete this clip"
+                          aria-label="Delete this clip"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      ))}
+                  </div>
+                  {isLiveClip && editingId === clip.id && (
+                    <div className="mt-2 rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                      <ClipRangeForm
+                        clip={clip}
+                        currentTime={currentTime}
+                        onSeek={onSeek}
+                        max={asset.duration_seconds ?? undefined}
+                        onSaved={(saved) =>
+                          setClips((current) =>
+                            current.map((c) => (c.id === saved.id ? saved : c))
+                          )
+                        }
+                        onCancel={() => setEditingId(null)}
+                      />
+                    </div>
+                  )}
                 </li>
               )
             })}

@@ -41,6 +41,17 @@ export const clipsApi = {
       .then((r) => r.data.data)
   },
 
+  /** Re-trims a live clip — from its parent's Clip tab or its own Trim tab. A default
+   *  name carrying the old range is renamed to the new one; a chosen name is kept. */
+  setRange(
+    clipId: string,
+    range: { in_point: number; out_point: number }
+  ): Promise<Asset> {
+    return client
+      .put<DataResponse<Asset>>(`/assets/${clipId}/range`, range)
+      .then((r) => r.data.data)
+  },
+
   /** Queues a fresh, standalone extraction. The source asset is untouched; the new
    *  asset's id lands on the finished job as `result_asset_id`. */
   extractSubvideo(assetId: string, range: ClipRange): Promise<ActivityJob> {

@@ -227,4 +227,49 @@ describe('ClipEditor, deleting a clip', () => {
     expect(await screen.findByText(/an extraction is still running/i)).toBeInTheDocument()
     expect(screen.getByText('Live clip')).toBeInTheDocument()
   })
+  it('saves a clip from typed and nudged timecodes', async () => {
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    const create = vi
+      .spyOn(clipsApi, 'create')
+      .mockResolvedValue({ ...liveClip, id: 'c4', in_point: 1.5, out_point: 12.01 })
+    renderEditor()
+
+    await userEvent.type(await screen.findByLabelText('In point seconds'), '1')
+    await userEvent.type(screen.getByLabelText('In point milliseconds'), '500')
+    await userEvent.type(screen.getByLabelText('Out point seconds'), '11')
+    await userEvent.click(screen.getByRole('button', { name: 'Out point +1s' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Out point +10ms' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save as clip' }))
+
+    expect(create).toHaveBeenCalledWith('a1', { in_point: 1.5, out_point: 12.01 })
+  })
+
+  it('stops a nudge at the end of the asset', async () => {
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([])
+    renderEditor()
+
+    await userEvent.type(await screen.findByLabelText('Out point seconds'), '59')
+    await userEvent.click(screen.getByRole('button', { name: 'Out point +1s' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Out point +1s' }))
+    expect(screen.getByLabelText('Out point minutes')).toHaveValue(1)
+    expect(screen.getByLabelText('Out point seconds')).toHaveValue(0)
+  })
+
+  it('re-trims an existing clip from its row, and the row shows the new times', async () => {
+    vi.spyOn(clipsApi, 'list').mockResolvedValue([liveClip])
+    const setRange = vi
+      .spyOn(clipsApi, 'setRange')
+      .mockResolvedValue({ ...liveClip, in_point: 4.99, out_point: 9 })
+    renderEditor()
+
+    await userEvent.click(
+      await screen.findByRole('button', { name: "Edit this clip's times" })
+    )
+    // The new-clip fields are above; the row's form is the second pair.
+    await userEvent.click(screen.getAllByRole('button', { name: 'In point −10ms' })[1])
+    await userEvent.click(screen.getByRole('button', { name: 'Save times' }))
+
+    expect(setRange).toHaveBeenCalledWith(liveClip.id, { in_point: 4.99, out_point: 9 })
+    expect(await screen.findByText('00:00:04:990 – 00:00:09:000')).toBeInTheDocument()
+  })
 })

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { formatBytes, formatDate, formatDimensions, formatDuration } from '@/utils/format'
+import {
+  formatBytes,
+  formatDate,
+  formatDimensions,
+  formatDuration,
+  formatTimecode,
+  fromTimecodeParts,
+  toTimecodeParts,
+} from '@/utils/format'
 
 describe('formatBytes', () => {
   it('scales to a readable unit', () => {
@@ -53,5 +61,35 @@ describe('formatDate', () => {
 
   it('renders a real timestamp', () => {
     expect(formatDate('2026-09-13T10:00:00Z')).not.toBe('')
+  })
+})
+
+describe('timecodes', () => {
+  it('splits seconds into HH:MM:SS:mmm', () => {
+    expect(toTimecodeParts(3723.456)).toEqual({
+      hours: '01',
+      minutes: '02',
+      seconds: '03',
+      millis: '456',
+    })
+    expect(formatTimecode(61.5)).toBe('00:01:01:500')
+  })
+
+  it('rounds to the millisecond as a whole, not field by field', () => {
+    expect(formatTimecode(1.9996)).toBe('00:00:02:000')
+  })
+
+  it('is empty for no point at all', () => {
+    expect(toTimecodeParts(null).seconds).toBe('')
+    expect(formatTimecode(null)).toBe('')
+  })
+
+  it('reads parts back, treating blanks as zero and overflow as the typist meant', () => {
+    expect(
+      fromTimecodeParts({ hours: '', minutes: '1', seconds: '90', millis: '5' })
+    ).toBe(150.005)
+    expect(
+      fromTimecodeParts({ hours: '', minutes: '', seconds: '1.5', millis: '' })
+    ).toBe(null)
   })
 })
