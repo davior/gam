@@ -2,12 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Crosshair, Play } from 'lucide-react'
 import { fromTimecodeParts, toTimecodeParts, type TimecodeParts } from '@/utils/format'
 
-/** The nudge buttons, smallest step innermost. Frames are 33–42 ms at common rates,
- *  so 10 ms is fine enough to land on one without a hundred presses. */
+/** The nudge buttons, smallest step innermost. 100 ms is a few frames at common rates:
+ *  quick to walk with, and the milliseconds field is there for anything finer. */
 const NUDGES = [
   { delta: -1, label: '−1s' },
-  { delta: -0.01, label: '−10ms' },
-  { delta: 0.01, label: '+10ms' },
+  { delta: -0.1, label: '−100ms' },
+  { delta: 0.1, label: '+100ms' },
   { delta: 1, label: '+1s' },
 ]
 
@@ -33,8 +33,8 @@ interface Props {
   setLabel?: string
 }
 
-/** Rounded to the millisecond, the precision the fields show: without it, ten +10 ms
- *  nudges from 0 land on 0.09999999999999999 and the display drifts a millisecond. */
+/** Rounded to the millisecond, the precision the fields show: without it, three +100 ms
+ *  nudges from 0 land on 0.30000000000000004, float noise that would be saved as is. */
 function clamp(seconds: number, max: number | undefined): number {
   const bounded = Math.max(0, max === undefined ? seconds : Math.min(seconds, max))
   return Math.round(bounded * 1000) / 1000
