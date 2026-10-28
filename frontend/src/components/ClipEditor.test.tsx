@@ -231,17 +231,17 @@ describe('ClipEditor, deleting a clip', () => {
     vi.spyOn(clipsApi, 'list').mockResolvedValue([])
     const create = vi
       .spyOn(clipsApi, 'create')
-      .mockResolvedValue({ ...liveClip, id: 'c4', in_point: 1.5, out_point: 12.01 })
+      .mockResolvedValue({ ...liveClip, id: 'c4', in_point: 1.5, out_point: 12.1 })
     renderEditor()
 
     await userEvent.type(await screen.findByLabelText('In point seconds'), '1')
     await userEvent.type(screen.getByLabelText('In point milliseconds'), '500')
     await userEvent.type(screen.getByLabelText('Out point seconds'), '11')
     await userEvent.click(screen.getByRole('button', { name: 'Out point +1s' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Out point +10ms' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Out point +100ms' }))
     await userEvent.click(screen.getByRole('button', { name: 'Save as clip' }))
 
-    expect(create).toHaveBeenCalledWith('a1', { in_point: 1.5, out_point: 12.01 })
+    expect(create).toHaveBeenCalledWith('a1', { in_point: 1.5, out_point: 12.1 })
   })
 
   it('stops a nudge at the end of the asset', async () => {
@@ -259,17 +259,17 @@ describe('ClipEditor, deleting a clip', () => {
     vi.spyOn(clipsApi, 'list').mockResolvedValue([liveClip])
     const setRange = vi
       .spyOn(clipsApi, 'setRange')
-      .mockResolvedValue({ ...liveClip, in_point: 4.99, out_point: 9 })
+      .mockResolvedValue({ ...liveClip, in_point: 4.9, out_point: 9 })
     renderEditor()
 
     await userEvent.click(
       await screen.findByRole('button', { name: "Edit this clip's times" })
     )
     // The new-clip fields are above; the row's form is the second pair.
-    await userEvent.click(screen.getAllByRole('button', { name: 'In point −10ms' })[1])
+    await userEvent.click(screen.getAllByRole('button', { name: 'In point −100ms' })[1])
     await userEvent.click(screen.getByRole('button', { name: 'Save times' }))
 
-    expect(setRange).toHaveBeenCalledWith(liveClip.id, { in_point: 4.99, out_point: 9 })
-    expect(await screen.findByText('00:00:04:990 – 00:00:09:000')).toBeInTheDocument()
+    expect(setRange).toHaveBeenCalledWith(liveClip.id, { in_point: 4.9, out_point: 9 })
+    expect(await screen.findByText('00:00:04:900 – 00:00:09:000')).toBeInTheDocument()
   })
 })
