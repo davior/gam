@@ -42,7 +42,6 @@ import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import GenerateTab from '@/components/GenerateTab'
 import MusicPanel from '@/components/MusicPanel'
-import ReencodePanel from '@/components/ReencodePanel'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
@@ -516,9 +515,6 @@ export default function AssetDetail({
         />
       )}
       <EmbedButton assetId={asset.id} />
-      {asset.asset_type === 'video' && !ownsNoFile(asset) && (
-        <ReencodePanel asset={asset} />
-      )}
 
       <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
         <Fact label="Type" value={asset.asset_type} />
