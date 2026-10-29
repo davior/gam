@@ -45,6 +45,10 @@ KIND_BULK_ENRICH = "bulk_enrich"
 # costs nothing, the same reason `KIND_EXTRACT_TEXT` sits apart from the LLM jobs
 # despite also being per-asset.
 KIND_EXTRACT_SUBVIDEO = "extract_subvideo"
+# Scaling a video down to a smaller frame as a new asset (`enrichment/reencode.py`) — a
+# 4K original made workable for a 1080p Video Creator project. Per-asset and outside
+# `ENRICHMENT_KINDS` for the reasons an extraction is: one ffmpeg run, no provider.
+KIND_REENCODE = "reencode"
 # M10. Proposing where an asset came from. Inside `ENRICHMENT_KINDS` unlike the two
 # above: it calls a provider and costs money, so it belongs in the bulk-enrichment
 # selection UI and its cost estimate.

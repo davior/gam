@@ -26,6 +26,7 @@ from app.models.job import (
     KIND_GENERATE,
     KIND_IMPORT_TRACK,
     KIND_IMPORT_URL,
+    KIND_REENCODE,
     EnrichmentJob,
 )
 from app.schemas_jobs import ActivityJobRead
@@ -55,7 +56,7 @@ class JobKind:
 # pointed at the source, and an import or a generation has no asset at all until it is
 # done.
 _CREATES_AN_ASSET = frozenset(
-    {KIND_EXTRACT_SUBVIDEO, KIND_IMPORT_URL, KIND_IMPORT_TRACK, KIND_GENERATE}
+    {KIND_EXTRACT_SUBVIDEO, KIND_REENCODE, KIND_IMPORT_URL, KIND_IMPORT_TRACK, KIND_GENERATE}
 )
 
 
