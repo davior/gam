@@ -54,7 +54,7 @@ from app.schemas_assets import (
 )
 from app.search import fts, vectors
 from app.services import tags
-from app.storage import LocalStorage, StorageError, StoredFile, new_key, thumb_key_for
+from app.storage import LocalStorage, StorageError, StoredFile, new_key, peaks_key_for, thumb_key_for
 
 logger = logging.getLogger(__name__)
 
@@ -519,6 +519,7 @@ def delete_asset(
     doomed = [*clips, asset]
     doomed_ids = [row.id for row in doomed]
     keys = {key for row in doomed for key in (row.storage_key, row.thumb_key) if key}
+    file_keys = {row.storage_key for row in doomed if row.storage_key}
     asset_id, user_id = asset.id, asset.user_id
 
     for row_id in doomed_ids:
@@ -558,6 +559,10 @@ def delete_asset(
             logger.warning("Could not check whether %s is still in use", key, exc_info=True)
             continue
         storage.delete(key)
+        # A cached waveform has no column to be "still referenced" through: it belongs to
+        # the file, so it goes exactly when the file does.
+        if key in file_keys:
+            storage.delete(peaks_key_for(key))
 
 
 def apply_metadata(session: Session, asset: Asset, changes: dict) -> Asset:

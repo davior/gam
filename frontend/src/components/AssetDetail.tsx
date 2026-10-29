@@ -46,6 +46,7 @@ import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
 import TranscriptPanel from '@/components/TranscriptPanel'
+import WaveformPlayer from '@/components/WaveformPlayer'
 
 /** A clip has no bytes, no transcript and no AI enrichment of its own — a promoted or
  *  freshly-extracted sub-video does, and `source` (not `parent_asset_id`, which both
@@ -85,8 +86,8 @@ const TEXT_TYPE = 'document'
 
 /**
  * Types with something to look at. They get a media well worth giving height to, and
- * they are the only ones that gain anything from the side-by-side layout — a waveform-less
- * audio bar beside a transcript would just be a tall black rectangle.
+ * they are the only ones that gain anything from the side-by-side layout — a 64px
+ * waveform beside a transcript would just be a tall black rectangle with a strip in it.
  */
 const VISUAL_TYPES = new Set(['video', 'image'])
 
@@ -855,14 +856,10 @@ function Preview({
 
   if (asset.asset_type === 'audio') {
     return (
-      <audio
-        key={asset.id}
-        ref={attachPlayer}
-        src={asset.file_url}
-        controls
-        preload="metadata"
+      <WaveformPlayer
+        asset={asset}
+        attachPlayer={attachPlayer}
         onTimeUpdate={handleTimeUpdate}
-        className="w-full max-w-2xl px-4"
       />
     )
   }

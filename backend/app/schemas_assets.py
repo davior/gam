@@ -238,3 +238,15 @@ class UploadResult(BaseModel):
 
     created: list[AssetRead]
     rejected: list[UploadRejection]
+
+
+class WaveformRead(BaseModel):
+    """What the audio player draws its scrub bar from (`ingest/waveform.py`).
+
+    `duration` is measured from the decoded samples, which is what the peaks are laid
+    out against. The player still takes its clock from the media element; the two
+    agree to within a block.
+    """
+
+    duration: float
+    peaks: List[float]

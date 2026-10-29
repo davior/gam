@@ -23,11 +23,12 @@ from app.models.job import (
 )
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
-from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult
+from app.schemas_assets import AssetRead, AssetUpdate, UploadRejection, UploadResult, WaveformRead
 from app.schemas_jobs import ActivityJobRead
 from app.schemas_tags import AssetTagsWrite, BulkTagsResult, BulkTagsWrite, TagRead
 from app.services import assets as service
 from app.services import tags as tag_service
+from app.services import waveforms as waveform_service
 from app.storage import LocalStorage, build_storage, capacity
 
 router = APIRouter()
@@ -349,6 +350,22 @@ def get_asset(
             asset, storage, tag_service.tags_for(session, asset.id), parent=parent
         )
     )
+
+
+@router.get("/{asset_id}/peaks", response_model=DataResponse[WaveformRead])
+def get_peaks(
+    asset_id: str,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+    storage: LocalStorage = Depends(get_storage),
+) -> DataResponse[WaveformRead]:
+    """The waveform the audio player scrubs on.
+
+    A plain `def`, so the first request for a long recording — one ffmpeg decode —
+    runs in the threadpool rather than on the event loop.
+    """
+    asset = _owned(asset_id, user.id, session)
+    return DataResponse(data=waveform_service.waveform_for(session, storage, asset))
 
 
 # ─── editing ─────────────────────────────────────────────────────────────────
