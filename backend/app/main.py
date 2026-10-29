@@ -37,6 +37,7 @@ from app.routers import settings as settings_router
 from app.routers import storage as storage_router
 from app.routers import tags as tags_router
 from app.routers import usage as usage_router
+from app.routers import versions as versions_router
 from app.routers import transcripts as transcripts_router
 from app.schemas import ClientConfig, DataResponse, HealthResponse
 
@@ -213,6 +214,7 @@ app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
 app.include_router(transcripts_router.router, prefix="/api/assets", tags=["transcripts"])
 app.include_router(enrichment_router.router, prefix="/api/assets", tags=["enrichment"])
 app.include_router(clips_router.router, prefix="/api/assets", tags=["clips"])
+app.include_router(versions_router.router, prefix="/api/assets", tags=["versions"])
 app.include_router(imports_router.router, prefix="/api/assets", tags=["imports"])
 app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])
 # Its own tree rather than under /api/assets: the catalogue is not about any asset, and a

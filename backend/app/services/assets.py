@@ -46,6 +46,7 @@ from app.models.asset import (
 from app.models.suggestion import Suggestion
 from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
+from app.models.version import AssetVersion
 from app.schemas_assets import (
     AssetGenerationRead,
     AssetGenerationSource,
@@ -450,9 +451,11 @@ def _delete_dependents(session: Session, asset_id: str) -> None:
     session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
     session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
     session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
+    # A foreign key, like the tag join. Their files are unlinked by `delete_asset`.
+    session.exec(delete(AssetVersion).where(col(AssetVersion.asset_id) == asset_id))
 
 
-def _still_referenced(session: Session, user_id: str, key: str) -> bool:
+def still_referenced(session: Session, user_id: str, key: str) -> bool:
     """Whether any surviving row still points at this storage object.
 
     A key is not owned by exactly one row. A clip's `thumb_key` is a copy of its
@@ -488,7 +491,7 @@ def delete_asset(
     The row goes first. If the unlink fails the asset is still gone from the user's
     view, and an orphaned file is recoverable by a sweep; the reverse — a row pointing
     at nothing — is what produces broken images. "Only it was using" is
-    `_still_referenced`: a poster is routinely shared between a parent and its clips.
+    `still_referenced`: a poster is routinely shared between a parent and its clips.
 
     The dependent rows have to go before it, for two different reasons. Tag
     attachments are a hard constraint: `AssetTag.asset_id` is a foreign key with no
@@ -520,6 +523,16 @@ def delete_asset(
     doomed_ids = [row.id for row in doomed]
     keys = {key for row in doomed for key in (row.storage_key, row.thumb_key) if key}
     file_keys = {row.storage_key for row in doomed if row.storage_key}
+    # Read before the rows go. A version's file is its own, never shared, so it needs
+    # no `still_referenced` check — but it goes through the same loop to get its cached
+    # waveform removed with it.
+    version_keys = set(
+        session.exec(
+            select(AssetVersion.storage_key).where(col(AssetVersion.asset_id).in_(doomed_ids))
+        ).all()
+    )
+    keys |= version_keys
+    file_keys |= version_keys
     asset_id, user_id = asset.id, asset.user_id
 
     for row_id in doomed_ids:
@@ -553,7 +566,7 @@ def delete_asset(
     # unlinked file that something still shows is not recoverable at all.
     for key in keys:
         try:
-            if _still_referenced(session, user_id, key):
+            if still_referenced(session, user_id, key):
                 continue
         except Exception:  # noqa: BLE001 - see above
             logger.warning("Could not check whether %s is still in use", key, exc_info=True)
@@ -964,8 +977,8 @@ def to_read_model(
     and signs like any other asset's.
     """
     playable_key = asset.storage_key if asset.storage_key else (parent.storage_key if parent else None)
-    file_url = _signed_url(playable_key)
-    thumb_url = _signed_url(asset.thumb_key)
+    file_url = signed_url(playable_key)
+    thumb_url = signed_url(asset.thumb_key)
 
     missing = False
     if playable_key:
@@ -1068,7 +1081,7 @@ def _json_or(text: Optional[str], default: Any) -> Any:
     return value if isinstance(value, type(default)) else default
 
 
-def _signed_url(key: Optional[str]) -> Optional[str]:
+def signed_url(key: Optional[str]) -> Optional[str]:
     if not key:
         return None
     expires_at, signature = sign_media_key(key, ttl_seconds=settings.media_url_ttl_seconds)

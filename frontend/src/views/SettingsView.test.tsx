@@ -78,6 +78,7 @@ beforeEach(() => {
       total_bytes: 0,
       files: 0,
       by_type: [],
+      versions: { files: 0, bytes: 0 },
       thumbnails: { files: 0, bytes: 0 },
       largest: [],
     },

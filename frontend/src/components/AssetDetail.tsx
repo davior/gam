@@ -3,6 +3,7 @@ import {
   Eye,
   FileText,
   Info,
+  Layers,
   Link2,
   Mic,
   Music,
@@ -46,6 +47,7 @@ import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
 import TranscriptPanel from '@/components/TranscriptPanel'
+import VersionsTab from '@/components/VersionsTab'
 import WaveformPlayer from '@/components/WaveformPlayer'
 
 /** A clip has no bytes, no transcript and no AI enrichment of its own — a promoted or
@@ -696,6 +698,18 @@ export default function AssetDetail({
                 />
               </div>
             ),
+          },
+        ]
+      : []),
+    // The original and its standard sizes. Not on a clip, which has no file of its own
+    // to make sizes of: its parent's Versions tab is where they are.
+    ...(asset.asset_type === 'video' && !ownsNoFile(asset)
+      ? [
+          {
+            id: 'versions',
+            label: 'Versions',
+            icon: Layers,
+            content: <VersionsTab asset={asset} />,
           },
         ]
       : []),

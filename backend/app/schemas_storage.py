@@ -22,7 +22,11 @@ class LargestAsset(BaseModel):
     id: str
     name: str
     asset_type: str
+    # The original's bytes alone, as the asset's own `size_bytes` reads.
     size_bytes: int
+    # What its standard-resolution versions add on top. Ranked by the sum of the two,
+    # since deleting the asset frees both.
+    versions_bytes: int = 0
 
 
 class LibraryUsage(BaseModel):
@@ -31,6 +35,10 @@ class LibraryUsage(BaseModel):
     total_bytes: int
     files: int
     by_type: List[TypeUsage]
+    # Standard-resolution versions (1080p, 720p, ...) of videos. Their own group rather
+    # than folded into "video", so the panel can say how much is originals and how much
+    # is copies that could be deleted without losing a video.
+    versions: FileGroup = FileGroup()
     thumbnails: FileGroup
     largest: List[LargestAsset]
 

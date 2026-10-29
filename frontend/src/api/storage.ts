@@ -32,13 +32,19 @@ export interface LargestAsset {
   id: string
   name: string
   asset_type: string
+  /** The original's bytes alone. */
   size_bytes: number
+  /** What its versions add. Ranked by the two together: a delete frees both. */
+  versions_bytes: number
 }
 
 export interface LibraryUsage {
   total_bytes: number
   files: number
   by_type: TypeUsage[]
+  /** Standard-resolution versions (1080p, 720p, ...) of videos, apart from the
+   *  originals they were made from. */
+  versions: FileGroup
   thumbnails: FileGroup
   largest: LargestAsset[]
 }
