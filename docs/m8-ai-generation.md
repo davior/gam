@@ -105,7 +105,11 @@ Rather than code per model, each catalogue row carries:
 - `options` — the *exact values* the endpoint accepts for each user-facing choice
   (`aspect_ratios`, `image_sizes`, `durations`, `resolutions`), passed through verbatim so
   `"5"` and `"8s"` and `6` all work, plus `supports_seed`, `supports_negative_prompt`,
-  `supports_audio` and `max_outputs`;
+  `supports_audio` and `max_outputs`, and `custom_size` — null, or
+  `{max_width, max_height, multiple_of, max_pixels}` for a model that takes any width ×
+  height (FLUX's `image_size: {width, height}`; its named presets stop at 1024 px). Only
+  for image kinds. Seeded on the two FLUX rows so Video Creator can size a picture for
+  its video;
 - `extra_params` — defaults merged into every request body first (e.g.
   `{"generate_audio": false}` for Veo, whose audio default raises the price by half).
 
@@ -270,8 +274,12 @@ alone. The key is never returned, masked or otherwise.
  "base_asset_ids": ["…"], "end_frame_asset_id": null,
  "params": {"aspect_ratio": null, "image_size": null, "duration": null,
             "resolution": null, "seed": null, "negative_prompt": null,
-            "generate_audio": null, "num_outputs": 1}}
+            "generate_audio": null, "num_outputs": 1,
+            "width": null, "height": null}}
 ```
+`width` and `height` are optional, both or neither, and only for a row with
+`custom_size`. Each is rounded down to `multiple_of` and sent as
+`image_size: {width, height}`, which is how it is stored in `ai_parameters` too.
 Checked at submit time, in this order:
 - `400 fal_key_missing` — no key stored.
 - `404 model_not_found`; `409 model_inactive`.
@@ -282,7 +290,9 @@ Checked at submit time, in this order:
   - an end frame on a model without `end_image_field`;
   - a choice outside the row's declared list;
   - `seed` / `negative_prompt` / `generate_audio` on a model that does not declare it;
-  - `num_outputs` outside 1–`max_outputs`.
+  - `num_outputs` outside 1–`max_outputs`;
+  - `width`/`height` on a row without `custom_size`, only one of them, not whole
+    numbers, over a limit, or together with `image_size`.
 - `404 asset_not_found` for a base the user does not own.
 - `422 invalid_base` for a base that is not an image, owns no file, or is not readable.
 

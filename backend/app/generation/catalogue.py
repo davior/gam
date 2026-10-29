@@ -32,10 +32,19 @@ OPTION_LISTS = tuple(key for _param, key in CHOICES)
 OPTION_FLAGS = ("supports_seed", "supports_negative_prompt", "supports_audio")
 MAX_OUTPUTS = 4
 
+# A model that takes any width × height rather than only named sizes (FLUX's
+# `image_size: {width, height}`) says so with these limits; null means it does not. It
+# exists so a caller sizing a picture for a video frame can ask for the size it needs,
+# which no preset list reaches: FLUX's largest is 1024 on the long side.
+CUSTOM_SIZE_LIMITS = ("max_width", "max_height", "multiple_of")
+CUSTOM_SIZE_KEYS = (*CUSTOM_SIZE_LIMITS, "max_pixels")
+MAX_MULTIPLE_OF = 64
+
 DEFAULT_OPTIONS: dict[str, Any] = {
     **{key: [] for key in OPTION_LISTS},
     **{flag: False for flag in OPTION_FLAGS},
     "max_outputs": 1,
+    "custom_size": None,
 }
 
 # An endpoint id becomes a URL path, so it is held to what fal's ids look like: at
@@ -66,6 +75,10 @@ def options_of(row: GenerationModel) -> dict[str, Any]:
             options[flag] = stored[flag]
     if _is_int(stored.get("max_outputs")):
         options["max_outputs"] = stored["max_outputs"]
+    try:
+        options["custom_size"] = _custom_size(stored.get("custom_size"))
+    except InvalidEntry:
+        pass
     return options
 
 
@@ -107,6 +120,8 @@ def normalise_options(value: Any) -> dict[str, Any]:
             if not _is_int(item):
                 raise InvalidEntry("options.max_outputs must be a whole number")
             options[key] = item
+        elif key == "custom_size":
+            options[key] = _custom_size(item)
         else:
             raise InvalidEntry(f"options has no setting called {key!r}")
     return options
@@ -178,6 +193,8 @@ def validate(entry: dict[str, Any]) -> dict[str, Any]:
             )
     elif not 1 <= max_outputs <= MAX_OUTPUTS:
         raise InvalidEntry(f"options.max_outputs must be between 1 and {MAX_OUTPUTS}")
+    if kind == KIND_IMAGE_TO_VIDEO and options["custom_size"] is not None:
+        raise InvalidEntry("A video model takes no custom picture size: options.custom_size must be null")
 
     if not isinstance(entry.get("extra_params", {}), dict):
         raise InvalidEntry("extra_params must be an object")
@@ -190,6 +207,31 @@ def validate(entry: dict[str, Any]) -> dict[str, Any]:
         raise InvalidEntry(f"price_unit must be one of {', '.join(PRICE_UNITS)}")
 
     return {**entry, "options": options}
+
+
+def _custom_size(value: Any) -> Optional[dict[str, Any]]:
+    """`options.custom_size`, checked: null, or every limit a positive whole number.
+
+    `max_pixels` may be null, for a model bounded only per side. The keys are all
+    required, since a missing `multiple_of` would leave a caller guessing what the model
+    rounds to.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise InvalidEntry("options.custom_size must be an object or null")
+    unknown = sorted(set(value) - set(CUSTOM_SIZE_KEYS))
+    if unknown:
+        raise InvalidEntry(f"options.custom_size has no setting called {unknown[0]!r}")
+    for key in CUSTOM_SIZE_LIMITS:
+        if not _is_int(value.get(key)) or value[key] < 1:
+            raise InvalidEntry(f"options.custom_size.{key} must be a whole number above 0")
+    if value["multiple_of"] > MAX_MULTIPLE_OF:
+        raise InvalidEntry(f"options.custom_size.multiple_of must be at most {MAX_MULTIPLE_OF}")
+    max_pixels = value.get("max_pixels")
+    if max_pixels is not None and (not _is_int(max_pixels) or max_pixels < 1):
+        raise InvalidEntry("options.custom_size.max_pixels must be a whole number above 0, or null")
+    return {**{key: value[key] for key in CUSTOM_SIZE_LIMITS}, "max_pixels": max_pixels}
 
 
 def _is_scalar(value: Any) -> bool:

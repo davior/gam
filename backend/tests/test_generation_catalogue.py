@@ -13,7 +13,7 @@ from app.config import settings
 from app.models.setting import UserSetting
 from app.models.user import User
 from app.settings_store import FAL_API_KEY, get_setting
-from tests.fal_stub import I2I, I2V, T2I, TEST_USER, VEO, seed_models
+from tests.fal_stub import CUSTOM_SIZE, I2I, I2V, T2I, TEST_USER, VEO, seed_models
 from tests.test_auth import make_token
 
 NEW = {
@@ -82,6 +82,7 @@ def test_a_row_reads_with_every_option_present(auth_client, models):
         "supports_negative_prompt": False,
         "supports_audio": False,
         "max_outputs": 4,
+        "custom_size": CUSTOM_SIZE,
     }
     assert flux["extra_params"] == {}
     assert flux["image_field"] is None and flux["max_images"] == 0
@@ -90,6 +91,18 @@ def test_a_row_reads_with_every_option_present(auth_client, models):
 
     veo = next(m for m in body if m["endpoint_id"] == VEO)
     assert veo["extra_params"] == {"generate_audio": False}
+    assert veo["options"]["custom_size"] is None
+
+
+def test_a_malformed_stored_custom_size_reads_as_none(auth_client, session, models):
+    models[T2I].options = json.dumps({"image_sizes": ["square_hd"], "custom_size": {"max_width": "big"}})
+    session.add(models[T2I])
+    session.commit()
+
+    body = auth_client.get("/api/generate/models").json()["data"]
+    flux = next(m for m in body if m["endpoint_id"] == T2I)
+    assert flux["options"]["custom_size"] is None
+    assert flux["options"]["image_sizes"] == ["square_hd"]
 
 
 def test_inactive_rows_are_for_admins_only(auth_client, session, models, monkeypatch):
@@ -176,6 +189,15 @@ def test_an_admin_adds_a_model(auth_client, session, admin):
     assert "fal-ai/flux/schnell" in listed
 
 
+def test_an_admin_adds_a_model_that_takes_any_size(auth_client, admin):
+    unbounded = {**CUSTOM_SIZE, "max_pixels": None}
+    response = auth_client.post(
+        "/api/generate/models", json={**NEW, "options": {**NEW["options"], "custom_size": unbounded}}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["data"]["options"]["custom_size"] == unbounded
+
+
 def test_a_video_model_with_an_end_frame(auth_client, admin):
     response = auth_client.post("/api/generate/models", json=VIDEO)
     assert response.status_code == 201, response.text
@@ -206,6 +228,13 @@ def test_a_duplicate_endpoint_is_a_conflict(auth_client, admin, models):
         ({"options": {"max_outputs": 5}}, "max_outputs"),
         ({"options": {"max_outputs": 0}}, "max_outputs"),
         ({"options": {"supports_seed": "yes"}}, "supports_seed"),
+        ({"options": {"custom_size": "big"}}, "custom_size must be an object"),
+        ({"options": {"custom_size": {**CUSTOM_SIZE, "max_depth": 3}}}, "max_depth"),
+        ({"options": {"custom_size": {**CUSTOM_SIZE, "max_width": 0}}}, "custom_size.max_width"),
+        ({"options": {"custom_size": {**CUSTOM_SIZE, "max_height": "3072"}}}, "custom_size.max_height"),
+        ({"options": {"custom_size": {"max_width": 3072, "max_height": 3072}}}, "custom_size.multiple_of"),
+        ({"options": {"custom_size": {**CUSTOM_SIZE, "multiple_of": 128}}}, "at most 64"),
+        ({"options": {"custom_size": {**CUSTOM_SIZE, "max_pixels": -1}}}, "custom_size.max_pixels"),
         ({"extra_params": ["generate_audio"]}, "extra_params must be an object"),
         ({"price_unit": "token"}, "price_unit"),
         ({"unit_price": -1}, "unit_price"),
@@ -226,6 +255,7 @@ def test_an_invalid_text_to_image_entry_is_refused(auth_client, admin, change, f
         ({"max_images": 2}, "image_field_is_list"),
         ({"options": {"max_outputs": 2}}, "max_outputs must be 1"),
         ({"image_field": "image url"}, "image_field"),
+        ({"options": {"custom_size": CUSTOM_SIZE}}, "custom_size must be null"),
     ],
 )
 def test_an_invalid_video_entry_is_refused(auth_client, admin, change, fragment):

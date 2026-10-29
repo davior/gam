@@ -45,6 +45,16 @@ export interface GenerationOptions {
   supports_audio: boolean
   /** 1–4 for images; always 1 for video. */
   max_outputs: number
+  /** Set on a model that takes any width × height (FLUX), within these limits. */
+  custom_size: CustomSize | null
+}
+
+/** Each side is rounded down to `multiple_of` by the server; `max_pixels` null is no cap. */
+export interface CustomSize {
+  max_width: number
+  max_height: number
+  multiple_of: number
+  max_pixels: number | null
 }
 
 export interface GenerationModel {
@@ -94,6 +104,10 @@ export interface GenerationParams {
   negative_prompt: string | null
   generate_audio: boolean | null
   num_outputs: number
+  /** A size in pixels, for a model with `custom_size`. Both or neither. This form never
+   *  sets them; Video Creator does, to size a picture for its video. */
+  width?: number | null
+  height?: number | null
 }
 
 export interface GenerationCreate {

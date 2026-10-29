@@ -210,6 +210,8 @@ I2I = "fal-ai/nano-banana/edit"
 I2V = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
 VEO = "fal-ai/veo3.1/fast/image-to-video"
 
+CUSTOM_SIZE = {"max_width": 3072, "max_height": 3072, "multiple_of": 16, "max_pixels": 5_000_000}
+
 
 def seed_models(session) -> dict:
     """Four catalogue rows, shaped like the seeded ones they are named after.
@@ -227,6 +229,7 @@ def seed_models(session) -> dict:
                 "image_sizes": ["square_hd", "landscape_16_9"],
                 "supports_seed": True,
                 "max_outputs": 4,
+                "custom_size": CUSTOM_SIZE,
             }),
             unit_price=0.025, price_unit="megapixel", price_currency="USD",
         ),
