@@ -6,6 +6,7 @@ import {
   GENERATION_KINDS,
   generateApi,
   KIND_LABELS,
+  type CustomSize,
   type GenerationKind,
   type GenerationModel,
   type GenerationModelInput,
@@ -160,6 +161,7 @@ interface ModelForm {
   supports_negative_prompt: boolean
   supports_audio: boolean
   max_outputs: string
+  custom_size: string
   extra_params: string
   unit_price: string
   price_unit: string
@@ -187,6 +189,7 @@ const emptyForm = (): ModelForm => ({
   supports_negative_prompt: false,
   supports_audio: false,
   max_outputs: '1',
+  custom_size: '',
   extra_params: '',
   unit_price: '',
   price_unit: '',
@@ -241,6 +244,11 @@ function fromModel(model: GenerationModel): ModelForm {
     supports_negative_prompt: model.options.supports_negative_prompt,
     supports_audio: model.options.supports_audio,
     max_outputs: String(model.options.max_outputs),
+    // Kept as JSON text rather than four inputs: few models take it, and an edit to an
+    // unrelated field must send it back unchanged, not drop it.
+    custom_size: model.options.custom_size
+      ? JSON.stringify(model.options.custom_size)
+      : '',
     extra_params:
       Object.keys(model.extra_params).length > 0
         ? JSON.stringify(model.extra_params, null, 2)
@@ -294,6 +302,21 @@ function toInput(form: ModelForm): GenerationModelInput | string {
     return 'Maximum outputs must be between 1 and 4'
   }
 
+  let custom_size: CustomSize | null = null
+  if (form.custom_size.trim()) {
+    if (video) return 'A video model takes no custom picture size'
+    try {
+      const parsed: unknown = JSON.parse(form.custom_size)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('not an object')
+      }
+      // The server checks each limit and names the one that is wrong.
+      custom_size = parsed as CustomSize
+    } catch {
+      return 'Custom size must be a JSON object, like {"max_width": 3072, "max_height": 3072, "multiple_of": 16, "max_pixels": 5000000}'
+    }
+  }
+
   let extra_params: Record<string, unknown> = {}
   if (form.extra_params.trim()) {
     try {
@@ -334,6 +357,7 @@ function toInput(form: ModelForm): GenerationModelInput | string {
       supports_negative_prompt: form.supports_negative_prompt,
       supports_audio: form.supports_audio,
       max_outputs,
+      custom_size,
     },
     extra_params,
     unit_price,
@@ -698,6 +722,27 @@ function ModelEditor({
         'Maximum outputs',
         '',
         video ? 'Always 1 for video.' : '1 to 4.'
+      )}
+
+      {!video && (
+        <div>
+          <label className="label text-xs" htmlFor={`${id}-custom-size`}>
+            Custom size
+          </label>
+          <input
+            id={`${id}-custom-size`}
+            className="input font-mono text-xs"
+            placeholder='{"max_width": 3072, "max_height": 3072, "multiple_of": 16, "max_pixels": 5000000}'
+            value={form.custom_size}
+            onChange={(e) => set('custom_size', e.target.value)}
+          />
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            For a model that takes any width × height, sent as{' '}
+            <code>image_size: {'{width, height}'}</code>. Video Creator uses it to make
+            pictures big enough for its video. Leave blank if the model only takes named
+            sizes.
+          </p>
+        </div>
       )}
 
       <div>

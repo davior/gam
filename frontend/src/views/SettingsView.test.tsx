@@ -510,6 +510,7 @@ describe('SettingsView generation (M8)', () => {
         supports_negative_prompt: true,
         supports_audio: false,
         max_outputs: 1,
+        custom_size: null,
       },
       extra_params: { prompt_optimizer: true },
       unit_price: 0.045,
@@ -603,6 +604,36 @@ describe('SettingsView generation (M8)', () => {
       end_image_field: 'tail_image_url',
       options: { durations: ['5', '10'] },
     })
+  })
+
+  it('keeps a custom size when another field is edited', async () => {
+    const user = userEvent.setup()
+    signInAs(true)
+    const limits = {
+      max_width: 3072,
+      max_height: 3072,
+      multiple_of: 16,
+      max_pixels: 5000000,
+    }
+    const sized = makeGenerationModel({
+      id: 'dev',
+      endpoint_id: 'fal-ai/flux/dev',
+      label: 'FLUX.1 [dev]',
+      options: { ...DEV.options, custom_size: limits },
+    })
+    vi.spyOn(generateApi, 'models').mockResolvedValue([sized])
+    const update = vi.spyOn(generateApi, 'updateModel').mockResolvedValue(sized)
+    renderView()
+
+    const generation = await panel()
+    await user.click(await generation.findByRole('button', { name: 'Edit FLUX.1 [dev]' }))
+    const editor = within(generation.getByRole('group', { name: 'Edit model' }))
+    await user.clear(editor.getByLabelText('Note'))
+    await user.type(editor.getByLabelText('Note'), 'Sharper')
+    await user.click(editor.getByRole('button', { name: 'Save model' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][1]).toMatchObject({ options: { custom_size: limits } })
   })
 
   it('lets an admin deactivate and delete a model', async () => {

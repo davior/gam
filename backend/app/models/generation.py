@@ -69,7 +69,8 @@ class GenerationModel(SQLModel, table=True):
     # JSON: the exact values the endpoint accepts for each user-facing choice —
     # {"aspect_ratios", "image_sizes", "durations", "resolutions"} — passed through
     # verbatim so `"5"`, `"8s"` and `6` all reach fal as the type it expects; plus
-    # {"supports_seed", "supports_negative_prompt", "supports_audio", "max_outputs"}.
+    # {"supports_seed", "supports_negative_prompt", "supports_audio", "max_outputs"},
+    # and "custom_size" (null, or the limits of a model that takes any width × height).
     # The form offers only what a row declares, and the server refuses anything else.
     options: str = Field(default="{}")
     # JSON: merged into every request body first, so a user's choices and the app's own

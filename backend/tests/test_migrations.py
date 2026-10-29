@@ -284,6 +284,9 @@ def test_the_generation_catalogue_is_seeded(alembic_config):
     veo = by_endpoint["fal-ai/veo3.1/fast/image-to-video"]
     assert json.loads(veo["extra_params"]) == {"generate_audio": False}
     assert json.loads(veo["options"])["durations"] == ["4s", "6s", "8s"]
+    for endpoint in ("fal-ai/flux/schnell", "fal-ai/flux/dev"):
+        assert json.loads(by_endpoint[endpoint]["options"])["custom_size"]["multiple_of"] == 16
+    assert "custom_size" not in json.loads(by_endpoint["fal-ai/nano-banana-2"]["options"])
 
 
 def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_config):

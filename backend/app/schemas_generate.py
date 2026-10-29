@@ -90,6 +90,10 @@ class GenerationParams(BaseModel):
     image_size: Any = None
     duration: Any = None
     resolution: Any = None
+    # A size in pixels for a model whose catalogue row has `custom_size`; sent to fal as
+    # `image_size: {width, height}`. Both or neither.
+    width: Any = None
+    height: Any = None
     seed: Optional[int] = None
     negative_prompt: Optional[str] = None
     generate_audio: Optional[bool] = None

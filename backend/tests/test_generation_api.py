@@ -242,6 +242,49 @@ def test_a_feature_the_model_lacks_is_refused(library, keyed, model, params):
     )
 
 
+def test_a_custom_size_is_sent_as_flux_names_it(library, session, keyed):
+    response = _post(library, {
+        "model_id": keyed[T2I].id, "prompt": PROMPT, "params": {"width": 2880, "height": 1616},
+    })
+    assert response.status_code == 202, response.text
+
+    # Stored like any other choice, so a regeneration makes the same size again.
+    parameters = _request_of(session, response.json()["data"]["id"])["parameters"]
+    assert parameters["image_size"] == {"width": 2880, "height": 1616}
+
+
+def test_a_custom_size_is_rounded_down_to_the_models_multiple(library, session, keyed):
+    response = _post(library, {
+        "model_id": keyed[T2I].id, "prompt": PROMPT, "params": {"width": 1921, "height": 1087},
+    })
+    assert response.status_code == 202, response.text
+    parameters = _request_of(session, response.json()["data"]["id"])["parameters"]
+    assert parameters["image_size"] == {"width": 1920, "height": 1072}
+
+
+@pytest.mark.parametrize(
+    "model, params, fragment",
+    [
+        (I2I, {"width": 1024, "height": 1024}, "does not take a custom size"),
+        (T2I, {"width": 2880}, "both a width and a height"),
+        (T2I, {"width": "2880", "height": 1620}, "both a width and a height"),
+        (T2I, {"width": True, "height": 1620}, "both a width and a height"),
+        (T2I, {"width": 8, "height": 1620}, "at least 16"),
+        (T2I, {"width": 4096, "height": 1024}, "up to 3072×3072"),
+        (T2I, {"width": 3072, "height": 3072}, "pixels"),
+        (T2I, {"width": 1024, "height": 576, "image_size": "landscape_16_9"}, "not both"),
+    ],
+)
+def test_a_custom_size_must_fit_the_model(library, keyed, model, params, fragment):
+    photo = upload(library, "sample_image.jpg", "image/jpeg")
+    bases = [photo["id"]] if model != T2I else []
+    message = _refused(
+        _post(library, {"model_id": keyed[model].id, "prompt": PROMPT, "base_asset_ids": bases, "params": params}),
+        422, "invalid_generation",
+    )
+    assert fragment in message
+
+
 def test_an_empty_negative_prompt_is_not_a_request_for_one(library, keyed):
     response = _post(library, {"model_id": keyed[T2I].id, "prompt": PROMPT, "params": {"negative_prompt": ""}})
     assert response.status_code == 202

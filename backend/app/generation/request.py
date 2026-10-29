@@ -125,6 +125,12 @@ def build_parameters(row: GenerationModel, options: dict, params: dict) -> dict:
             )
         body[param] = match
 
+    size = custom_size(row, options["custom_size"], params.get("width"), params.get("height"))
+    if size is not None:
+        if params.get("image_size") is not None:
+            raise InvalidGeneration("Ask for a named image size or a width and height, not both")
+        body["image_size"] = size
+
     if params.get("seed") is not None:
         if not options["supports_seed"]:
             raise InvalidGeneration(f"{row.label} does not take a seed")
@@ -157,6 +163,39 @@ def build_parameters(row: GenerationModel, options: dict, params: dict) -> dict:
         body["num_images"] = num_outputs
 
     return without_app_fields(body, row.image_field, row.end_image_field)
+
+
+def custom_size(row: GenerationModel, limits: Optional[dict], width: Any, height: Any) -> Optional[dict]:
+    """`{width, height}` for a model that takes any size, or None when none was asked.
+
+    Each side is rounded *down* to the model's multiple rather than refused for being
+    off it: a caller sizing a picture for a 1080p frame should not have to know FLUX
+    counts in sixteens. Over a limit is refused, not shrunk, since a smaller picture
+    than asked is exactly what the caller is trying to avoid and it should say so.
+    """
+    if width is None and height is None:
+        return None
+    if not limits:
+        raise InvalidGeneration(f"{row.label} does not take a custom size")
+    if not (_whole(width) and _whole(height)):
+        raise InvalidGeneration("A custom size needs both a width and a height, in whole pixels")
+    step = limits["multiple_of"]
+    width, height = width - width % step, height - height % step
+    if width < step or height < step:
+        raise InvalidGeneration(f"A custom size must be at least {step} pixels on each side")
+    if width > limits["max_width"] or height > limits["max_height"]:
+        raise InvalidGeneration(
+            f"{row.label} makes pictures up to {limits['max_width']}×{limits['max_height']}"
+        )
+    if limits["max_pixels"] is not None and width * height > limits["max_pixels"]:
+        raise InvalidGeneration(
+            f"{width}×{height} is over {row.label}'s {limits['max_pixels']:,} pixels"
+        )
+    return {"width": width, "height": height}
+
+
+def _whole(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def without_app_fields(body: dict, *image_fields: Optional[str]) -> dict:

@@ -98,6 +98,7 @@ export function makeGenerationModel(
       supports_negative_prompt: false,
       supports_audio: false,
       max_outputs: 1,
+      custom_size: null,
       ...overrides.options,
     },
   }
