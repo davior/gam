@@ -20,6 +20,7 @@ const LABELS: Record<string, string> = {
   autotag: 'Suggesting tags',
   extract_text: 'Reading text',
   import_url: 'Importing',
+  reencode: 'Re-encoding',
   import_track: 'Importing a track',
   generate: 'Generating',
   harvest_attribution: 'Reading file metadata',

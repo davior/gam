@@ -349,6 +349,13 @@ CSP's Notes origin follow `NOTES_BASE_URL`.
 rework — full-bleed intrinsic grid, the resizable docked panel, `DetailDock`/`Tabs`, and
 `/a/{id}` as a page. Also non-milestone: M1 built that UI for one screen size and M3–M6
 accreted panels onto it without revisiting it.
+Re-encoding to a smaller frame (`enrichment/reencode.py`, `POST /api/assets/{id}/reencode`,
+the Info tab's "Smaller copy") is also non-milestone: a 4K original made workable for a
+1080p or 720p Video Creator project. The target is the frame's *short side*, because GVC
+renders 9:16 and 1:1 too, and only sizes below the source's are offered. The copy is a new
+asset (`source = "reencode"`) carrying the original's tags, resolved attribution and
+transcript, since the usual next step is deleting the original for the space, and a
+delete only clears the copy's `parent_asset_id`.
 
 ### Outstanding, unscheduled
 

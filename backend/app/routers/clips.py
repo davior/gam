@@ -1,4 +1,4 @@
-"""Clips (non-destructive) and sub-video extraction (destructive), over an asset."""
+"""Clips (non-destructive), and new files cut or re-encoded from an asset."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_EXTRACT_SUBVIDEO
+from app.enrichment.reencode import TARGETS, label_for, short_side_of
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_REENCODE
 from app.routers.assets import get_storage
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead
@@ -54,6 +55,14 @@ def _require_no_active_extraction(session: Session, asset_id: str) -> None:
 class ClipCreate(BaseModel):
     in_point: float = Field(ge=0)
     out_point: float = Field(gt=0)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+
+
+class ReencodeCreate(BaseModel):
+    # The frame's short side in pixels: 1080 is 1920x1080 or 1080x1920. Checked against
+    # `TARGETS` in the route rather than typed as a Literal, so a bad value gets the
+    # house error shape instead of a bare 422.
+    short_side: int
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
 
 
@@ -228,5 +237,64 @@ def promote_clip(
 
     job = enrichment_jobs.submit(
         session, clip, KIND_EXTRACT_SUBVIDEO, payload=json.dumps({"mode": "promote"})
+    )
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+# ─── re-encoding to a smaller frame ─────────────────────────────────────────────
+
+
+@router.post("/{asset_id}/reencode", response_model=DataResponse[ActivityJobRead], status_code=202)
+def start_reencode(
+    asset_id: str,
+    payload: ReencodeCreate,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[ActivityJobRead]:
+    """Queue a smaller copy of a video as a new asset. The original is untouched."""
+    asset = _owned_asset(asset_id, user.id, session)
+    if asset.asset_type != TYPE_VIDEO or not asset.storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_reencodable",
+                "message": "Only a video that owns a file can be re-encoded",
+            },
+        )
+    if payload.short_side not in TARGETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "bad_request",
+                "message": "Choose one of " + ", ".join(label_for(t) for t in TARGETS),
+            },
+        )
+    # Down only. Scaling up adds bytes and no detail, and Video Creator already scales
+    # a small source up to its frame at render time for free. A video with no recorded
+    # size is let through: ffmpeg will still do what was asked.
+    current = short_side_of(asset)
+    if current is not None and payload.short_side >= current:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_smaller",
+                "message": f"This video is already {current}p or smaller",
+            },
+        )
+    if enrichment_jobs.active_job(session, asset.id, KIND_REENCODE) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "already_running",
+                "message": "A re-encode is already running for this video",
+            },
+        )
+    capacity.require_room()
+
+    job = enrichment_jobs.submit(
+        session,
+        asset,
+        KIND_REENCODE,
+        payload=json.dumps({"short_side": payload.short_side, "name": payload.name}),
     )
     return DataResponse(data=KINDS["enrichment"].to_activity(job))

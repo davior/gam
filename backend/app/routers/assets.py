@@ -20,6 +20,7 @@ from app.models.job import (
     KIND_ANALYZE_MUSIC_LIBRARY,
     KIND_EXTRACT_SUBVIDEO,
     KIND_HARVEST_ATTRIBUTION,
+    KIND_REENCODE,
 )
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
@@ -455,8 +456,11 @@ def delete_asset(
     # `create_subvideo_asset`'s insert trips the parent foreign key — either way after
     # ffmpeg has already written a file nothing will ever reference.
     if any(
-        enrichment_jobs.active_job(session, row.id, KIND_EXTRACT_SUBVIDEO) is not None
+        enrichment_jobs.active_job(session, row.id, kind) is not None
         for row in (asset, *clips)
+        # A re-encode ends the same way as an extract: inserting a row whose parent
+        # is gone.
+        for kind in (KIND_EXTRACT_SUBVIDEO, KIND_REENCODE)
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
