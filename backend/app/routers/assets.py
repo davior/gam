@@ -20,7 +20,7 @@ from app.models.job import (
     KIND_ANALYZE_MUSIC_LIBRARY,
     KIND_EXTRACT_SUBVIDEO,
     KIND_HARVEST_ATTRIBUTION,
-    KIND_REENCODE,
+    KIND_MAKE_VERSION,
 )
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
@@ -458,9 +458,9 @@ def delete_asset(
     if any(
         enrichment_jobs.active_job(session, row.id, kind) is not None
         for row in (asset, *clips)
-        # A re-encode ends the same way as an extract: inserting a row whose parent
-        # is gone.
-        for kind in (KIND_EXTRACT_SUBVIDEO, KIND_REENCODE)
+        # A version being made ends the same way: a row whose asset is gone, and a
+        # file nothing points at.
+        for kind in (KIND_EXTRACT_SUBVIDEO, KIND_MAKE_VERSION)
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

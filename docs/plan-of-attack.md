@@ -349,13 +349,18 @@ CSP's Notes origin follow `NOTES_BASE_URL`.
 rework — full-bleed intrinsic grid, the resizable docked panel, `DetailDock`/`Tabs`, and
 `/a/{id}` as a page. Also non-milestone: M1 built that UI for one screen size and M3–M6
 accreted panels onto it without revisiting it.
-Re-encoding to a smaller frame (`enrichment/reencode.py`, `POST /api/assets/{id}/reencode`,
-the Info tab's "Smaller copy") is also non-milestone: a 4K original made workable for a
-1080p or 720p Video Creator project. The target is the frame's *short side*, because GVC
-renders 9:16 and 1:1 too, and only sizes below the source's are offered. The copy is a new
-asset (`source = "reencode"`) carrying the original's tags, resolved attribution and
-transcript, since the usual next step is deleting the original for the space, and a
-delete only clears the copy's `parent_asset_id`.
+Video versions are also non-milestone: an asset's Versions tab, where its standard sizes
+(4K down to 360p) are made by hand, one at a time, as files of that one asset in the
+`assetversion` table rather than as assets of their own. YouTube's model, and a
+replacement for [#55](https://github.com/davior/gam/pull/55), which made each size a
+separate asset with a copy of the original's metadata. The size is the frame's *short
+side*, because Video Creator renders 9:16 and 1:1 as well as 16:9, and only sizes below
+the original are offered. "Make original" swaps a version's file in as the asset's own and
+deletes the big one: how space comes back without losing tags, transcript or clips, which
+all survive because the timeline is unchanged. Versions count in the storage panel as their
+own group, in a file's size under "Largest files", and as referenced in the stray sweep.
+**Open:** Video Creator does not pick a version yet. `GET /api/assets/{id}/versions` is
+what it would read to take the 1080p for a 1080p project.
 
 ### Outstanding, unscheduled
 

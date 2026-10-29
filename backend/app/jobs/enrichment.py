@@ -34,7 +34,7 @@ from app.enrichment.autotag import run as run_autotag
 from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
 from app.enrichment.extract_subvideo import run as run_extract_subvideo
-from app.enrichment.reencode import ReencodeError, run as run_reencode
+from app.enrichment.versions import VersionError, run as run_make_version
 from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
 from app.enrichment.generate_all import run as run_generate_all
@@ -71,7 +71,7 @@ from app.models.job import (
     KIND_DESCRIBE,
     KIND_EMBED,
     KIND_EXTRACT_SUBVIDEO,
-    KIND_REENCODE,
+    KIND_MAKE_VERSION,
     KIND_EXTRACT_TEXT,
     GENERATION_JOB_KINDS,
     KIND_GENERATE,
@@ -320,10 +320,8 @@ def _run(job_id: str, q: JobQueue) -> None:
                 # one of them, so this survives it untouched.
                 if created_asset_id:
                     job.payload = json.dumps({"created_asset_id": created_asset_id})
-            elif job.kind == KIND_REENCODE:
-                detail, created_asset_id = run_reencode(session, asset, job.payload, progress)
-                # Merged, not replaced: the target size stays readable on the row.
-                job.payload = _with_created_asset(job.payload, created_asset_id)
+            elif job.kind == KIND_MAKE_VERSION:
+                detail = run_make_version(session, asset, job.payload, progress)
             elif job.kind == KIND_SUMMARIZE:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
@@ -458,7 +456,7 @@ def _run(job_id: str, q: JobQueue) -> None:
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
-        except ReencodeError as exc:
+        except VersionError as exc:
             message = str(exc)
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)

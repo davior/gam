@@ -121,6 +121,7 @@ def test_the_largest_are_my_ten_biggest_files_biggest_first(library, session):
         "name": rows[-1].name,
         "asset_type": "video",
         "size_bytes": 12_000_000,
+        "versions_bytes": 0,
     }
 
 
@@ -131,6 +132,7 @@ def test_an_empty_library_is_all_zeros(library):
         "total_bytes": 0,
         "files": 0,
         "by_type": [],
+        "versions": {"files": 0, "bytes": 0},
         "thumbnails": {"files": 0, "bytes": 0},
         "largest": [],
     }

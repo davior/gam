@@ -3,6 +3,7 @@ import {
   Eye,
   FileText,
   Info,
+  Layers,
   Link2,
   Mic,
   Music,
@@ -42,11 +43,11 @@ import EmbedButton from '@/components/EmbedButton'
 import EnrichmentButton from '@/components/EnrichmentButton'
 import GenerateTab from '@/components/GenerateTab'
 import MusicPanel from '@/components/MusicPanel'
-import ReencodePanel from '@/components/ReencodePanel'
 import SuggestionPanel from '@/components/SuggestionPanel'
 import TagInput from '@/components/TagInput'
 import Tabs, { type TabSpec } from '@/components/Tabs'
 import TranscriptPanel from '@/components/TranscriptPanel'
+import VersionsTab from '@/components/VersionsTab'
 import WaveformPlayer from '@/components/WaveformPlayer'
 
 /** A clip has no bytes, no transcript and no AI enrichment of its own — a promoted or
@@ -516,9 +517,6 @@ export default function AssetDetail({
         />
       )}
       <EmbedButton assetId={asset.id} />
-      {asset.asset_type === 'video' && !ownsNoFile(asset) && (
-        <ReencodePanel asset={asset} />
-      )}
 
       <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
         <Fact label="Type" value={asset.asset_type} />
@@ -700,6 +698,18 @@ export default function AssetDetail({
                 />
               </div>
             ),
+          },
+        ]
+      : []),
+    // The original and its standard sizes. Not on a clip, which has no file of its own
+    // to make sizes of: its parent's Versions tab is where they are.
+    ...(asset.asset_type === 'video' && !ownsNoFile(asset)
+      ? [
+          {
+            id: 'versions',
+            label: 'Versions',
+            icon: Layers,
+            content: <VersionsTab asset={asset} />,
           },
         ]
       : []),

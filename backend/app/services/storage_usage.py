@@ -23,6 +23,7 @@ from sqlmodel import Session, col, select
 
 from app.config import settings
 from app.models.asset import Asset
+from app.models.version import AssetVersion
 from app.schemas_storage import (
     CleanupResult,
     FileGroup,
@@ -74,21 +75,44 @@ def library_usage(session: Session, storage: LocalStorage, user_id: str) -> Libr
             thumbnails.files += 1
             thumbnails.bytes += stat.st_size
 
+    version_count, version_bytes = session.exec(
+        select(func.count(), func.coalesce(func.sum(AssetVersion.size_bytes), 0)).where(
+            AssetVersion.user_id == user_id
+        )
+    ).one()
+    versions = FileGroup(files=version_count, bytes=version_bytes)
+
+    # Per asset, so "largest" ranks what a delete would actually free: the original
+    # and every version of it.
+    per_asset = (
+        select(
+            AssetVersion.asset_id,
+            func.sum(AssetVersion.size_bytes).label("versions_bytes"),
+        )
+        .where(AssetVersion.user_id == user_id)
+        .group_by(AssetVersion.asset_id)
+        .subquery()
+    )
+    versions_of = func.coalesce(per_asset.c.versions_bytes, 0)
     largest = [
-        LargestAsset(id=asset_id, name=name, asset_type=kind, size_bytes=size)
-        for asset_id, name, kind, size in session.exec(
-            select(Asset.id, Asset.name, Asset.asset_type, Asset.size_bytes)
+        LargestAsset(
+            id=asset_id, name=name, asset_type=kind, size_bytes=size, versions_bytes=extra
+        )
+        for asset_id, name, kind, size, extra in session.exec(
+            select(Asset.id, Asset.name, Asset.asset_type, Asset.size_bytes, versions_of)
+            .outerjoin(per_asset, per_asset.c.asset_id == Asset.id)
             .where(*owns_file)
-            .order_by(col(Asset.size_bytes).desc(), col(Asset.id))
+            .order_by((col(Asset.size_bytes) + versions_of).desc(), col(Asset.id))
             .limit(LARGEST_LIMIT)
         ).all()
     ]
 
     originals = sum(row.bytes for row in by_type)
     return LibraryUsage(
-        total_bytes=originals + thumbnails.bytes,
-        files=sum(row.files for row in by_type),
+        total_bytes=originals + versions.bytes + thumbnails.bytes,
+        files=sum(row.files for row in by_type) + versions.files,
         by_type=by_type,
+        versions=versions,
         thumbnails=thumbnails,
         largest=largest,
     )
@@ -203,6 +227,14 @@ def _referenced_keys(session: Session) -> set[str]:
                 pass
         if thumb_key:
             keys.add(thumb_key)
+    # A version's file is in no `Asset` column at all, so without this every one of
+    # them would be swept as a stray the first time an admin cleaned up.
+    for version_key in session.exec(select(AssetVersion.storage_key)).all():
+        keys.add(version_key)
+        try:
+            keys.add(peaks_key_for(version_key))
+        except StorageError:
+            pass
     return keys
 
 

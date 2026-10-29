@@ -25,7 +25,6 @@ from app.ingest import embedded_metadata, thumbnails
 from app.ingest.filetypes import (
     SOURCE_AI,
     SOURCE_CLIP,
-    SOURCE_REENCODE,
     SOURCE_SUBVIDEO,
     SOURCE_UPLOAD,
     TYPE_AUDIO,
@@ -45,9 +44,9 @@ from app.models.asset import (
     Asset,
 )
 from app.models.suggestion import Suggestion
-from app.models.tag import AssetTag
 from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
+from app.models.version import AssetVersion
 from app.schemas_assets import (
     AssetGenerationRead,
     AssetGenerationSource,
@@ -452,9 +451,11 @@ def _delete_dependents(session: Session, asset_id: str) -> None:
     session.exec(delete(Suggestion).where(col(Suggestion.asset_id) == asset_id))
     session.exec(delete(TranscriptSegment).where(col(TranscriptSegment.asset_id) == asset_id))
     session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
+    # A foreign key, like the tag join. Their files are unlinked by `delete_asset`.
+    session.exec(delete(AssetVersion).where(col(AssetVersion.asset_id) == asset_id))
 
 
-def _still_referenced(session: Session, user_id: str, key: str) -> bool:
+def still_referenced(session: Session, user_id: str, key: str) -> bool:
     """Whether any surviving row still points at this storage object.
 
     A key is not owned by exactly one row. A clip's `thumb_key` is a copy of its
@@ -490,7 +491,7 @@ def delete_asset(
     The row goes first. If the unlink fails the asset is still gone from the user's
     view, and an orphaned file is recoverable by a sweep; the reverse — a row pointing
     at nothing — is what produces broken images. "Only it was using" is
-    `_still_referenced`: a poster is routinely shared between a parent and its clips.
+    `still_referenced`: a poster is routinely shared between a parent and its clips.
 
     The dependent rows have to go before it, for two different reasons. Tag
     attachments are a hard constraint: `AssetTag.asset_id` is a foreign key with no
@@ -522,6 +523,16 @@ def delete_asset(
     doomed_ids = [row.id for row in doomed]
     keys = {key for row in doomed for key in (row.storage_key, row.thumb_key) if key}
     file_keys = {row.storage_key for row in doomed if row.storage_key}
+    # Read before the rows go. A version's file is its own, never shared, so it needs
+    # no `still_referenced` check — but it goes through the same loop to get its cached
+    # waveform removed with it.
+    version_keys = set(
+        session.exec(
+            select(AssetVersion.storage_key).where(col(AssetVersion.asset_id).in_(doomed_ids))
+        ).all()
+    )
+    keys |= version_keys
+    file_keys |= version_keys
     asset_id, user_id = asset.id, asset.user_id
 
     for row_id in doomed_ids:
@@ -555,7 +566,7 @@ def delete_asset(
     # unlinked file that something still shows is not recoverable at all.
     for key in keys:
         try:
-            if _still_referenced(session, user_id, key):
+            if still_referenced(session, user_id, key):
                 continue
         except Exception:  # noqa: BLE001 - see above
             logger.warning("Could not check whether %s is still in use", key, exc_info=True)
@@ -832,108 +843,6 @@ def create_subvideo_asset(
     return subvideo
 
 
-# What a re-encoded copy takes from its original besides the file. Everything about what
-# the video *is* rather than how its bytes are laid out, since the usual next step after
-# downsizing is deleting the original to get the space back, and a delete only clears
-# the copy's `parent_asset_id`: anything left on the original goes with it. The
-# timeline is unchanged by a re-encode, so the transcript's timestamps stay true.
-_CARRIED_TO_A_COPY: tuple[str, ...] = (
-    "description",
-    "summary",
-    "transcript_status",
-    "transcript_model",
-    "transcript_language",
-    "field_provenance",
-    "ai_model",
-    "ai_generation_type",
-    "ai_prompt",
-    "ai_parameters",
-    "ai_source_assets",
-    "ai_seed",
-    "ai_generated_at",
-)
-
-
-def create_reencoded_asset(
-    session: Session,
-    *,
-    source_asset: Asset,
-    stored: StoredFile,
-    thumb_key: Optional[str],
-    name: str,
-    probe_result: ProbeResult,
-) -> Asset:
-    """A smaller copy of `source_asset`: a brand-new, standalone Asset.
-
-    Self-sufficient from the start (see `_CARRIED_TO_A_COPY`): attribution is written
-    onto the copy *resolved*, not left to inherit through `parent_asset_id`, and tags
-    and the transcript are copied rows. `parent_asset_id` is provenance only, as a
-    sub-video's, so the original can be deleted the moment this exists.
-    """
-    copy = Asset(
-        user_id=source_asset.user_id,
-        name=name,
-        asset_type=source_asset.asset_type,
-        source=SOURCE_REENCODE,
-        storage_key=stored.key,
-        thumb_key=thumb_key,
-        parent_asset_id=source_asset.id,
-        original_name=source_asset.original_name,
-        mime_type=mimetypes.guess_type(stored.key)[0],
-        file_format=extension_of(stored.key).lstrip("."),
-        size_bytes=stored.size_bytes,
-        checksum_sha256=stored.sha256,
-        duration_seconds=probe_result.duration_seconds or source_asset.duration_seconds,
-        width=probe_result.width,
-        height=probe_result.height,
-        codec=probe_result.codec,
-    )
-    for field in _CARRIED_TO_A_COPY:
-        setattr(copy, field, getattr(source_asset, field))
-    grandparent = (
-        session.get(Asset, source_asset.parent_asset_id) if source_asset.parent_asset_id else None
-    )
-    resolved = attribution.resolve(source_asset, grandparent)
-    for field in attribution.ATTRIBUTION_FIELDS:
-        setattr(copy, field, getattr(resolved, field))
-    session.add(copy)
-    session.flush()
-
-    for tag in tags.tags_for(session, source_asset.id):
-        session.add(AssetTag(asset_id=copy.id, tag_id=tag.id))
-    segments = session.exec(
-        select(TranscriptSegment)
-        .where(TranscriptSegment.asset_id == source_asset.id)
-        .order_by(col(TranscriptSegment.idx))
-    ).all()
-    copied_segments = [
-        TranscriptSegment(
-            asset_id=copy.id,
-            user_id=segment.user_id,
-            idx=segment.idx,
-            text=segment.text,
-            start_time=segment.start_time,
-            end_time=segment.end_time,
-            speaker=segment.speaker,
-            words=segment.words,
-            edited=segment.edited,
-        )
-        for segment in segments
-    ]
-    session.add_all(copied_segments)
-    session.commit()
-    session.refresh(copy)
-
-    _reindex(session, copy)
-    if copied_segments:
-        try:
-            fts.index_segments(session, copy.id, copied_segments)
-            session.commit()
-        except Exception:  # noqa: BLE001 - a transcript that exists beats one indexed
-            logger.warning("Could not index the copied transcript of %s", copy.id, exc_info=True)
-    return copy
-
-
 def promote_clip(
     session: Session, clip: Asset, *, stored: StoredFile, thumb_key: Optional[str], probe_result: ProbeResult
 ) -> Asset:
@@ -1068,8 +977,8 @@ def to_read_model(
     and signs like any other asset's.
     """
     playable_key = asset.storage_key if asset.storage_key else (parent.storage_key if parent else None)
-    file_url = _signed_url(playable_key)
-    thumb_url = _signed_url(asset.thumb_key)
+    file_url = signed_url(playable_key)
+    thumb_url = signed_url(asset.thumb_key)
 
     missing = False
     if playable_key:
@@ -1172,7 +1081,7 @@ def _json_or(text: Optional[str], default: Any) -> Any:
     return value if isinstance(value, type(default)) else default
 
 
-def _signed_url(key: Optional[str]) -> Optional[str]:
+def signed_url(key: Optional[str]) -> Optional[str]:
     if not key:
         return None
     expires_at, signature = sign_media_key(key, ttl_seconds=settings.media_url_ttl_seconds)

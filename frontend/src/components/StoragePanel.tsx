@@ -403,6 +403,15 @@ export default function StoragePanel() {
                   </dd>
                 </div>
               ))}
+              {library.versions.files > 0 && (
+                <div className="flex justify-between">
+                  <dt className="text-gray-500 dark:text-gray-400">Video versions</dt>
+                  <dd className="text-gray-900 dark:text-gray-100">
+                    {plural(library.versions.files, 'file')} ·{' '}
+                    {formatBytes(library.versions.bytes)}
+                  </dd>
+                </div>
+              )}
               {library.thumbnails.files > 0 && (
                 <div className="flex justify-between">
                   <dt className="text-gray-500 dark:text-gray-400">Previews</dt>
@@ -434,8 +443,11 @@ export default function StoragePanel() {
                     <span className="shrink-0 text-gray-500 dark:text-gray-400">
                       {TYPE_LABELS[asset.asset_type] ?? asset.asset_type} ·{' '}
                       <span className="text-gray-900 dark:text-gray-100">
-                        {formatBytes(asset.size_bytes)}
+                        {formatBytes(asset.size_bytes + asset.versions_bytes)}
                       </span>
+                      {asset.versions_bytes > 0 && (
+                        <> (incl. {formatBytes(asset.versions_bytes)} in versions)</>
+                      )}
                     </span>
                   </li>
                 ))}

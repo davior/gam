@@ -46,10 +46,23 @@ function summary(overrides: Partial<StorageSummary> = {}): StorageSummary {
         { asset_type: 'video', files: 34, bytes: 120 * GB },
         { asset_type: 'image', files: 6, bytes: 9 * GB },
       ],
+      versions: { files: 0, bytes: 0 },
       thumbnails: { files: 40, bytes: 1 * GB },
       largest: [
-        { id: 'a1', name: 'Giordano interview', asset_type: 'video', size_bytes: 8 * GB },
-        { id: 'a2', name: 'Harbour at dusk', asset_type: 'image', size_bytes: 2 * GB },
+        {
+          id: 'a1',
+          name: 'Giordano interview',
+          asset_type: 'video',
+          size_bytes: 8 * GB,
+          versions_bytes: 0,
+        },
+        {
+          id: 'a2',
+          name: 'Harbour at dusk',
+          asset_type: 'image',
+          size_bytes: 2 * GB,
+          versions_bytes: 0,
+        },
       ],
     },
     server: null,
@@ -89,6 +102,39 @@ describe('StoragePanel', () => {
       'href',
       '/a/a2'
     )
+  })
+
+  it('counts video versions apart from the originals, and in a file’s size', async () => {
+    const base = summary().library
+    vi.mocked(storageApi.summary).mockResolvedValue(
+      summary({
+        library: {
+          ...base,
+          versions: { files: 3, bytes: 2 * GB },
+          largest: [
+            {
+              id: 'a1',
+              name: 'Giordano interview',
+              asset_type: 'video',
+              size_bytes: 8 * GB,
+              versions_bytes: 1 * GB,
+            },
+          ],
+        },
+      })
+    )
+    renderPanel()
+
+    expect(await screen.findByText('Video versions')).toBeInTheDocument()
+    expect(screen.getByText('3 files · 2.0 GB')).toBeInTheDocument()
+    expect(screen.getByText('9.0 GB')).toBeInTheDocument()
+    expect(screen.getByText(/incl\. 1\.0 GB in versions/)).toBeInTheDocument()
+  })
+
+  it('has no versions row when there are none', async () => {
+    renderPanel()
+    await screen.findByText('130.0 GB')
+    expect(screen.queryByText('Video versions')).not.toBeInTheDocument()
   })
 
   it('shows a non-admin no server numbers and no sweep', async () => {
@@ -218,6 +264,7 @@ describe('StoragePanel', () => {
           total_bytes: 0,
           files: 0,
           by_type: [],
+          versions: { files: 0, bytes: 0 },
           thumbnails: { files: 0, bytes: 0 },
           largest: [],
         },

@@ -1,11 +1,12 @@
-"""The reencode job: a video's bytes in, a smaller copy of it out, as a new asset.
+"""The make_version job: a video's original in, one standard-resolution file of it out.
 
-For a high-resolution original that is too heavy to cut with in a 720p or 1080p Video
-Creator project. The original is never touched; the copy is an ordinary asset with the
-original as `parent_asset_id` (provenance only, so it never blocks a delete).
+YouTube's model: an asset keeps its original, and has whichever standard sizes (1080p,
+720p, ...) someone has asked for, each a file of its own (`models/version.py`). Made by
+hand, one at a time, from the asset's Versions tab. A 4K original made workable for a
+1080p Video Creator project is what this is for.
 
 One ffmpeg command. The only machinery around it is reading ffmpeg's own `-progress`
-output, which is not decoration: a 4K hour re-encodes for longer than the stale sweeper's
+output, which is not decoration: a 4K hour encodes for longer than the stale sweeper's
 `job_stale_minutes`, and a job that reports nothing for that long is ended as hung. The
 same reports are the cancellation checkpoint, so Cancel stops ffmpeg instead of
 leaving it to run to the end on a job nobody is waiting for.
@@ -25,30 +26,29 @@ from typing import Callable, Optional
 
 from sqlmodel import Session
 
-from app.ingest import thumbnails
 from app.ingest.filetypes import TYPE_VIDEO
 from app.ingest.probe import probe
 from app.media_tools import ffmpeg_available
 from app.models.asset import Asset
-from app.services import assets as asset_service
-from app.storage import build_storage, capacity, new_key, thumb_key_for
+from app.services import versions as version_service
+from app.storage import build_storage, capacity, new_key
 
 logger = logging.getLogger(__name__)
 
 Progress = Callable[[str, int, str], None]
 
-# The frame's short side, in pixels: "1080p" is 1920x1080 landscape and 1080x1920
-# portrait alike. The short side rather than the height because Video Creator renders
-# 9:16 and 1:1 as well as 16:9, and a phone's portrait 4K wants to become 1080x1920 for
-# a 1080p vertical project, not 608x1080.
-TARGETS = (2160, 1440, 1080, 720, 480, 360)
+# The standard sizes, as the frame's short side in pixels: "1080p" is 1920x1080
+# landscape and 1080x1920 portrait alike. The short side rather than the height because
+# Video Creator renders 9:16 and 1:1 as well as 16:9, and a phone's portrait 4K wants to
+# become 1080x1920 for a 1080p vertical project, not 608x1080.
+SIZES = (2160, 1440, 1080, 720, 480, 360)
 
 # How often a progress tick may write to the database. ffmpeg reports twice a second,
 # and a row update per report is far more than the activity indicator can show.
 _REPORT_EVERY_SECONDS = 2.0
 
 
-class ReencodeError(Exception):
+class VersionError(Exception):
     """Something the user can be told about."""
 
 
@@ -62,56 +62,38 @@ def short_side_of(asset: Asset) -> Optional[int]:
     return min(asset.width, asset.height)
 
 
-def run(
-    session: Session, asset: Asset, payload: Optional[str], progress: Progress
-) -> tuple[str, str]:
-    """Re-encode `asset` to the payload's `short_side`. Returns (detail, created_asset_id)."""
+def run(session: Session, asset: Asset, payload: Optional[str], progress: Progress) -> str:
+    """Make the payload's `short_side` version of `asset`. Returns the job's detail."""
     try:
-        data = json.loads(payload or "{}")
-        short_side = int(data["short_side"])
+        short_side = int(json.loads(payload or "{}")["short_side"])
     except (ValueError, KeyError, TypeError) as exc:
-        raise ReencodeError("Missing or invalid target resolution") from exc
-    if short_side not in TARGETS:
-        raise ReencodeError("Unsupported target resolution")
+        raise VersionError("Missing or invalid size") from exc
+    if short_side not in SIZES:
+        raise VersionError("Unsupported size")
     if asset.asset_type != TYPE_VIDEO or not asset.storage_key:
-        raise ReencodeError("The source file is not available")
+        raise VersionError("The original file is not available")
     # Again, although the router already did: the job may have waited in the queue.
+    if version_service.find(session, asset.id, short_side) is not None:
+        raise VersionError(f"This video already has a {label_for(short_side)} version")
     if not capacity.has_room():
-        raise ReencodeError(capacity.DISK_FULL_MESSAGE)
+        raise VersionError(capacity.DISK_FULL_MESSAGE)
 
     storage = build_storage()
     progress("Encoding", 1, "")
 
     with storage.materialise(asset.storage_key) as source_path:
-        with tempfile.TemporaryDirectory(prefix="gam-reencode-") as workdir:
-            target_path = Path(workdir) / "reencode.mp4"
+        with tempfile.TemporaryDirectory(prefix="gam-version-") as workdir:
+            target_path = Path(workdir) / "version.mp4"
             encode(source_path, target_path, short_side, asset.duration_seconds, progress)
 
-            progress("Reading metadata", 92, "")
-            result = probe(target_path)
-            preview = thumbnails.generate(
-                target_path,
-                TYPE_VIDEO,
-                asset.original_name or "",
-                duration_seconds=result.duration_seconds,
-            )
-
             progress("Saving", 95, "")
+            result = probe(target_path)
             stored = storage.write_file(new_key(asset.user_id, ".mp4"), target_path)
-            thumb_key = None
-            if preview:
-                thumb_key = storage.write_bytes(thumb_key_for(stored.key), preview).key
 
-    label = label_for(short_side)
-    created = asset_service.create_reencoded_asset(
-        session,
-        source_asset=asset,
-        stored=stored,
-        thumb_key=thumb_key,
-        name=data.get("name") or f"{asset.name} ({label})",
-        probe_result=result,
+    version_service.create(
+        session, asset=asset, short_side=short_side, stored=stored, probe_result=result
     )
-    return f"{label} copy", created.id
+    return f"{label_for(short_side)} version"
 
 
 def encode(
@@ -123,7 +105,7 @@ def encode(
 ) -> None:
     """Scale `source` so its short side is `short_side`, into an H.264/AAC MP4."""
     if not ffmpeg_available():
-        raise ReencodeError("ffmpeg is not available on this server")
+        raise VersionError("ffmpeg is not available on this server")
 
     # Decided by ffmpeg from the frame it actually decodes, not from the probed
     # width/height: a phone video stores landscape pixels plus a rotation flag, ffmpeg
@@ -140,9 +122,10 @@ def encode(
         "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
         "-i", str(source),
         "-vf", scale,
-        # The same codecs and preset as a sub-video's re-encode. CRF 20 is visually
+        # The same codec and preset as a sub-video's re-encode. CRF 20 is visually
         # indistinguishable from the source at the smaller size, which matters for a
-        # copy that will be cut and re-rendered again downstream.
+        # file that will be cut and rendered again downstream — and that can become
+        # the original itself (`services/versions.py::make_original`).
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
         "-pix_fmt", "yuv420p",
         # Re-encoded rather than copied: an MP4 cannot hold every audio codec a source
@@ -160,7 +143,7 @@ def encode(
                 argv, stdout=subprocess.PIPE, stderr=stderr_file, text=True
             )
         except OSError as exc:
-            raise ReencodeError(f"Could not run ffmpeg: {exc}") from exc
+            raise VersionError(f"Could not run ffmpeg: {exc}") from exc
 
         try:
             assert proc.stdout is not None
@@ -183,8 +166,8 @@ def encode(
 
     if returncode != 0 or not target.is_file() or target.stat().st_size == 0:
         stderr = stderr_path.read_text(errors="replace").strip()
-        logger.warning("Re-encode of %s failed: %s", source.name, stderr[-400:])
-        raise ReencodeError("Could not re-encode this video")
+        logger.warning("Encoding a version of %s failed: %s", source.name, stderr[-400:])
+        raise VersionError("Could not encode this video")
 
 
 def _seconds(out_time_us: str) -> float:

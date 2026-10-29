@@ -3,8 +3,7 @@ import type { Asset } from '@/api/assets'
 import type { ActivityJob } from '@/api/transcripts'
 
 /**
- * Clips (non-destructive), and new files cut or re-encoded from an asset, over
- * `routers/clips.py`.
+ * Clips (non-destructive) and sub-video extraction (destructive), over `routers/clips.py`.
  *
  * One `xApi` per backend router, the house convention — `Asset`/`ActivityJob` are
  * imported rather than redeclared, since `api/assets.ts` and `api/transcripts.ts`
@@ -15,14 +14,6 @@ export interface ClipRange {
   in_point: number
   out_point: number
   name?: string
-}
-
-/** The frame's short side in pixels: 1080 is 1920×1080 landscape or 1080×1920
- *  portrait. Mirrors `enrichment/reencode.py::TARGETS`. */
-export const REENCODE_TARGETS = [2160, 1440, 1080, 720, 480, 360] as const
-
-export function reencodeLabel(shortSide: number): string {
-  return shortSide === 2160 ? '4K' : `${shortSide}p`
 }
 
 interface DataResponse<T> {
@@ -75,17 +66,6 @@ export const clipsApi = {
   promote(clipId: string): Promise<ActivityJob> {
     return client
       .post<DataResponse<ActivityJob>>(`/assets/${clipId}/promote`)
-      .then((r) => r.data.data)
-  },
-
-  /** Queues a smaller copy as a new asset, carrying the original's tags, attribution
-   *  and transcript so the original can be deleted afterwards. Its id lands on the
-   *  finished job as `result_asset_id`. */
-  reencode(assetId: string, shortSide: number): Promise<ActivityJob> {
-    return client
-      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/reencode`, {
-        short_side: shortSide,
-      })
       .then((r) => r.data.data)
   },
 }

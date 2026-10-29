@@ -21,11 +21,13 @@ from app.models.tag import AssetTag, Tag, TagCategory
 from app.models.transcript import TranscriptSegment
 from app.models.usage import UsageEvent
 from app.models.user import User
+from app.models.version import AssetVersion
 
 __all__ = [
     "AIProvider",
     "Asset",
     "AssetTag",
+    "AssetVersion",
     "DocumentPage",
     "Embedding",
     "EnrichmentJob",

@@ -51,9 +51,6 @@ SOURCE_GVC = "gvc_export"
 # flips `source` to `SOURCE_SUBVIDEO` — a real, standalone file from here on.
 SOURCE_CLIP = "clip"
 SOURCE_SUBVIDEO = "sub_video"
-# A smaller copy of another video (`enrichment/reencode.py`). Its own file, with the
-# original as `parent_asset_id` for provenance only, exactly as a sub-video's.
-SOURCE_REENCODE = "reencode"
 
 # Pillow can decode these directly. The rest of the image set (HEIC, AVIF without a
 # plugin, SVG) needs something else, so a thumbnail is skipped rather than attempted.
