@@ -91,6 +91,18 @@ def thumb_key_for(key: str) -> str:
     return f"{stem or key}.thumb.jpg"
 
 
+def peaks_key_for(key: str) -> str:
+    """The sidecar key for a cached waveform: `abc.mp3` -> `abc.peaks.json`.
+
+    Derived for the same reason as `thumb_key_for`, and with more reason: there is no
+    column for it at all. It is computed the first time the player asks
+    (`routers/assets.py::get_peaks`), so the row never learns it exists.
+    """
+    validate_key(key)
+    stem, _, _ = key.rpartition(".")
+    return f"{stem or key}.peaks.json"
+
+
 class Storage(Protocol):
     """What a storage backend must do."""
 

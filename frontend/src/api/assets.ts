@@ -203,6 +203,17 @@ export const ATTRIBUTION_FIELDS = [
 
 export type AttributionField = (typeof ATTRIBUTION_FIELDS)[number]
 
+/**
+ * What the audio player draws its scrub bar from: peak amplitudes in 0..1, laid out
+ * evenly over `duration` seconds. Computed by the server on first view and cached,
+ * because letting the browser decode the file itself means downloading all of it.
+ * A clip gets its parent's, since that is the file it plays.
+ */
+export interface Waveform {
+  duration: number
+  peaks: number[]
+}
+
 interface DataResponse<T> {
   data: T
 }
@@ -214,6 +225,12 @@ export const assetsApi = {
 
   get(id: string): Promise<Asset> {
     return client.get<DataResponse<Asset>>(`/assets/${id}`).then((r) => r.data.data)
+  },
+
+  peaks(id: string): Promise<Waveform> {
+    return client
+      .get<DataResponse<Waveform>>(`/assets/${id}/peaks`)
+      .then((r) => r.data.data)
   },
 
   /**

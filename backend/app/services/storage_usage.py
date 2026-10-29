@@ -32,12 +32,13 @@ from app.schemas_storage import (
     TypeUsage,
     VolumeRead,
 )
-from app.storage import LocalStorage, StorageError, thumb_key_for, validate_key
+from app.storage import LocalStorage, StorageError, peaks_key_for, thumb_key_for, validate_key
 from app.storage import capacity
 
 logger = logging.getLogger(__name__)
 
 THUMB_SUFFIX = ".thumb.jpg"
+PEAKS_SUFFIX = ".peaks.json"
 LARGEST_LIMIT = 10
 
 # A file is only a stray once it is this old. Every write path puts the bytes on disk
@@ -67,7 +68,9 @@ def library_usage(session: Session, storage: LocalStorage, user_id: str) -> Libr
 
     thumbnails = FileGroup()
     for key, stat in storage.files(user_id):
-        if key.endswith(THUMB_SUFFIX):
+        # Cached waveforms count here too: like posters they are derived, recorded
+        # nowhere, and shared between a parent and its clips.
+        if key.endswith((THUMB_SUFFIX, PEAKS_SUFFIX)):
             thumbnails.files += 1
             thumbnails.bytes += stat.st_size
 
@@ -177,7 +180,7 @@ def _scan(session: Session, storage: LocalStorage, totals: FileGroup | None = No
 def _referenced_keys(session: Session) -> set[str]:
     """Every key any row points at, across all users.
 
-    The derived thumbnail name is kept as well as the column. A thumbnail write that
+    The derived thumbnail and waveform names are kept as well as the columns. A thumbnail write that
     succeeded under a row whose `thumb_key` update did not is still that asset's poster
     — `thumb_key_for` exists so one can always be found from the asset's own key — and
     deleting it would be unrecoverable where keeping it costs a few kilobytes.
@@ -193,6 +196,9 @@ def _referenced_keys(session: Session) -> set[str]:
             keys.add(storage_key)
             try:
                 keys.add(thumb_key_for(storage_key))
+                # Never in a column at all, so the derived name is the only way a sweep
+                # can know a cached waveform is still its file's.
+                keys.add(peaks_key_for(storage_key))
             except StorageError:
                 pass
         if thumb_key:

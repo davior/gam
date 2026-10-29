@@ -4,6 +4,7 @@ from app.storage.base import (
     StorageError,
     StoredFile,
     new_key,
+    peaks_key_for,
     thumb_key_for,
     validate_key,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "StoredFile",
     "build_storage",
     "new_key",
+    "peaks_key_for",
     "thumb_key_for",
     "validate_key",
 ]
