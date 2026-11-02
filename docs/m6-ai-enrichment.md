@@ -9,6 +9,12 @@ built, so enrichment over documents works; what is left of it is that the extrac
 is not itself searchable. Attribution — where an asset came from, a URL, a film, a
 broadcast — still has no model.
 
+> **Superseded in part.** What follows describes the providers GAM keeps for itself, which
+> is still the default (`AI_BACKEND=local`). With `AI_BACKEND=suite` none of it is used:
+> [gecko-suite](https://github.com/davior/gecko-suite) holds the providers, chooses the
+> model for each of describe / summarize / autotag and for the embeddings, and counts the
+> spend. Read this for how the local path works, and `app/suite.py` for the other.
+
 This exists because most of what M6 needs already works in gecko-notes, and a session
 that starts from `plan-of-attack.md` alone would design it from scratch instead. Read
 this before writing any provider code.

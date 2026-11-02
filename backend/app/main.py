@@ -173,7 +173,12 @@ def client_config() -> DataResponse[ClientConfig]:
     have no effect on where the login button went.
     """
     return DataResponse(
-        data=ClientConfig(notes_base_url=settings.notes_base_url, read_only=settings.read_only)
+        data=ClientConfig(
+            notes_base_url=settings.notes_base_url,
+            read_only=settings.read_only,
+            ai_backend=settings.ai_backend,
+            suite_base_url=settings.suite_base_url,
+        )
     )
 
 

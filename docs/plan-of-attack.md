@@ -66,6 +66,13 @@ gives us a second real consumer to design the seams against. The one genuine
 cross-cutting concern — verifying a Notes-issued JWT — is ~30 lines; a package for it
 is pure overhead.
 
+**Update: the AI half was extracted, as a service rather than a package.** GVC arrived as
+the second consumer, and what they shared was not code to vendor but a decision to make
+once: which key, which model, for which job, at what cost. That is
+[gecko-suite](https://github.com/davior/gecko-suite), and with `AI_BACKEND=suite` GAM's
+`build_provider` and `build_embedder` ask it instead of keeping their own (`app/suite.py`).
+The local providers stay, behind that one setting, until the suite's M8 removes them.
+
 ### Fix on the way in (do not copy verbatim)
 
 These are documented problems in gecko-notes. Fix them as GAM is built; each is a

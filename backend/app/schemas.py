@@ -48,6 +48,10 @@ class ClientConfig(BaseModel):
     # So the frontend can say it is an archive. Public by nature: anyone who can reach
     # an archive can already see that writes are refused.
     read_only: bool = False
+    # Where enrichment's model and the embeddings come from, and where to manage them when
+    # that is the suite. Not secret: they only change what Settings says and links to.
+    ai_backend: str = "local"
+    suite_base_url: str = ""
 
 
 class HealthResponse(BaseModel):

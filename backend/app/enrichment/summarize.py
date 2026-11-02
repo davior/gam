@@ -85,7 +85,9 @@ def _prompt(asset: Asset, material: source.SourceMaterial, tag_names: list[str])
 
 def run(session: Session, asset: Asset, progress: Progress) -> str:
     """Summarise one asset. Returns a short detail line for the job row."""
-    provider = build_provider(session, asset.user_id)
+    provider = build_provider(
+        session, asset.user_id, task="enrich.summarize", subject=f"gam:asset:{asset.id}"
+    )
     if provider is None:
         raise ProviderUnavailable(
             "No AI provider is configured. Add one in Settings to enable enrichment."

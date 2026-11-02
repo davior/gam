@@ -39,6 +39,7 @@ from app.models.job import (
 from app.models.document import DocumentPage
 from app.models.suggestion import KIND_ATTRIBUTION, Suggestion
 from app.providers import build_provider
+from app.providers.base import ProviderError
 from app.schemas import DataResponse, ListResponse
 from app.schemas_jobs import ActivityJobRead
 from app.services import suggestions as suggestion_service
@@ -81,7 +82,15 @@ def _require_provider(session: Session, user_id: str) -> None:
     The code is what the frontend branches on to offer a link to Settings — the same
     shape the embed button already uses for `embedding_unavailable`.
     """
-    if build_provider(session, user_id) is None:
+    try:
+        provider = build_provider(session, user_id)
+    except ProviderError as exc:
+        # Only the suite raises here: it is not reachable. That is a 503, not "not set up".
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "ai_unavailable", "message": str(exc)},
+        ) from exc
+    if provider is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={

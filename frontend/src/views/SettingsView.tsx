@@ -8,12 +8,14 @@ import {
   type SpeechSettings,
 } from '@/api/settings'
 import { apiErrorMessage } from '@/api/client'
+import { loadConfig, type ClientConfig } from '@/api/config'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { isActive, useActivityStore } from '@/stores/activity'
 import GenerationSettingsPanel from '@/components/GenerationSettings'
 import LibraryScanPanel from '@/components/LibraryScanPanel'
 import ProviderPanel from '@/components/ProviderPanel'
 import StoragePanel from '@/components/StoragePanel'
+import SuiteNotice from '@/components/SuiteNotice'
 import TagPanel from '@/components/TagPanel'
 import UsagePanel from '@/components/UsagePanel'
 import { useSavedFlash } from '@/utils/useSavedFlash'
@@ -499,6 +501,24 @@ function EmbeddingPanel() {
 }
 
 export default function SettingsView() {
+  const [config, setConfig] = useState<ClientConfig | null>(null)
+
+  useEffect(() => {
+    let stale = false
+    loadConfig()
+      .then((c) => !stale && setConfig(c))
+      .catch(() => {
+        // Not fatal: without it this shows the app's own panels, which is the old behaviour.
+      })
+    return () => {
+      stale = true
+    }
+  }, [])
+
+  // With Gecko Suite behind enrichment and search, the provider panel and the embedding
+  // settings are the suite's to manage: what is saved here would never be used.
+  const onSuite = config?.ai_backend === 'suite'
+
   return (
     <div className="mx-auto max-w-2xl space-y-6 px-4 py-6">
       <Link
@@ -509,10 +529,10 @@ export default function SettingsView() {
         Back to library
       </Link>
 
-      <ProviderPanel />
+      {onSuite ? <SuiteNotice suiteUrl={config.suite_base_url} /> : <ProviderPanel />}
       <UsagePanel />
       <StoragePanel />
-      <EmbeddingPanel />
+      {!onSuite && <EmbeddingPanel />}
       <LibraryScanPanel />
       <SpeechPanel />
       <GenerationSettingsPanel />

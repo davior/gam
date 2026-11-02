@@ -45,3 +45,9 @@ openpyxl==3.1.5
 # under yt-dlp every few weeks, so this pin *will* start failing on its own schedule. The
 # fix is always the same — bump it to the latest release and `docker compose up --build`.
 yt-dlp[default,deno]==2026.8.19
+# How enrichment and search reach Gecko Suite (AI_BACKEND=suite), and the agent loop the
+# assistant shares with the other apps. A commit, not a branch: the client and the
+# suite's API change together, and a deployment must not pick up one without the other.
+# Installed from an archive URL rather than git+https because python:3.13-slim has no
+# git. Bump it when the suite's client does.
+gecko-suite-client @ https://github.com/davior/gecko-suite/archive/2992fc9c5f93a9e5ad7693af22a4ab0bdbabee91.tar.gz#subdirectory=client
