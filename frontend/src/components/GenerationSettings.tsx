@@ -39,6 +39,7 @@ export default function GenerationSettingsPanel() {
       </header>
 
       <FalKey />
+      <DefaultModels />
       <Catalogue isAdmin={isAdmin} />
     </section>
   )
@@ -131,6 +132,103 @@ function FalKey() {
         )}
       </div>
 
+      {saved && (
+        <p className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400">
+          <Check className="h-3.5 w-3.5" />
+          Saved
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Which model each kind starts on, here and in Video Creator, which takes the first
+ * model of a kind when a project names none. Per user, unlike the catalogue below, so
+ * it is offered to everyone rather than only to admins.
+ */
+function DefaultModels() {
+  const id = useId()
+  const models = useGenerationStore((s) => s.models)
+  const ensureLoaded = useGenerationStore((s) => s.ensureLoaded)
+  const reload = useGenerationStore((s) => s.load)
+  const [chosen, setChosen] = useState<Partial<Record<GenerationKind, string>> | null>(
+    null
+  )
+  const [saving, setSaving] = useState(false)
+  const [saved, flashSaved] = useSavedFlash()
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    ensureLoaded()
+    let current = true
+    generationSettingsApi
+      .get()
+      .then((s) => {
+        if (current) setChosen(s.default_models ?? {})
+      })
+      .catch((err) => {
+        if (current) setError(apiErrorMessage(err, 'Could not load the default models'))
+      })
+    return () => {
+      current = false
+    }
+  }, [ensureLoaded])
+
+  const choose = async (kind: GenerationKind, endpoint: string) => {
+    setSaving(true)
+    setError(null)
+    try {
+      const next = await generationSettingsApi.update({
+        default_models: { [kind]: endpoint || null },
+      })
+      setChosen(next.default_models ?? {})
+      // The forms read the shared list, whose order and `is_default` follow this.
+      await reload()
+      flashSaved()
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Could not save the default model'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+        Default models
+      </h3>
+      <p className="text-xs text-gray-600 dark:text-gray-400">
+        What each generate form starts on, and what Video Creator uses when a project does
+        not name a model.
+      </p>
+      <ErrorBox message={error} />
+      <div className="grid gap-2 sm:grid-cols-3">
+        {GENERATION_KINDS.map((kind) => {
+          const ofKind = models.filter((m) => m.kind === kind)
+          return (
+            <div key={kind}>
+              <label className="label" htmlFor={`${id}-${kind}`}>
+                {KIND_LABELS[kind]}
+              </label>
+              <select
+                id={`${id}-${kind}`}
+                className="input w-full"
+                disabled={chosen === null || saving}
+                value={chosen?.[kind] ?? ''}
+                onChange={(e) => void choose(kind, e.target.value)}
+              >
+                <option value="">Catalogue order</option>
+                {ofKind.map((m) => (
+                  <option key={m.id} value={m.endpoint_id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
+        })}
+      </div>
       {saved && (
         <p className="flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400">
           <Check className="h-3.5 w-3.5" />

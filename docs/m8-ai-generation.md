@@ -261,11 +261,25 @@ Envelopes and errors follow the house contract (`{"data": …}`,
   `image` / `megapixel` / `second` / `video`; `unit_price` is not negative. The admin
   form repeats the rules a person is likely to trip over before sending.
 
-### The fal key
-`GET /api/settings/generation` → `{"data": {"fal_key_configured": bool}}`.
+### The fal key, and each user's default models
+`GET /api/settings/generation` → `{"data": {"fal_key_configured": bool,
+"default_models": {kind: endpoint_id}}}`.
 `PUT /api/settings/generation` with `{"fal_api_key": "…"}` stores it encrypted (setting
 key `fal_api_key`, in `settings_store.SECRET_KEYS`); `""` removes it; omitted leaves it
 alone. The key is never returned, masked or otherwise.
+
+`default_models` in the same `PUT` sets the model each kind starts on, per user (setting
+key `default_generation_models`, `app/generation/defaults.py`). Only the kinds named
+change; `null` or `""` clears one. An endpoint that is not an active row of that kind is
+`422 invalid_default_model`, and nothing in the request is saved. Kept by endpoint id, not
+row id, so it means the same thing on every install and is what Video Creator's
+per-project choice names too.
+
+`GET /api/generate/models` applies it: each kind's default is listed **first** in its kind
+and flagged `is_default: true`. Moving it, not only flagging it, is the point: Video
+Creator takes the first model of a kind when a project names none, so it follows the
+user's choice without knowing the setting exists. A default whose row was switched off
+or removed reads as no default.
 
 ### Generating
 `POST /api/generate` → `202 {"data": ActivityJobRead}`
@@ -440,6 +454,12 @@ purpose. The API sections above have been brought into line with each.
 - `estimated` in the usage totals is now true when *any* priced row is an estimate (it
   was `all()`, which called a total mixing a bill and an estimate exact). The asset's
   "AI cost (est.)" and the usage panel's caveat follow it.
+
+- Three FLUX Pro text → image rows were added after M8 (`b7d41e9c2a60`): FLUX1.1 [pro]
+  ultra, FLUX.2 [pro] and FLUX1.1 [pro], at sort order 5–7, ahead of schnell's 10. Video
+  Creator had been making every unattended picture with schnell, the draft model,
+  because it sorted first. Their `custom_size` limits come from Black Forest Labs' and
+  fal's documentation, not from fal's schema, which states none.
 
 **Frontend**
 - The four option lists, and the matching `params`, are `string | number` end to end, so

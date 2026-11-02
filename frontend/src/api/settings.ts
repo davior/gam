@@ -1,4 +1,5 @@
 import client from '@/api/client'
+import type { GenerationKind } from '@/api/generate'
 
 /**
  * Per-user settings: the credentials and provider choices enrichment runs on.
@@ -35,9 +36,14 @@ export const speechSettingsApi = {
   },
 }
 
-/** M8. Only the fal.ai key is per user; the model catalogue is global, in `api/generate`. */
+/**
+ * M8. The fal.ai key and the model each kind starts on are per user; the model catalogue
+ * itself is global, in `api/generate`.
+ */
 export interface GenerationSettings {
   fal_key_configured: boolean
+  /** `{kind: endpoint_id}`, only for kinds whose default is still an active model. */
+  default_models: Partial<Record<GenerationKind, string>>
 }
 
 export const generationSettingsApi = {
@@ -50,6 +56,8 @@ export const generationSettingsApi = {
   update(changes: {
     /** '' clears the stored key; omit the field to leave it alone. */
     fal_api_key?: string
+    /** Only the kinds named change; null goes back to the catalogue's own order. */
+    default_models?: Partial<Record<GenerationKind, string | null>>
   }): Promise<GenerationSettings> {
     return client
       .put<DataResponse<GenerationSettings>>('/settings/generation', changes)

@@ -38,6 +38,9 @@ OLLAMA_BASE_URL = "ollama_base_url"
 # second "admin" fal key for billing scope; GAM reads only list prices, which an ordinary
 # key is documented to reach, and a second credential nobody needs is one more to leak.
 FAL_API_KEY = "fal_api_key"
+# `{kind: endpoint_id}`: the model each generation form, and Video Creator, starts on.
+# See app/generation/defaults.py.
+DEFAULT_GENERATION_MODELS = "default_generation_models"
 
 # Keys whose value is encrypted at rest. Anything not in here is stored as plain JSON.
 SECRET_KEYS = frozenset({DEEPGRAM_API_KEY, OPENAI_API_KEY, FAL_API_KEY})

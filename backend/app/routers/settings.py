@@ -19,6 +19,7 @@ from app.embeddings.openai import DEFAULT_DIMENSIONS
 from app.embeddings.openai import DEFAULT_MODEL as OPENAI_DEFAULT_MODEL
 from app.enrichment.deepgram import DEFAULT_MODEL
 from app.safe_url import require_safe_external_url
+from app.generation import defaults
 from app.schemas import DataResponse
 from app.schemas_generate import GenerationSettings, GenerationSettingsUpdate
 from app.settings_store import (
@@ -92,8 +93,9 @@ def write_speech_settings(
 
 # ─── generation (M8) ─────────────────────────────────────────────────────────
 #
-# Just the key. The model catalogue is global and lives at /api/generate/models; what
-# each user brings is the account fal bills.
+# The key, and which model each kind starts on. The model catalogue itself is global and
+# lives at /api/generate/models; what each user brings is the account fal bills and a
+# preference among the rows.
 
 
 @router.get("/generation", response_model=DataResponse[GenerationSettings])
@@ -101,7 +103,10 @@ def read_generation_settings(
     user: CurrentUser, session: Session = Depends(get_session)
 ) -> DataResponse[GenerationSettings]:
     return DataResponse(
-        data=GenerationSettings(fal_key_configured=has_setting(session, user.id, FAL_API_KEY))
+        data=GenerationSettings(
+            fal_key_configured=has_setting(session, user.id, FAL_API_KEY),
+            default_models=defaults.active_defaults(session, user.id),
+        )
     )
 
 
@@ -116,6 +121,14 @@ def write_generation_settings(
             set_setting(session, user.id, FAL_API_KEY, payload.fal_api_key.strip())
         else:
             clear_setting(session, user.id, FAL_API_KEY)
+    if payload.default_models is not None:
+        try:
+            defaults.update(session, user.id, payload.default_models)
+        except defaults.InvalidDefault as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "invalid_default_model", "message": str(exc)},
+            ) from exc
     return read_generation_settings(user, session)
 
 

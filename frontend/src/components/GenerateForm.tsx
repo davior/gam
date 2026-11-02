@@ -183,9 +183,12 @@ export default function GenerateForm({ title, bases = [], preset, onCancel }: Pr
 
   // Derived rather than stored, so a catalogue that arrives after the form mounts, or a
   // kind switch that empties the old choice, still lands on something offered.
+  // The user's default (Settings) before the first by sort order: `candidates` is
+  // re-sorted here, so the server's default-first order does not survive to `[0]`.
   const model =
     candidates.find((m) => m.id === modelId) ??
     candidates.find((m) => m.endpoint_id === preset?.model) ??
+    candidates.find((m) => m.is_default) ??
     candidates[0] ??
     null
   const presetModelGone =

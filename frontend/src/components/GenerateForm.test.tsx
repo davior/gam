@@ -168,6 +168,13 @@ describe('GenerateForm: what it offers', () => {
     expect(modelNames()).toEqual(['FLUX dev', 'FLUX schnell'])
   })
 
+  it('starts on the user’s default model rather than the first by sort order', () => {
+    renderForm({}, [{ ...SCHNELL, is_default: true }, DEV, EDIT_ONE, KLING])
+
+    expect(modelNames()).toEqual(['FLUX dev', 'FLUX schnell'])
+    expect(screen.getByLabelText('Model')).toHaveValue('schnell')
+  })
+
   it('offers image → image or image → video for one base', async () => {
     const user = userEvent.setup()
     renderForm({ bases: [image('b1')] })
