@@ -364,12 +364,12 @@ def test_an_admin_deletes_a_model(auth_client, admin, models):
 
 
 def test_the_fal_key_is_stored_and_never_returned(auth_client, session):
-    assert auth_client.get("/api/settings/generation").json() == {"data": {"fal_key_configured": False}}
+    assert auth_client.get("/api/settings/generation").json() == {"data": {"fal_key_configured": False, "default_models": {}}}
 
     response = auth_client.put("/api/settings/generation", json={"fal_api_key": "  fal-secret-123  "})
 
     assert response.status_code == 200
-    assert response.json() == {"data": {"fal_key_configured": True}}
+    assert response.json() == {"data": {"fal_key_configured": True, "default_models": {}}}
     assert "fal-secret-123" not in auth_client.get("/api/settings/generation").text
     # Encrypted at rest, and decrypts to what was typed, trimmed.
     row = session.exec(

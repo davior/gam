@@ -36,6 +36,9 @@ class GenerationModelRead(BaseModel):
     unit_price: Optional[float] = None
     price_unit: Optional[str] = None
     price_currency: Optional[str] = None
+    # The caller's own default for this kind (app/generation/defaults.py). Per user, so
+    # never stored on the row; the list also puts this row first in its kind.
+    is_default: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -120,9 +123,14 @@ class RegenerateRequest(BaseModel):
 
 class GenerationSettings(BaseModel):
     fal_key_configured: bool
+    # `{kind: endpoint_id}`, only for kinds with a default that is still usable.
+    default_models: dict[str, str] = Field(default_factory=dict)
 
 
 class GenerationSettingsUpdate(BaseModel):
     # None leaves the stored key alone; "" removes it — the contract every credential
     # in this app follows, since without it a key could never be cleared.
     fal_api_key: Optional[str] = None
+    # Only the kinds named change; a kind set to null or "" goes back to the
+    # catalogue's own order. Any, for the reason the module docstring gives.
+    default_models: Optional[dict[str, Any]] = None

@@ -23,7 +23,7 @@ from sqlmodel import Session, col, select
 from app.auth import AdminUser, CurrentUser, is_admin
 from app.clock import utcnow
 from app.database import get_session
-from app.generation import catalogue
+from app.generation import catalogue, defaults
 from app.generation.catalogue import InvalidEntry, extra_params_of, options_of
 from app.generation.request import (
     ROLE_BASE,
@@ -74,7 +74,7 @@ def _error(status_code: int, code: str, message: str) -> HTTPException:
 # ─── the catalogue ───────────────────────────────────────────────────────────
 
 
-def _read(row: GenerationModel) -> GenerationModelRead:
+def _read(row: GenerationModel, *, is_default: bool = False) -> GenerationModelRead:
     return GenerationModelRead(
         id=row.id,
         endpoint_id=row.endpoint_id,
@@ -92,6 +92,7 @@ def _read(row: GenerationModel) -> GenerationModelRead:
         unit_price=row.unit_price,
         price_unit=row.price_unit,
         price_currency=row.price_currency,
+        is_default=is_default,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -179,7 +180,8 @@ def list_models(
     include_inactive: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> ListResponse[GenerationModelRead]:
-    """The catalogue, ordered as the form lists it.
+    """The catalogue, ordered as the form lists it: by kind, the caller's default for
+    the kind first (flagged `is_default`), then sort order and label.
 
     `include_inactive` is for the admin editor; anyone else asking for it gets the active
     rows, since a switched-off model is not one they can use.
@@ -192,7 +194,10 @@ def list_models(
             col(GenerationModel.kind), col(GenerationModel.sort_order), col(GenerationModel.label)
         )
     ).all()
-    return ListResponse(data=[_read(r) for r in rows], total=len(rows), limit=len(rows), offset=0)
+    chosen = defaults.active_defaults(session, user.id)
+    rows = defaults.ordered(list(rows), chosen)
+    data = [_read(r, is_default=chosen.get(r.kind) == r.endpoint_id) for r in rows]
+    return ListResponse(data=data, total=len(rows), limit=len(rows), offset=0)
 
 
 @router.post("/models", response_model=DataResponse[GenerationModelRead], status_code=201)

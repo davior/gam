@@ -80,6 +80,11 @@ export interface GenerationModel {
   unit_price: number | null
   price_unit: string | null
   price_currency: string | null
+  /**
+   * The signed-in user's default for this kind (Settings). Per user, never part of the
+   * row, and the list already puts this model first in its kind.
+   */
+  is_default?: boolean
   created_at: string
   updated_at: string
 }
@@ -87,7 +92,7 @@ export interface GenerationModel {
 /** What an admin writes. Everything but the server's own bookkeeping. */
 export type GenerationModelInput = Omit<
   GenerationModel,
-  'id' | 'created_at' | 'updated_at'
+  'id' | 'created_at' | 'updated_at' | 'is_default'
 >
 
 /**

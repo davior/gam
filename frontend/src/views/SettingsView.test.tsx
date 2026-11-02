@@ -7,6 +7,7 @@ import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { generateApi } from '@/api/generate'
 import { useActivityStore } from '@/stores/activity'
 import { useAuthStore } from '@/stores/auth'
+import { useGenerationStore } from '@/stores/generation'
 import {
   embeddingSettingsApi,
   generationSettingsApi,
@@ -98,7 +99,10 @@ beforeEach(() => {
     by_provider: [],
   })
   // And the generation panel, which reads the fal key's state and the catalogue.
-  vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({ fal_key_configured: false })
+  vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({
+    fal_key_configured: false,
+    default_models: {},
+  })
   vi.spyOn(generateApi, 'models').mockResolvedValue([])
   useAuthStore.getState().reset()
 })
@@ -397,7 +401,7 @@ describe('SettingsView generation (M8)', () => {
   it('saves a pasted fal.ai key and clears the box', async () => {
     const update = vi
       .spyOn(generationSettingsApi, 'update')
-      .mockResolvedValue({ fal_key_configured: true })
+      .mockResolvedValue({ fal_key_configured: true, default_models: {} })
     renderView()
 
     const input = await screen.findByLabelText('fal.ai API key')
@@ -415,10 +419,13 @@ describe('SettingsView generation (M8)', () => {
   })
 
   it('removes the stored fal.ai key with an empty string', async () => {
-    vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({ fal_key_configured: true })
+    vi.spyOn(generationSettingsApi, 'get').mockResolvedValue({
+      fal_key_configured: true,
+      default_models: {},
+    })
     const update = vi
       .spyOn(generationSettingsApi, 'update')
-      .mockResolvedValue({ fal_key_configured: false })
+      .mockResolvedValue({ fal_key_configured: false, default_models: {} })
     renderView()
 
     await userEvent.click(
@@ -428,15 +435,44 @@ describe('SettingsView generation (M8)', () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith({ fal_api_key: '' }))
   })
 
+  it('saves a default model per kind and reloads the shared catalogue', async () => {
+    useGenerationStore.getState().reset()
+    vi.spyOn(generateApi, 'models').mockResolvedValue([DEV, KLING])
+    const update = vi.spyOn(generationSettingsApi, 'update').mockResolvedValue({
+      fal_key_configured: false,
+      default_models: { image_to_video: KLING.endpoint_id },
+    })
+    renderView()
+
+    const select = await screen.findByLabelText('Image → video')
+    await waitFor(() => expect(select).toBeEnabled())
+    await userEvent.selectOptions(select, KLING.endpoint_id)
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith({
+        default_models: { image_to_video: KLING.endpoint_id },
+      })
+    )
+    await waitFor(() => expect(select).toHaveValue(KLING.endpoint_id))
+    // Once on mount, once after saving, so the forms follow the new default.
+    await waitFor(() =>
+      expect(
+        vi.mocked(generateApi.models).mock.calls.filter((c) => !c[0]).length
+      ).toBeGreaterThanOrEqual(2)
+    )
+  })
+
   it('shows everyone else the catalogue, read-only', async () => {
     signInAs(false)
     vi.spyOn(generateApi, 'models').mockResolvedValue([DEV, KLING])
     renderView()
 
     const generation = await panel()
-    expect(await generation.findByText('FLUX.1 [dev]')).toBeInTheDocument()
+    // `option` skipped: the default-model selects list the same labels.
+    const notOption = { ignore: 'script, style, option' }
+    expect(await generation.findByText('FLUX.1 [dev]', notOption)).toBeInTheDocument()
     expect(generation.getByText('≈ $0.025 per megapixel, list price')).toBeInTheDocument()
-    expect(generation.getByText('Kling 2.5')).toBeInTheDocument()
+    expect(generation.getByText('Kling 2.5', notOption)).toBeInTheDocument()
     expect(generateApi.models).toHaveBeenCalledWith(false)
 
     expect(generation.queryByRole('button', { name: /add a model/i })).toBeNull()
@@ -657,6 +693,10 @@ describe('SettingsView generation (M8)', () => {
 
     await user.click(generation.getByRole('button', { name: 'Delete FLUX.1 [dev]' }))
     await waitFor(() => expect(remove).toHaveBeenCalledWith('dev'))
-    await waitFor(() => expect(generation.queryByText('FLUX.1 [dev]')).toBeNull())
+    await waitFor(() =>
+      expect(
+        generation.queryByText('FLUX.1 [dev]', { ignore: 'script, style, option' })
+      ).toBeNull()
+    )
   })
 })

@@ -255,10 +255,13 @@ def test_the_generation_catalogue_is_seeded(alembic_config):
         "fal-ai/kling-video/v2.5-turbo/pro/image-to-video",
         "fal-ai/minimax/hailuo-02/standard/image-to-video",
         "fal-ai/veo3.1/fast/image-to-video",
+        "fal-ai/flux-pro/v1.1-ultra",
+        "fal-ai/flux-2-pro",
+        "fal-ai/flux-pro/v1.1",
     }
     kinds = [row["kind"] for row in rows]
     assert {kind: kinds.count(kind) for kind in set(kinds)} == {
-        "text_to_image": 3,
+        "text_to_image": 6,
         "image_to_image": 3,
         "image_to_video": 3,
     }
@@ -287,6 +290,55 @@ def test_the_generation_catalogue_is_seeded(alembic_config):
     for endpoint in ("fal-ai/flux/schnell", "fal-ai/flux/dev"):
         assert json.loads(by_endpoint[endpoint]["options"])["custom_size"]["multiple_of"] == 16
     assert "custom_size" not in json.loads(by_endpoint["fal-ai/nano-banana-2"]["options"])
+
+    # The FLUX Pro tier sorts ahead of schnell, so a caller that takes the first text →
+    # image model gets Pro rather than the draft model.
+    first = min((r for r in rows if r["kind"] == "text_to_image"), key=lambda r: r["sort_order"])
+    assert first["endpoint_id"] == "fal-ai/flux-pro/v1.1-ultra"
+    ultra = json.loads(by_endpoint["fal-ai/flux-pro/v1.1-ultra"]["options"])
+    assert "16:9" in ultra["aspect_ratios"] and ultra["image_sizes"] == []
+    assert ultra["custom_size"] is None and ultra["max_outputs"] == 4
+    flux2 = json.loads(by_endpoint["fal-ai/flux-2-pro"]["options"])
+    assert flux2["max_outputs"] == 1  # FLUX.2 [pro] has no num_images
+    assert flux2["custom_size"]["max_pixels"] == 4_194_304
+    pro = json.loads(by_endpoint["fal-ai/flux-pro/v1.1"]["options"])
+    assert pro["custom_size"] == {"max_width": 1440, "max_height": 1440, "multiple_of": 32,
+                                  "max_pixels": None}
+
+
+def test_the_flux_pro_seed_keeps_an_admins_rows(alembic_config):
+    """A FLUX Pro row an admin added by hand is not duplicated on upgrade, and the
+    downgrade removes only the rows the revision itself inserted and nobody edited."""
+    config, db_path = alembic_config
+    command.upgrade(config, "aecf97cd87b1")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO generationmodel (id, endpoint_id, kind, label, note, sort_order,"
+            " is_active, image_field_is_list, max_images, options, extra_params, created_at,"
+            " updated_at) VALUES ('mine', 'fal-ai/flux-pro/v1.1', 'text_to_image', 'My Pro',"
+            " '', 1, 1, 0, 0, '{}', '{}', '2026-01-01', '2026-01-02')"
+        )
+
+    command.upgrade(config, "head")
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, endpoint_id FROM generationmodel WHERE endpoint_id LIKE 'fal-ai/flux-%pro%'"
+            " AND endpoint_id != 'fal-ai/flux-pro/kontext'"
+        ).fetchall()
+        assert sorted(e for _id, e in rows) == [
+            "fal-ai/flux-2-pro", "fal-ai/flux-pro/v1.1", "fal-ai/flux-pro/v1.1-ultra",
+        ]
+        assert dict((e, i) for i, e in rows)["fal-ai/flux-pro/v1.1"] == "mine"
+        # An admin's later edit to a seeded row keeps it through a downgrade.
+        conn.execute(
+            "UPDATE generationmodel SET updated_at = '2030-01-01' WHERE endpoint_id = 'fal-ai/flux-2-pro'"
+        )
+
+    command.downgrade(config, "aecf97cd87b1")
+    with sqlite3.connect(db_path) as conn:
+        left = {r[0] for r in conn.execute("SELECT endpoint_id FROM generationmodel")}
+    assert "fal-ai/flux-pro/v1.1-ultra" not in left
+    assert {"fal-ai/flux-2-pro", "fal-ai/flux-pro/v1.1"} <= left
 
 
 def test_the_generation_downgrade_survives_real_foreign_key_references(alembic_config):
