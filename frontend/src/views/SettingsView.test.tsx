@@ -438,12 +438,10 @@ describe('SettingsView generation (M8)', () => {
   it('saves a default model per kind and reloads the shared catalogue', async () => {
     useGenerationStore.getState().reset()
     vi.spyOn(generateApi, 'models').mockResolvedValue([DEV, KLING])
-    const update = vi
-      .spyOn(generationSettingsApi, 'update')
-      .mockResolvedValue({
-        fal_key_configured: false,
-        default_models: { image_to_video: KLING.endpoint_id },
-      })
+    const update = vi.spyOn(generationSettingsApi, 'update').mockResolvedValue({
+      fal_key_configured: false,
+      default_models: { image_to_video: KLING.endpoint_id },
+    })
     renderView()
 
     const select = await screen.findByLabelText('Image → video')
