@@ -5,6 +5,7 @@ import { searchApi, splitHighlights, type SearchHit } from '@/api/search'
 import { apiErrorMessage } from '@/api/client'
 import AssetDetail from '@/components/AssetDetail'
 import DetailDock from '@/components/DetailDock'
+import { useAssistantFocus } from '@/utils/useAssistantFocus'
 import AssetThumb from '@/components/AssetThumb'
 import TypeFilterChips from '@/components/TypeFilterChips'
 import { formatDuration } from '@/utils/format'
@@ -39,6 +40,7 @@ export default function SearchView() {
   const [searched, setSearched] = useState(false)
 
   const [open, setOpen] = useState<{ asset: Asset; at: number | null } | null>(null)
+  useAssistantFocus(open?.asset)
 
   // Bumped per request; a response tagged with an older value is discarded. Typing
   // fires several, and a slow early one landing after a fast later one would replace

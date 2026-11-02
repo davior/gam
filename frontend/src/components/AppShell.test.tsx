@@ -28,6 +28,8 @@ function mockConfig(readOnly: boolean) {
   vi.spyOn(configApi, 'loadConfig').mockResolvedValue({
     notes_base_url: 'https://notes.example.test',
     read_only: readOnly,
+    ai_backend: 'local',
+    suite_base_url: '',
   })
 }
 

@@ -6,6 +6,7 @@ import AddPanel, { ADD_PANEL_ID } from '@/components/AddPanel'
 import AssetCard from '@/components/AssetCard'
 import AssetDetail from '@/components/AssetDetail'
 import DetailDock from '@/components/DetailDock'
+import { useAssistantFocus } from '@/utils/useAssistantFocus'
 import FilterBar from '@/components/FilterBar'
 import SelectionBar from '@/components/SelectionBar'
 import { isActive, useActivityStore } from '@/stores/activity'
@@ -203,6 +204,7 @@ export default function LibraryView() {
     () => assets.find((a) => a.id === openId) ?? null,
     [assets, openId]
   )
+  useAssistantFocus(openAsset)
 
   const filtering = Boolean(
     query.trim() || typeFilter || tagFilter.length > 0 || categoryFilter || sourceFilter

@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     # long upload, both of which contend with serving the API from the same container.
     enrichment_concurrency: int = 1
 
+    # ─── assistant ───────────────────────────────────────────────────────────
+    # Turns waiting on a model, not computing, so more than one is cheap; each holds one
+    # worker thread for the minute or so a turn takes.
+    assistant_concurrency: int = 2
+    # Model calls in one turn. A turn that searches, reads two transcripts and proposes
+    # takes about ten; past this it is going in circles at the user's expense.
+    assistant_max_rounds: int = 16
+    # Earlier messages of the conversation replayed to the model.
+    assistant_history_messages: int = 20
+    # What read_transcript hands back in one call. The model asks for more by start time.
+    assistant_transcript_chars: int = 12_000
+
     # ─── import from URL ─────────────────────────────────────────────────────
     # The tallest video an import will fetch. 1080p is where YouTube stops offering
     # H.264, which is the codec every browser (Safari included) plays without a
@@ -128,6 +140,26 @@ class Settings(BaseSettings):
     generation_base_max_edge: int = 2048
     generation_max_data_uri_mb: int = 8
 
+    # ─── AI ──────────────────────────────────────────────────────────────────
+    # Where enrichment's model and the embeddings come from. "local" is the providers
+    # this app keeps itself (Settings → AI, and the embedding settings). "suite" asks
+    # Gecko Suite, which holds the keys, routes each job to a model and counts the spend
+    # for every app. Both exist for the length of M2 so the move is one setting either
+    # way; "local" goes with the suite's M8.
+    ai_backend: str = "local"
+    suite_base_url: str = "https://suite.geckopico.com"
+    # What lets enrichment jobs call the suite as the user who owns the asset, long after
+    # the request that queued them (and its session) is gone. Issued by an administrator
+    # on the suite's Apps screen, and shown there once. Required when ai_backend is
+    # "suite", and refused at startup if it is missing: the alternative is every job
+    # failing hours later with a message that says nothing about why.
+    suite_app_secret: str = ""
+    # How many dimensions to ask the suite's embedding model for. 512 is what this app has
+    # always used for OpenAI's text-embedding-3 models (a third of the memory, almost all
+    # of the quality), and the existing index is 512-wide: vectors of another width can
+    # not be compared with it, so this must not change under a populated library.
+    suite_embedding_dimensions: int = 512
+
     # ─── read-only archive ───────────────────────────────────────────────────
     # For a copy of the app run against the plain-file mirror the backup sidecar keeps
     # on the NAS (ops/backup/README.md, "Plain-file mirror"). The database is opened
@@ -157,6 +189,25 @@ class Settings(BaseSettings):
                 "tokens Notes issues. Generate one with: openssl rand -hex 32"
             )
         return value
+
+    @field_validator("ai_backend")
+    @classmethod
+    def _known_ai_backend(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"local", "suite"}:
+            # A typo would otherwise quietly leave enrichment on the old path.
+            raise ValueError('AI_BACKEND must be "local" or "suite"')
+        return value
+
+    @model_validator(mode="after")
+    def _suite_needs_its_credential(self) -> "Settings":
+        if self.ai_backend == "suite" and not self.suite_app_secret.strip():
+            raise ValueError(
+                "AI_BACKEND=suite needs SUITE_APP_SECRET: enrichment runs as background "
+                "jobs, which have no user session to call the suite with. An administrator "
+                "issues one for GAM on Gecko Suite's Apps screen."
+            )
+        return self
 
     @model_validator(mode="after")
     def _read_only_user_needs_read_only(self) -> "Settings":

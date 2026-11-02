@@ -68,8 +68,19 @@ def active_provider(session: "Session", user_id: str) -> Optional["AIProvider"]:
     ).first()
 
 
-def build_provider(session: "Session", user_id: str) -> Optional["LLMProvider"]:
+def build_provider(
+    session: "Session",
+    user_id: str,
+    *,
+    task: str = "enrich.summarize",
+    subject: Optional[str] = None,
+) -> Optional["LLMProvider"]:
     """This user's configured LLM client, or None if they have not set one up.
+
+    `task` and `subject` matter only with AI_BACKEND=suite, where the suite picks a model
+    per job ("enrich.describe", "enrich.summarize", "enrich.autotag") and counts the spend
+    against `subject` ("gam:asset:<id>"). The local providers ignore both: they have one
+    model, and record usage themselves.
 
     None rather than an exception, exactly as `build_embedder` does: a library with no
     provider is not broken, it simply cannot be enriched yet, and everything else about
@@ -79,6 +90,11 @@ def build_provider(session: "Session", user_id: str) -> Optional["LLMProvider"]:
     vendor name — a DeepSeek row with `use_anthropic_api` is addressed over Messages,
     and `speaks_anthropic` is the single place that decision lives.
     """
+    from app import suite
+
+    if suite.enabled():
+        return suite.build_llm(user_id, task, subject)
+
     from app.auth import decrypt_api_key
     from app.providers.endpoints import speaks_anthropic
 

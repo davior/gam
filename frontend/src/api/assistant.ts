@@ -1,0 +1,169 @@
+import client from '@/api/client'
+
+/**
+ * The assistant: saved conversations, turns that run in the background, and the proposal
+ * a turn ends with. It never changes the library by itself: `apply` is the only call
+ * that does, and it applies what `proposal` showed.
+ */
+
+interface DataResponse<T> {
+  data: T
+}
+
+export interface AssistantStatus {
+  /** False unless the app runs on Gecko Suite (AI_BACKEND=suite). */
+  available: boolean
+  /** Whether a turn could start now; `message` says what is missing when not. */
+  ready: boolean
+  model: string | null
+  message: string | null
+}
+
+export interface AssistantSession {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface AssistantMessage {
+  role: 'user' | 'assistant'
+  text: string
+  turn_id: string | null
+  at: string
+}
+
+export interface AssistantStep {
+  kind: 'think' | 'search' | 'read' | 'propose' | 'issue' | string
+  text: string
+}
+
+/** One asset's part of a proposal. Only the fields that would change are set. */
+export interface ProposalItem {
+  asset_id: string
+  asset_name: string
+  /** What it is now, to show a change and not only the new value. */
+  before: {
+    name: string
+    description: string | null
+    summary: string | null
+    tags: string[]
+  }
+  name?: string
+  description?: string
+  summary?: string
+  add_tags: string[]
+  remove_tags: string[]
+  enrich: string[]
+}
+
+export interface Proposal {
+  items: ProposalItem[]
+}
+
+export type TurnStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
+
+export interface AssistantTurn {
+  id: string
+  session_id: string
+  status: TurnStatus
+  stage: string
+  detail: string
+  error: string | null
+  prompt: string
+  focus_asset_id: string | null
+  steps: AssistantStep[]
+  reply: string
+  proposal: Proposal | null
+  /** pending | applied | discarded once there is a proposal; '' otherwise. */
+  outcome: '' | 'pending' | 'applied' | 'discarded'
+  cost: number | null
+  created_at: string
+}
+
+export interface AssistantSessionDetail extends AssistantSession {
+  messages: AssistantMessage[]
+  turns: AssistantTurn[]
+}
+
+export interface ApplyResult {
+  asset_id: string
+  asset_name: string
+  applied: string[]
+  skipped: string[]
+}
+
+export function isActiveTurn(turn: Pick<AssistantTurn, 'status'>): boolean {
+  return turn.status === 'queued' || turn.status === 'processing'
+}
+
+export const assistantApi = {
+  status(): Promise<AssistantStatus> {
+    return client
+      .get<DataResponse<AssistantStatus>>('/assistant/status')
+      .then((r) => r.data.data)
+  },
+
+  listSessions(): Promise<AssistantSession[]> {
+    return client
+      .get<DataResponse<AssistantSession[]>>('/assistant/sessions', {
+        params: { limit: 50 },
+      })
+      .then((r) => r.data.data)
+  },
+
+  createSession(): Promise<AssistantSession> {
+    return client
+      .post<DataResponse<AssistantSession>>('/assistant/sessions')
+      .then((r) => r.data.data)
+  },
+
+  getSession(id: string): Promise<AssistantSessionDetail> {
+    return client
+      .get<DataResponse<AssistantSessionDetail>>(`/assistant/sessions/${id}`)
+      .then((r) => r.data.data)
+  },
+
+  deleteSession(id: string): Promise<void> {
+    return client.delete(`/assistant/sessions/${id}`).then(() => undefined)
+  },
+
+  ask(
+    sessionId: string,
+    prompt: string,
+    focusAssetId?: string | null
+  ): Promise<AssistantTurn> {
+    return client
+      .post<DataResponse<AssistantTurn>>(`/assistant/sessions/${sessionId}/turns`, {
+        prompt,
+        focus_asset_id: focusAssetId ?? null,
+      })
+      .then((r) => r.data.data)
+  },
+
+  getTurn(id: string): Promise<AssistantTurn> {
+    return client
+      .get<DataResponse<AssistantTurn>>(`/assistant/turns/${id}`)
+      .then((r) => r.data.data)
+  },
+
+  cancel(id: string): Promise<AssistantTurn> {
+    return client
+      .post<DataResponse<AssistantTurn>>(`/assistant/turns/${id}/cancel`)
+      .then((r) => r.data.data)
+  },
+
+  apply(id: string, assetIds?: string[]): Promise<ApplyResult[]> {
+    return client
+      .post<DataResponse<ApplyResult[]>>(`/assistant/turns/${id}/apply`, {
+        asset_ids: assetIds ?? null,
+      })
+      .then((r) => r.data.data)
+  },
+
+  discard(id: string): Promise<AssistantTurn> {
+    return client
+      .post<DataResponse<AssistantTurn>>(`/assistant/turns/${id}/discard`)
+      .then((r) => r.data.data)
+  },
+}

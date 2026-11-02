@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { authApi, redirectToLogin, type User } from '@/api/auth'
 import { apiErrorCode, apiErrorMessage, clearToken } from '@/api/client'
 import { useActivityStore } from '@/stores/activity'
+import { useAssistantStore } from '@/stores/assistant'
 import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
@@ -79,6 +80,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Also stops the poll. One person's running jobs must not sit in the next
     // person's header, and a timer left armed would keep asking as them.
     useActivityStore.getState().reset()
+    // Conversations are personal, and a running turn's poll would keep asking as them.
+    useAssistantStore.getState().reset()
     void redirectToLogin()
   },
 

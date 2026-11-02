@@ -66,6 +66,31 @@ gives us a second real consumer to design the seams against. The one genuine
 cross-cutting concern — verifying a Notes-issued JWT — is ~30 lines; a package for it
 is pure overhead.
 
+**Update: the AI half was extracted, as a service rather than a package.** GVC arrived as
+the second consumer, and what they shared was not code to vendor but a decision to make
+once: which key, which model, for which job, at what cost. That is
+[gecko-suite](https://github.com/davior/gecko-suite), and with `AI_BACKEND=suite` GAM's
+`build_provider` and `build_embedder` ask it instead of keeping their own (`app/suite.py`).
+The local providers stay, behind that one setting, until the suite's M8 removes them.
+
+**The assistant** (side panel, `AI_BACKEND=suite` only) is the first thing GAM builds on the
+suite rather than beside its own providers. Decisions, so they are not re-litigated:
+
+- *It proposes; a person applies.* A turn ends with at most one proposal (renames,
+  descriptions, summaries, tag adds and removes, enrichment passes to run), stored on the
+  turn. Nothing in the library changes until Apply, which goes through the same services
+  the REST API uses. The tools that touch data only look; there is no tool that writes.
+- *Saved conversations, one background job per turn* (`assistant_session`, `assistant_turn`),
+  so a turn finishes with nobody watching and is waiting when the person returns.
+- *Called as GAM for the person who asked* (`SUITE_APP_SECRET`), so a restart simply reruns
+  an interrupted turn: there is no session token to lose, unlike Video Creator's.
+- *Job `chat.assistant`*, so an administrator can give it a model of its own. A model
+  without the `tools` capability is refused with a sentence saying where to change it.
+- *Local mode says so.* The local providers answer single prompts; the assistant needs tool
+  calls, and this app keeps no second code path for them. Not adding one is the point.
+- *Not yet:* generating images from the panel (suite M3), and reading pictures the person
+  attaches. Both are additions to the tool list, not changes to the shape.
+
 ### Fix on the way in (do not copy verbatim)
 
 These are documented problems in gecko-notes. Fix them as GAM is built; each is a

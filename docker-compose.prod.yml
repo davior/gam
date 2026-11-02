@@ -16,6 +16,13 @@ services:
     networks:
       - default
       - web
+    # GAM's server calls Gecko Suite at its public name (SUITE_BASE_URL). On the suite's
+    # server all the apps run on one machine, and from inside a container that name
+    # resolves to the machine's own public address, which the host does not route back in
+    # (hairpin NAT). Pointing it at the Docker host reaches Caddy directly, with the same
+    # name and so the same TLS certificate. GVC's overlay does the same for GAM and Notes.
+    extra_hosts:
+      - "suite.geckopico.com:host-gateway"
   frontend:
     networks:
       - default

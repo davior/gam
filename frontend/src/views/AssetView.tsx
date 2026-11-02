@@ -4,6 +4,7 @@ import { FileQuestion } from 'lucide-react'
 import { apiErrorCode, apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
 import AssetDetail from '@/components/AssetDetail'
+import { useAssistantFocus } from '@/utils/useAssistantFocus'
 
 /**
  * One asset, at its own URL.
@@ -26,6 +27,7 @@ export default function AssetView() {
   const openById = useLibraryStore((s) => s.openById)
   const asset = useLibraryStore((s) => s.assets.find((a) => a.id === id))
   const [loading, setLoading] = useState(!asset)
+  useAssistantFocus(asset)
   const [missing, setMissing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 

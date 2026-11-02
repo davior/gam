@@ -17,6 +17,11 @@ export interface ClientConfig {
   notes_base_url: string
   /** A copy run against the NAS mirror: the server refuses every write. */
   read_only: boolean
+  /** Where enrichment's model and the embeddings come from: this app's own providers, or
+   *  Gecko Suite. */
+  ai_backend: 'local' | 'suite'
+  /** Where Gecko Suite lives, to link its settings when `ai_backend` is 'suite'. */
+  suite_base_url: string
 }
 
 interface DataResponse<T> {

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsView from '@/views/SettingsView'
+import * as configModule from '@/api/config'
 import { embeddingsApi, type EmbeddingCoverage } from '@/api/embeddings'
 import { generateApi } from '@/api/generate'
 import { useActivityStore } from '@/stores/activity'
@@ -66,7 +67,17 @@ function coverage(overrides: Partial<EmbeddingCoverage> = {}): EmbeddingCoverage
   }
 }
 
+function serveConfig(aiBackend: 'local' | 'suite') {
+  vi.spyOn(configModule, 'loadConfig').mockResolvedValue({
+    notes_base_url: 'https://notes.example.test',
+    read_only: false,
+    ai_backend: aiBackend,
+    suite_base_url: 'https://suite.example.test/',
+  })
+}
+
 beforeEach(() => {
+  serveConfig('local')
   vi.spyOn(speechSettingsApi, 'get').mockResolvedValue(speech())
   vi.spyOn(embeddingsApi, 'status').mockResolvedValue(coverage())
   // The view mounts the provider panel too, which loads on mount. Left unmocked it
@@ -698,5 +709,25 @@ describe('SettingsView generation (M8)', () => {
         generation.queryByText('FLUX.1 [dev]', { ignore: 'script, style, option' })
       ).toBeNull()
     )
+  })
+})
+
+describe('SettingsView and Gecko Suite', () => {
+  it('shows its own provider form while enrichment uses its own providers', async () => {
+    renderView()
+    expect(await screen.findByText(/no provider configured yet/i)).toBeInTheDocument()
+    expect(screen.queryByText(/managed in gecko suite/i)).toBeNull()
+  })
+
+  it('says AI lives in Gecko Suite, with links there, once enrichment runs on it', async () => {
+    serveConfig('suite')
+    renderView()
+    expect(await screen.findByText(/managed in gecko suite/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /providers/i })).toHaveAttribute(
+      'href',
+      'https://suite.example.test/providers'
+    )
+    // A key saved in a panel nothing reads would be wrong, not just redundant.
+    expect(screen.queryByText(/no provider configured yet/i)).toBeNull()
   })
 })

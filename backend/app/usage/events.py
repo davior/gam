@@ -66,7 +66,15 @@ def record_completion(session: Session, asset_id: Optional[str], user_id: str, c
     Guarded in its own right, not just by `record`: everything before that call — reading
     the usage off the completion, looking up a price — is also accounting, and accounting
     must never be why a summary the user paid for fails to save.
+
+    Nothing is written with AI_BACKEND=suite: the suite has already recorded the call, for
+    this asset, in the ledger it keeps for every app. Writing it here too would count it
+    twice wherever the two are read.
     """
+    from app import suite
+
+    if suite.enabled():
+        return
     try:
         _record_completion(session, asset_id, user_id, completion)
     except Exception:  # noqa: BLE001 - see above

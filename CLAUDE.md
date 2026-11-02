@@ -1,12 +1,36 @@
 # gam — Claude Instructions
 
 Gecko Asset Manager. Part of the Gecko Suite alongside
-[gecko-notes](https://github.com/davior/gecko-notes) (live, the identity provider) and
-Gecko Video Creator (not yet started).
+[gecko-notes](https://github.com/davior/gecko-notes) (live, the identity provider),
+[GVC](https://github.com/davior/gvc) (the video creator) and
+[gecko-suite](https://github.com/davior/gecko-suite) (the shared AI gateway: providers,
+models, routing and usage for all of them).
 
 Read [`docs/plan-of-attack.md`](docs/plan-of-attack.md) before starting a milestone — it
 carries the architecture, the milestone order, and the reasoning behind decisions that
 would otherwise look arbitrary.
+
+## AI: local, or Gecko Suite
+
+`AI_BACKEND` (`local` by default) decides where enrichment's model and the embeddings come
+from. `local` is the `AIProvider` rows and embedding settings this app keeps. `suite` asks
+Gecko Suite, through the two functions every job already calls, `build_provider` and
+`build_embedder` (`app/suite.py` is everything GAM knows about it). Mind these:
+
+- **Background jobs have no user session**, so the suite is called as GAM, for the asset's
+  owner, with `SUITE_APP_SECRET`. The app refuses to start in `suite` mode without it.
+- **The suite counts the spend**, so `record_completion` writes nothing in that mode.
+  Speech and image-generation usage is still GAM's own until the suite takes those (M3).
+- **A suite that is down must not stop the library.** `build_embedder` answers `None`,
+  and search falls back to keywords; jobs fail with a sentence and retry.
+- **The assistant exists only in `suite` mode, and never writes.** Its tools look
+  (`search_assets`, `get_asset`, `read_transcript`, `list_tags`) or record a proposal
+  (`propose_changes`, `propose_enrichment`); `assistant/apply.py` is the only place a
+  proposal reaches the library, and only when a person presses Apply. A new tool that
+  writes would break that, so make it a proposal kind instead. Every tool re-checks that
+  the asset is the caller's: the model chooses the ids.
+- **The embedding width is `SUITE_EMBEDDING_DIMENSIONS` (512) and must not change under a
+  populated library:** vectors of another width cannot be compared with the existing index.
 
 ## Working with gecko-notes
 

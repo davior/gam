@@ -184,7 +184,9 @@ def parse_reply(text: str) -> list[dict]:
 
 def run(session: Session, asset: Asset, progress: Progress) -> str:
     """Propose attribution for one asset. Returns a detail line for the job row."""
-    provider = build_provider(session, asset.user_id)
+    provider = build_provider(
+        session, asset.user_id, task="enrich.summarize", subject=f"gam:asset:{asset.id}"
+    )
     if provider is None:
         raise ProviderUnavailable(
             "No AI provider is configured. Add one in Settings to enable enrichment."

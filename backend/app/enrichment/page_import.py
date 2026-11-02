@@ -77,7 +77,12 @@ def preview(session: Session, user_id: str, url: str, *, use_ai: bool = True) ->
         raise PageImportError(str(exc)) from exc
 
     if extraction is None and use_ai:
-        provider = build_provider(session, user_id)
+        try:
+            provider = build_provider(session, user_id)
+        except ProviderError:
+            # The suite is not reachable. A page import has a fallback (the bare links),
+            # so this is "no AI for now", not a failed import.
+            provider = None
         if provider is not None:
             extraction = _ask_ai(session, user_id, provider, final_url, page)
 

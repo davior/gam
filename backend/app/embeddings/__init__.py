@@ -46,6 +46,11 @@ def build_embedder(session: Session, user_id: str) -> Optional[Embedder]:
     semantic search yet, and keyword search still works. Only an attempt to *use* it is
     an error worth raising.
     """
+    from app import suite
+
+    if suite.enabled():
+        return suite.build_embedding(user_id)
+
     from app.settings_store import (
         EMBEDDING_BASE_URL,
         EMBEDDING_DIMENSIONS,

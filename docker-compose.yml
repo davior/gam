@@ -13,6 +13,13 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
       - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      # Where enrichment's model and the embeddings come from: "local" (the providers this
+      # app keeps) or "suite" (Gecko Suite). Changing it is a restart, not a rebuild.
+      - AI_BACKEND=${AI_BACKEND:-local}
+      - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
+      # Required when AI_BACKEND=suite; the app refuses to start without it.
+      - SUITE_APP_SECRET=${SUITE_APP_SECRET:-}
+      - SUITE_EMBEDDING_DIMENSIONS=${SUITE_EMBEDDING_DIMENSIONS:-512}
       - MEDIA_URL_TTL_SECONDS=${MEDIA_URL_TTL_SECONDS:-3600}
       - DISK_WARN_FREE_GB=${DISK_WARN_FREE_GB:-20}
       - DISK_RESERVE_GB=${DISK_RESERVE_GB:-5}
