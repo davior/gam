@@ -23,6 +23,12 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   Speech and image-generation usage is still GAM's own until the suite takes those (M3).
 - **A suite that is down must not stop the library.** `build_embedder` answers `None`,
   and search falls back to keywords; jobs fail with a sentence and retry.
+- **The assistant exists only in `suite` mode, and never writes.** Its tools look
+  (`search_assets`, `get_asset`, `read_transcript`, `list_tags`) or record a proposal
+  (`propose_changes`, `propose_enrichment`); `assistant/apply.py` is the only place a
+  proposal reaches the library, and only when a person presses Apply. A new tool that
+  writes would break that, so make it a proposal kind instead. Every tool re-checks that
+  the asset is the caller's: the model chooses the ids.
 - **The embedding width is `SUITE_EMBEDDING_DIMENSIONS` (512) and must not change under a
   populated library:** vectors of another width cannot be compared with the existing index.
 

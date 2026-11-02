@@ -1,9 +1,11 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { LogOut, Moon, Search, Settings, Sun } from 'lucide-react'
+import { LogOut, Moon, Search, Settings, Sparkles, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { currentConfig, loadConfig } from '@/api/config'
 import ActivityIndicator from '@/components/ActivityIndicator'
+import AssistantPanel from '@/components/AssistantPanel'
 import StorageWarning from '@/components/StorageWarning'
+import { useAssistantStore } from '@/stores/assistant'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
 
@@ -22,6 +24,8 @@ export default function AppShell({ children }: Props) {
   const signOut = useAuthStore((s) => s.signOut)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
+  const assistantOpen = useAssistantStore((s) => s.open)
+  const setAssistantOpen = useAssistantStore((s) => s.setOpen)
   const [readOnly, setReadOnly] = useState(() => currentConfig()?.read_only ?? false)
 
   useEffect(() => {
@@ -68,6 +72,19 @@ export default function AppShell({ children }: Props) {
             <Link to="/search" className="btn btn-ghost p-2" aria-label="Search">
               <Search className="h-4 w-4" />
             </Link>
+            {/* Not on an archive: it proposes changes, and an archive refuses them. */}
+            {!readOnly && (
+              <button
+                type="button"
+                onClick={() => setAssistantOpen(!assistantOpen)}
+                className={`btn btn-ghost p-2 ${assistantOpen ? 'bg-gray-100 dark:bg-gray-700' : ''}`}
+                aria-label="Assistant"
+                aria-pressed={assistantOpen}
+                title="Assistant"
+              >
+                <Sparkles className="h-4 w-4" />
+              </button>
+            )}
             <StorageWarning />
             <ActivityIndicator />
             <Link to="/settings" className="btn btn-ghost p-2" aria-label="Settings">
@@ -111,7 +128,10 @@ export default function AppShell({ children }: Props) {
         </div>
       )}
 
-      <main className="flex-1 overflow-auto">{children}</main>
+      <div className="flex min-h-0 flex-1">
+        <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+        {assistantOpen && !readOnly && <AssistantPanel />}
+      </div>
     </div>
   )
 }
