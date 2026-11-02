@@ -25,6 +25,7 @@ from sqlmodel import Session
 from app.database import engine, get_session
 from app.routers import activity as activity_router
 from app.routers import assets as assets_router
+from app.routers import assistant as assistant_router
 from app.routers import clips as clips_router
 from app.routers import embeddings as embeddings_router
 from app.routers import enrichment as enrichment_router
@@ -81,6 +82,10 @@ async def lifespan(_app: FastAPI):
         from app.jobs import enrichment
 
         enrichment.start()
+        # Idle unless AI_BACKEND=suite: turns only exist once someone asks the assistant.
+        from app.assistant import worker as assistant_worker
+
+        assistant_worker.start()
 
     yield
 
@@ -213,6 +218,7 @@ def me(
     )
 
 
+app.include_router(assistant_router.router, prefix="/api/assistant", tags=["assistant"])
 app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
 # Mounted under the same prefix: a transcript belongs to an asset, and the URL should
 # say so rather than inventing a parallel /api/transcripts tree.

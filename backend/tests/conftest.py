@@ -46,6 +46,10 @@ def no_background_workers(monkeypatch):
 
     monkeypatch.setattr(enrichment, "start", lambda: None)
 
+    from app.assistant import worker as assistant_worker
+
+    monkeypatch.setattr(assistant_worker, "start", lambda: None)
+
 
 class FakeDisk:
     """What `storage/capacity.py` is told about the disk.

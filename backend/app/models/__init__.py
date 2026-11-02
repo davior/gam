@@ -9,6 +9,7 @@ on `SQLModel.metadata` at import time, so a table missing from this list produce
 empty migration and a silent schema drift.
 """
 
+from app.models.assistant import AssistantSession, AssistantTurn
 from app.models.asset import Asset
 from app.models.document import DocumentPage
 from app.models.embedding import Embedding
@@ -26,6 +27,8 @@ from app.models.version import AssetVersion
 __all__ = [
     "AIProvider",
     "Asset",
+    "AssistantSession",
+    "AssistantTurn",
     "AssetTag",
     "AssetVersion",
     "DocumentPage",

@@ -100,6 +100,14 @@ class SuiteLLM:
     def supports_images(self) -> bool:
         return "vision" in self._model.get("capabilities", [])
 
+    @property
+    def supports_tools(self) -> bool:
+        return "tools" in self._model.get("capabilities", [])
+
+    @property
+    def label(self) -> str:
+        return self._model.get("label") or self.model
+
     def complete(self, prompt: str, *, system: Optional[str] = None,
                  images: Sequence[Image] = ()) -> Completion:
         try:
@@ -138,6 +146,16 @@ def build_llm(user_id: str, task: str = DEFAULT_TASK,
     except SuiteError as exc:
         raise ProviderError(sentence(exc)) from exc
     return SuiteLLM(user_id, task, subject, model) if model else None
+
+
+# ─── the assistant ───────────────────────────────────────────────────────────
+
+# The job the assistant's conversation names, so it can be given a model of its own.
+ASSISTANT_TASK = "chat.assistant"
+
+
+def assistant_chat(connection: SuiteClient, subject: Optional[str]) -> SuiteChat:
+    return SuiteChat(connection, task=ASSISTANT_TASK, app=APP, subject_ref=subject)
 
 
 # ─── embeddings ──────────────────────────────────────────────────────────────

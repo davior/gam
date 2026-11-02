@@ -84,6 +84,18 @@ class Settings(BaseSettings):
     # long upload, both of which contend with serving the API from the same container.
     enrichment_concurrency: int = 1
 
+    # ─── assistant ───────────────────────────────────────────────────────────
+    # Turns waiting on a model, not computing, so more than one is cheap; each holds one
+    # worker thread for the minute or so a turn takes.
+    assistant_concurrency: int = 2
+    # Model calls in one turn. A turn that searches, reads two transcripts and proposes
+    # takes about ten; past this it is going in circles at the user's expense.
+    assistant_max_rounds: int = 16
+    # Earlier messages of the conversation replayed to the model.
+    assistant_history_messages: int = 20
+    # What read_transcript hands back in one call. The model asks for more by start time.
+    assistant_transcript_chars: int = 12_000
+
     # ─── import from URL ─────────────────────────────────────────────────────
     # The tallest video an import will fetch. 1080p is where YouTube stops offering
     # H.264, which is the codec every browser (Safari included) plays without a
