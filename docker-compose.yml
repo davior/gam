@@ -63,6 +63,8 @@ services:
       # Same value the backend gets: it is the CSP's connect-src here, so the two must
       # agree or the browser-side call to Notes is blocked by a policy nobody edited.
       - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      # Same value the backend gets: connect-src for the theme picker's calls (M7).
+      - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
     depends_on:
       - backend
     networks:

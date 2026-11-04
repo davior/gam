@@ -6,8 +6,11 @@ import ActivityIndicator from '@/components/ActivityIndicator'
 import AssistantPanel from '@/components/AssistantPanel'
 import StorageWarning from '@/components/StorageWarning'
 import { useAssistantStore } from '@/stores/assistant'
+import favicon from '@/assets/favicon.svg'
+import { useAppThemeStore } from '@/stores/appTheme'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore } from '@/stores/theme'
+import ThemePicker from '@/theme/ThemePicker'
 
 interface Props {
   children: ReactNode
@@ -24,6 +27,9 @@ export default function AppShell({ children }: Props) {
   const signOut = useAuthStore((s) => s.signOut)
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
+  // A theme from the suite brings its own light or dark, so the toggle would fight it.
+  const wearing = useAppThemeStore((s) => s.selected !== null)
+  const suiteUrl = currentConfig()?.suite_base_url?.replace(/\/+$/, '') || null
   const assistantOpen = useAssistantStore((s) => s.open)
   const setAssistantOpen = useAssistantStore((s) => s.setOpen)
   const [readOnly, setReadOnly] = useState(() => currentConfig()?.read_only ?? false)
@@ -46,29 +52,30 @@ export default function AppShell({ children }: Props) {
       <header className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-center gap-3">
           <Link to="/library" className="flex items-center gap-3">
-            <span className="text-xl" aria-hidden="true">
-              🦎
-            </span>
+            <img src={favicon} alt="" aria-hidden="true" className="h-7 w-7" />
             <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">
               Gecko Asset Manager
             </h1>
           </Link>
 
           <div className="ml-auto flex items-center gap-3">
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="btn btn-ghost p-2"
-              aria-label={
-                theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
-              }
-            >
-              {theme === 'dark' ? (
-                <Sun className="h-4 w-4" />
-              ) : (
-                <Moon className="h-4 w-4" />
-              )}
-            </button>
+            {user && <ThemePicker editUrl={suiteUrl ? `${suiteUrl}/themes` : null} />}
+            {!wearing && (
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="btn btn-ghost p-2"
+                aria-label={
+                  theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+                }
+              >
+                {theme === 'dark' ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </button>
+            )}
             <Link to="/search" className="btn btn-ghost p-2" aria-label="Search">
               <Search className="h-4 w-4" />
             </Link>
