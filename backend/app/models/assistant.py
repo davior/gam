@@ -49,6 +49,10 @@ class AssistantTurn(SQLModel, table=True):
     # The asset open in the library when the turn was asked, if any: "this" in a request
     # means it.
     focus_asset_id: Optional[str] = None
+    # The suite persona this turn was asked as, if any: its system prompt goes first and its
+    # model for chat.assistant replaces the routed one. Kept on the turn, not read afresh, so
+    # a turn that a restart reruns is asked as the same persona.
+    persona_id: Optional[str] = None
     # JSON: [{"kind": "think"|"search"|"read"|"propose"|"issue", "text"}]
     steps: str = "[]"
     reply: str = ""

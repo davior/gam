@@ -59,6 +59,7 @@ class TurnRead(BaseModel):
     error: Optional[str] = None
     prompt: str
     focus_asset_id: Optional[str] = None
+    persona_id: Optional[str] = None
     steps: List[dict] = []
     reply: str = ""
     proposal: Optional[dict] = None
@@ -82,6 +83,9 @@ class SessionDetail(SessionRead):
 class TurnCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT)
     focus_asset_id: Optional[str] = None
+    # One of the suite's personas (`GET /personas`), or none. The suite is the authority on
+    # whether it exists and may be used: an unknown one ends the turn with its sentence.
+    persona_id: Optional[str] = Field(default=None, max_length=64)
 
 
 class ApplyBody(BaseModel):
@@ -100,7 +104,7 @@ def _turn_read(row: AssistantTurn) -> TurnRead:
     return TurnRead(
         id=row.id, session_id=row.session_id, status=row.status, stage=row.stage,
         detail=row.detail, error=row.error_message, prompt=row.prompt,
-        focus_asset_id=row.focus_asset_id, steps=json.loads(row.steps or "[]"),
+        focus_asset_id=row.focus_asset_id, persona_id=row.persona_id, steps=json.loads(row.steps or "[]"),
         reply=row.reply, proposal=apply_service.decode(row.proposal), outcome=row.outcome,
         cost=row.cost, created_at=row.created_at.isoformat())
 
@@ -166,6 +170,28 @@ def _require_ready(user_id: str) -> None:
         raise _error(409, "model_cannot_use_tools",
                      f"{model.label} can't use tools, which the assistant needs. "
                      "Route chat.assistant to another model in Gecko Suite.")
+
+
+class PersonaRead(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    avatar: Optional[str] = None
+
+
+@router.get("/personas", response_model=ListResponse[PersonaRead])
+def list_personas(user: CurrentUser) -> ListResponse[PersonaRead]:
+    """The personas the person may ask as: the suite's, for GAM and for every app.
+
+    Only what a picker shows (never the system prompt). Empty when the suite has none or is
+    not there, and then the panel simply has no picker.
+    """
+    if not suite.enabled():
+        return ListResponse(data=[], total=0, limit=0, offset=0)
+    rows = [PersonaRead(id=p["id"], name=p["name"], description=p.get("description") or "",
+                        avatar=p.get("avatar")) for p in suite.personas(user.id)
+            if isinstance(p, dict) and p.get("id") and p.get("name")]
+    return ListResponse(data=rows, total=len(rows), limit=len(rows), offset=0)
 
 
 # ─── conversations ───────────────────────────────────────────────────────────
@@ -243,7 +269,8 @@ def start_turn(session_id: str, body: TurnCreate, user: CurrentUser,
         asset = session.get(Asset, body.focus_asset_id)
         # Not an error when it isn't theirs: the turn simply has nothing in view.
         focus = asset.id if asset is not None and asset.user_id == user.id else None
-    turn = worker.submit(session, chat, user_id=user.id, prompt=prompt, focus_asset_id=focus)
+    turn = worker.submit(session, chat, user_id=user.id, prompt=prompt, focus_asset_id=focus,
+                         persona_id=body.persona_id or None)
     return DataResponse(data=_turn_read(turn))
 
 

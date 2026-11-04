@@ -19,6 +19,13 @@ export interface AssistantStatus {
   message: string | null
 }
 
+export interface AssistantPersona {
+  id: string
+  name: string
+  description: string
+  avatar: string | null
+}
+
 export interface AssistantSession {
   id: string
   title: string
@@ -72,6 +79,8 @@ export interface AssistantTurn {
   error: string | null
   prompt: string
   focus_asset_id: string | null
+  /** The suite persona this turn was asked as, if any. */
+  persona_id: string | null
   steps: AssistantStep[]
   reply: string
   proposal: Proposal | null
@@ -128,15 +137,24 @@ export const assistantApi = {
     return client.delete(`/assistant/sessions/${id}`).then(() => undefined)
   },
 
+  /** The personas the person may ask as (the suite's). Empty when there are none. */
+  personas(): Promise<AssistantPersona[]> {
+    return client
+      .get<DataResponse<AssistantPersona[]>>('/assistant/personas')
+      .then((r) => r.data.data)
+  },
+
   ask(
     sessionId: string,
     prompt: string,
-    focusAssetId?: string | null
+    focusAssetId?: string | null,
+    personaId?: string | null
   ): Promise<AssistantTurn> {
     return client
       .post<DataResponse<AssistantTurn>>(`/assistant/sessions/${sessionId}/turns`, {
         prompt,
         focus_asset_id: focusAssetId ?? null,
+        persona_id: personaId ?? null,
       })
       .then((r) => r.data.data)
   },

@@ -16,7 +16,7 @@ import uuid
 from contextlib import closing
 from typing import List, Optional, Tuple
 
-from gecko_suite_client import Stopped, run_agent
+from gecko_suite_client import Stopped, run_agent, web_search
 from sqlmodel import Session, func, select
 
 from app import suite
@@ -70,6 +70,7 @@ def _run(turn_id: str) -> None:
                    steps="[]", reply="", proposal=None, outcome="", cost=None)
         chat = session.get(AssistantSession, turn.session_id)
         user_id, prompt, focus_id = turn.user_id, turn.prompt, turn.focus_asset_id
+        persona_id = turn.persona_id
         history = history_for(chat, turn_id) if chat else []
         chat_id = turn.session_id
         focus = None
@@ -105,7 +106,7 @@ def _run(turn_id: str) -> None:
     working = T.Working(user_id, queue.session, on_step)
     try:
         with closing(suite.client(user_id)) as connection:
-            chat_model = suite.assistant_chat(connection, f"gam:assistant:{chat_id}")
+            chat_model = suite.assistant_chat(connection, f"gam:assistant:{chat_id}", persona_id)
             model = chat_model.resolve()
             if model is None:
                 raise suite.ProviderError("No AI model is set up for the assistant. Choose "
@@ -114,6 +115,9 @@ def _run(turn_id: str) -> None:
                 raise suite.ProviderError(
                     f"{model.get('label') or model.get('model_id')} can't use tools, which the "
                     "assistant needs. Route chat.assistant to another model in Gecko Suite.")
+            # The web, through the same connection, credited to this conversation.
+            working.search = lambda query: web_search(
+                connection, query, subject_ref=f"gam:assistant:{chat_id}")
             conversation = chat_model.conversation(
                 system=[prompts.REFERENCE, prompts.context(focus=focus, library_size=size)],
                 tools=T.SPECS, history=history, prompt=prompt)
@@ -171,9 +175,9 @@ queue = JobQueue(AssistantTurn, _run, name="assistant",
 
 
 def submit(session: Session, chat: AssistantSession, *, user_id: str, prompt: str,
-           focus_asset_id: Optional[str]) -> AssistantTurn:
+           focus_asset_id: Optional[str], persona_id: Optional[str] = None) -> AssistantTurn:
     turn = AssistantTurn(id=str(uuid.uuid4()), session_id=chat.id, user_id=user_id,
-                         prompt=prompt, focus_asset_id=focus_asset_id)
+                         prompt=prompt, focus_asset_id=focus_asset_id, persona_id=persona_id)
     append_message(chat, "user", prompt, turn.id)
     if not chat.title:
         chat.title = prompt.strip().splitlines()[0][:80]

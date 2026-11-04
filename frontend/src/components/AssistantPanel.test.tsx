@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import * as configModule from '@/api/config'
 import {
   assistantApi,
+  type AssistantPersona,
   type AssistantStatus,
   type AssistantTurn,
   type ProposalItem,
@@ -41,6 +42,7 @@ function turn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     error: null,
     prompt: 'Tidy these',
     focus_asset_id: null,
+    persona_id: null,
     steps: [],
     reply: 'I would rename two.',
     proposal: null,
@@ -51,8 +53,13 @@ function turn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
   }
 }
 
-async function show(status: AssistantStatus, turns: AssistantTurn[] = []) {
+async function show(
+  status: AssistantStatus,
+  turns: AssistantTurn[] = [],
+  personas: AssistantPersona[] = []
+) {
   vi.spyOn(assistantApi, 'status').mockResolvedValue(status)
+  vi.spyOn(assistantApi, 'personas').mockResolvedValue(personas)
   const sessions = turns.length
     ? [{ id: 's1', title: 'Tidy these', created_at: '', updated_at: '' }]
     : []
@@ -186,5 +193,36 @@ describe('AssistantPanel', () => {
     await userEvent.type(box, '{Enter}')
     await waitFor(() => expect(ask).toHaveBeenCalled())
     expect(ask.mock.calls[0][1]).toBe('find the harbour\nmore')
+  })
+
+  it('offers a persona picker only when the suite has personas, and asks as the one chosen', async () => {
+    vi.spyOn(assistantApi, 'createSession').mockResolvedValue({
+      id: 's1',
+      title: '',
+      created_at: '',
+      updated_at: '',
+    })
+    const ask = vi
+      .spyOn(assistantApi, 'ask')
+      .mockResolvedValue(turn({ status: 'queued' }))
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(turn({ status: 'queued' }))
+    await show(
+      READY,
+      [],
+      [{ id: 'p-arch', name: 'Archivist', description: 'Careful.', avatar: null }]
+    )
+    const picker = await screen.findByRole('combobox', { name: /persona/i })
+    await userEvent.selectOptions(picker, 'p-arch')
+    const box = await screen.findByRole('textbox', { name: /message/i })
+    await waitFor(() => expect(box).toBeEnabled())
+    await userEvent.type(box, 'Is this the original?{Enter}')
+    await waitFor(() => expect(ask).toHaveBeenCalled())
+    expect(ask.mock.calls[0][3]).toBe('p-arch')
+  })
+
+  it('has no picker when there are no personas', async () => {
+    await show(READY)
+    await screen.findByRole('textbox', { name: /message/i })
+    expect(screen.queryByRole('combobox', { name: /persona/i })).toBeNull()
   })
 })

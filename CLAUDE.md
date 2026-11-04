@@ -38,6 +38,11 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   proposal reaches the library, and only when a person presses Apply. A new tool that
   writes would break that, so make it a proposal kind instead. Every tool re-checks that
   the asset is the caller's: the model chooses the ids.
+  `web_search` is one of the looking tools: the suite runs the search (its own backend, else
+  DuckDuckGo) and credits it to the conversation, and what comes back is for the model to
+  read and cite, never a write. A **persona** is the suite's, chosen per turn and kept on the
+  turn row so a rerun after a restart is asked as the same one; the suite applies its prompt
+  and model, and this app only names it.
 - **The embedding width is `SUITE_EMBEDDING_DIMENSIONS` (512) and must not change under a
   populated library:** vectors of another width cannot be compared with the existing index.
 
