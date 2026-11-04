@@ -44,7 +44,7 @@ from app.models.job import EnrichmentJob
 from app.services import assets as asset_service
 from app.services import suggestions as suggestion_service
 from app.services import tags as tag_service
-from app.settings_store import load_deepgram_key
+from app.enrichment.transcribe import can_auto_transcribe
 from app.storage import StorageError, build_storage, capacity, thumb_key_for
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> ImportResul
         # decrypt counts as no key — the upload chain treats it the same way, so
         # captions are the only transcript this video would otherwise get.
         try:
-            want_captions = not load_deepgram_key(session, job.user_id)
+            want_captions = not can_auto_transcribe(session, job.user_id)
         except Exception:  # noqa: BLE001 - a bad setting must not cost the import
             logger.warning("Could not read the Deepgram key for %s", job.user_id, exc_info=True)
             want_captions = True

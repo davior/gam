@@ -31,6 +31,7 @@ from gecko_suite_client import (
     SuiteClient,
     SuiteEmbedder,
     SuiteError,
+    SuiteSpeech,
     SuiteUnavailable,
 )
 from gecko_suite_client import Image as SuiteImage
@@ -54,7 +55,7 @@ def enabled() -> bool:
     return settings.ai_backend == "suite"
 
 
-def client(user_id: str) -> SuiteClient:
+def client(user_id: str, *, timeout: Optional[httpx.Timeout] = None) -> SuiteClient:
     """A connection to the suite as GAM, acting for `user_id`.
 
     One per operation and closed after it: the credential names the user, so a client
@@ -66,6 +67,7 @@ def client(user_id: str) -> SuiteClient:
         app_secret=settings.suite_app_secret,
         on_behalf_of=user_id,
         transport=TRANSPORT,
+        **({"timeout": timeout} if timeout is not None else {}),
     )
 
 
@@ -156,6 +158,38 @@ ASSISTANT_TASK = "chat.assistant"
 
 def assistant_chat(connection: SuiteClient, subject: Optional[str]) -> SuiteChat:
     return SuiteChat(connection, task=ASSISTANT_TASK, app=APP, subject_ref=subject)
+
+
+# ─── speech ──────────────────────────────────────────────────────────────────
+
+# A readiness check sits on the upload path, so it gets seconds, not the minutes a
+# transcription may take.
+READINESS_TIMEOUT = httpx.Timeout(5.0, connect=3.0)
+# A recording is a long upload and Deepgram then holds the connection while it transcribes.
+TRANSCRIBE_TIMEOUT = httpx.Timeout(1900.0, connect=10.0, write=900.0, pool=10.0)
+
+
+def speech(user_id: str, *, timeout: Optional[httpx.Timeout] = None):
+    """(connection, SuiteSpeech) for one operation; close the connection after it."""
+    connection = client(user_id, timeout=timeout)
+    return connection, SuiteSpeech(connection, app=APP)
+
+
+def transcription_ready(user_id: str) -> bool:
+    """Whether the suite would find a Deepgram key for this person.
+
+    False for a suite that is down as well as for no key: this decides whether to queue
+    work on upload, and a red "suite unreachable" row after every upload is the thing the
+    key check exists to prevent. The library keeps working, and a person can press
+    Transcribe once the suite is back.
+    """
+    try:
+        connection, speech_client = speech(user_id, timeout=READINESS_TIMEOUT)
+        with closing(connection):
+            return speech_client.transcribe_ready()
+    except SuiteError as exc:
+        logger.info("Not checking transcription with Gecko Suite: %s", sentence(exc))
+        return False
 
 
 # ─── embeddings ──────────────────────────────────────────────────────────────
