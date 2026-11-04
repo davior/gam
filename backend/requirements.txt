@@ -50,4 +50,4 @@ yt-dlp[default,deno]==2026.8.19
 # suite's API change together, and a deployment must not pick up one without the other.
 # Installed from an archive URL rather than git+https because python:3.13-slim has no
 # git. Bump it when the suite's client does.
-gecko-suite-client @ https://github.com/davior/gecko-suite/archive/48f17f14883045d800a4b07b4d0c8e9cf28c12ce.tar.gz#subdirectory=client
+gecko-suite-client @ https://github.com/davior/gecko-suite/archive/b9e471c30b13282f3220464c3408c5e1223da846.tar.gz#subdirectory=client

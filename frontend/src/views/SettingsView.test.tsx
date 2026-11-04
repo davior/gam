@@ -730,4 +730,22 @@ describe('SettingsView and Gecko Suite', () => {
     // A key saved in a panel nothing reads would be wrong, not just redundant.
     expect(screen.queryByText(/no provider configured yet/i)).toBeNull()
   })
+
+  it('stops asking for a fal.ai key that nothing would read', async () => {
+    serveConfig('suite')
+    renderView()
+    expect(
+      await screen.findByText(/fal\.ai key kept in gecko suite/i)
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /manage the key/i })).toHaveAttribute(
+      'href',
+      'https://suite.example.test/providers'
+    )
+    expect(screen.queryByLabelText(/fal\.ai api key/i)).toBeNull()
+  })
+
+  it('still asks for the key when generation runs from this app', async () => {
+    renderView()
+    expect(await screen.findByLabelText(/fal\.ai api key/i)).toBeInTheDocument()
+  })
 })

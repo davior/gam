@@ -26,7 +26,7 @@ import { useSavedFlash } from '@/utils/useSavedFlash'
  * since it is what the generate forms offer; only an admin can change it, and the server
  * checks that again on every write — hiding the buttons is a courtesy, not the guard.
  */
-export default function GenerationSettingsPanel() {
+export default function GenerationSettingsPanel({ suiteUrl }: { suiteUrl?: string }) {
   const isAdmin = useAuthStore((s) => s.user?.is_admin ?? false)
 
   return (
@@ -38,10 +38,30 @@ export default function GenerationSettingsPanel() {
         </h2>
       </header>
 
-      <FalKey />
+      {/* On Gecko Suite the fal.ai key is the suite's, and a key saved here would never
+          be used. The catalogue below is still this app's: each endpoint's request
+          format stays here until the suite takes the catalogue over. */}
+      {suiteUrl ? <SuiteFalKey suiteUrl={suiteUrl} /> : <FalKey />}
       <DefaultModels />
       <Catalogue isAdmin={isAdmin} />
     </section>
+  )
+}
+
+function SuiteFalKey({ suiteUrl }: { suiteUrl: string }) {
+  return (
+    <p className="text-xs text-gray-600 dark:text-gray-400">
+      Generating images and video uses the fal.ai key kept in Gecko Suite, and what it
+      costs is counted there.{' '}
+      <a
+        href={`${suiteUrl.replace(/\/$/, '')}/providers`}
+        target="_blank"
+        rel="noreferrer noopener"
+        className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+      >
+        Manage the key
+      </a>
+    </p>
   )
 }
 

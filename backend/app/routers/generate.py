@@ -54,6 +54,7 @@ from app.schemas_generate import (
 )
 from app.schemas_jobs import ActivityJobRead
 from app.services.assets import generation_of
+from app import suite
 from app.settings_store import FAL_API_KEY, has_setting
 from app.storage import LocalStorage, StorageError, capacity
 
@@ -279,6 +280,10 @@ def delete_model(
 
 
 def _require_fal_key(session: Session, user_id: str) -> None:
+    # On the suite the key is the suite's, and it says so itself if there is none: the job
+    # fails with its sentence in the activity feed.
+    if suite.enabled():
+        return
     if not has_setting(session, user_id, FAL_API_KEY):
         raise _error(400, "fal_key_missing", "Add a fal.ai API key in Settings to generate")
 

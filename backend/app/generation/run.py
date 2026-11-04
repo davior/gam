@@ -42,6 +42,7 @@ from sqlmodel import Session, col, select
 
 from app.clock import utcnow
 from app.config import settings
+from app.generation import backend as fal_backend
 from app.generation import bases, fal, pricing
 from app.generation.download import download
 from app.generation.errors import FalUnavailable, GenerationError
@@ -54,7 +55,6 @@ from app.models.job import EnrichmentJob
 from app.models.usage import KIND_IMAGE, KIND_VIDEO
 from app.providers.base import ProviderError
 from app.services import assets as asset_service
-from app.settings_store import load_fal_key
 from app.storage import StorageError, build_storage, capacity
 from app.usage import events as usage_events
 
@@ -98,7 +98,8 @@ class _State:
     """The job's payload, decoded. Written back after every step that must survive."""
 
     request: GenerationRequest
-    queued: Optional[fal.QueuedRequest] = None
+    # fal's queue ids, or the suite's job id (generation/backend.py).
+    queued: Optional[Any] = None
     submitted_at: Optional[datetime] = None
     # What fal returned, trimmed to what the rest of the job reads. Kept so a restart
     # after the result was fetched does not depend on fal still serving it.
@@ -131,7 +132,7 @@ class _State:
             ingesting = None
         return cls(
             request=GenerationRequest.from_dict(data["request"]),
-            queued=fal.QueuedRequest.from_dict(data.get("fal_request")),
+            queued=fal_backend.handle_from_dict(data.get("fal_request")),
             submitted_at=submitted_at,
             result=data.get("result") if isinstance(data.get("result"), dict) else None,
             created_asset_ids=[i for i in created if isinstance(i, str)],
@@ -160,9 +161,7 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
     state = _State.load(job.payload)
     request = state.request
 
-    api_key = load_fal_key(session, job.user_id)
-    if not api_key:
-        raise GenerationError("No fal.ai API key is configured. Add one in Settings.")
+    backend = fal_backend.backend_for(session, job.user_id)
 
     if state.result is None:
         if state.queued is None:
@@ -173,7 +172,7 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
                 raise GenerationError(capacity.DISK_FULL_MESSAGE)
             body = _request_body(session, job, request, progress)
             progress(STAGE_SUBMITTING, 10, "")
-            state.queued = fal.submit(request.endpoint_id, body, api_key=api_key)
+            state.queued = backend.submit(request.endpoint_id, body, kind=request.kind)
             state.submitted_at = now()
             _save(session, job, state)
             logger.info("Generation %s submitted to fal.ai as %s", job.id, state.queued.request_id)
@@ -182,7 +181,7 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
                 "Generation %s resuming fal.ai request %s", job.id, state.queued.request_id
             )
 
-        fetched = _await_result(state, request, api_key, progress)
+        fetched = _await_result(state, request, backend, progress)
         state.result = _trim(fetched)
         _save(session, job, state)
 
@@ -199,11 +198,11 @@ def run(session: Session, job: EnrichmentJob, progress: Progress) -> GenerationR
         # here is resumed by `recover_pending`, and that run records it.
         session.rollback()
         saved = [a for a in (session.get(Asset, i) for i in state.created_asset_ids) if a]
-        _record_cost_once(session, job, state, saved, api_key)
+        _record_cost_once(session, job, state, saved, backend)
         raise
 
     progress(STAGE_COST, 97, "")
-    _record_cost_once(session, job, state, created, api_key)
+    _record_cost_once(session, job, state, created, backend)
 
     noun = "video" if request.kind == KIND_IMAGE_TO_VIDEO else "image"
     count = len(created)
@@ -256,7 +255,7 @@ def _base_uri(session: Session, storage, user_id: str, asset_id: str) -> str:
 
 
 def _await_result(
-    state: _State, request: GenerationRequest, api_key: str, progress: Progress
+    state: _State, request: GenerationRequest, backend: fal_backend.Backend, progress: Progress
 ) -> fal.QueueResult:
     queued = state.queued
     submitted_at = state.submitted_at or now()
@@ -268,14 +267,14 @@ def _await_result(
     try:
         while True:
             try:
-                current = fal.status(queued, api_key=api_key)
+                current = backend.status(queued)
                 if current.status == fal.STATUS_COMPLETED:
                     # A failed run is reported as COMPLETED too, with the reason beside
                     # it — checked before fetching a result that is not there.
                     if current.error:
                         raise GenerationError(f"fal.ai could not generate this: {current.error}")
                     progress(STAGE_GENERATING, 70, "Finished")
-                    return fal.result(queued, api_key=api_key)
+                    return backend.result(queued)
 
                 if current.status == fal.STATUS_IN_QUEUE:
                     stage, percent = STAGE_QUEUED, 15
@@ -296,12 +295,12 @@ def _await_result(
             progress(stage, percent, detail)
 
             if now() >= deadline:
-                fal.cancel(queued, api_key=api_key)
+                backend.cancel(queued)
                 raise GenerationError(f"fal.ai did not finish within {minutes} minutes")
 
             sleep(settings.generation_poll_seconds)
     except JobCancelled:
-        fal.cancel(queued, api_key=api_key)
+        backend.cancel(queued)
         raise
 
 
@@ -499,12 +498,17 @@ def _filename_for(name: str, path: Path) -> str:
 
 
 def _record_cost_once(
-    session: Session, job: EnrichmentJob, state: _State, created: list[Asset], api_key: str
+    session: Session, job: EnrichmentJob, state: _State, created: list[Asset],
+    backend: fal_backend.Backend,
 ) -> None:
     if state.usage_recorded:
         return
+    if backend.records_usage:
+        # The suite wrote this request's cost when it fetched the result, under GAM and
+        # this asset's job. A second row here would count it twice.
+        return
     try:
-        _record_cost(session, job, state, created, api_key)
+        _record_cost(session, job, state, created, backend.api_key)
     except Exception:  # noqa: BLE001 - accounting must not undo the work it measures
         # `usage_events.record` already holds this rule for the write; the price
         # lookup before it needs the same, or a pricing hiccup fails a generation
@@ -592,6 +596,7 @@ def cancel_remote(session: Session, job: EnrichmentJob) -> None:
         return
     if state.queued is None or state.result is not None:
         return
-    api_key = load_fal_key(session, job.user_id)
-    if api_key:
-        fal.cancel(state.queued, api_key=api_key)
+    try:
+        fal_backend.backend_for(session, job.user_id).cancel(state.queued)
+    except GenerationError:
+        pass  # no key or no suite to ask: nothing can be cancelled from here
