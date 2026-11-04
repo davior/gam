@@ -20,7 +20,13 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
 - **Background jobs have no user session**, so the suite is called as GAM, for the asset's
   owner, with `SUITE_APP_SECRET`. The app refuses to start in `suite` mode without it.
 - **The suite counts the spend**, so `record_completion` writes nothing in that mode.
-  Speech and image-generation usage is still GAM's own until the suite takes those (M3).
+  Image and video generation goes through the suite too (`generation/backend.py`): the suite
+  holds the fal.ai key, runs the queue and records the cost, so a generation writes no
+  `UsageEvent` here. Speech usage is still GAM's own until the suite takes speech (M3b).
+- **Generation's model catalogue stays in GAM.** Each fal endpoint's request format
+  (`GenerationModel`) and the request builder are this app's; the suite is a gateway for the
+  key, the queue and the bill, and takes the catalogue over later. The job persists the
+  suite's job id (never fal's URLs), so a restart resumes by id.
 - **A suite that is down must not stop the library.** `build_embedder` answers `None`,
   and search falls back to keywords; jobs fail with a sentence and retry.
 - **The assistant exists only in `suite` mode, and never writes.** Its tools look

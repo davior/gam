@@ -535,7 +535,7 @@ export default function SettingsView() {
       {!onSuite && <EmbeddingPanel />}
       <LibraryScanPanel />
       <SpeechPanel />
-      <GenerationSettingsPanel />
+      <GenerationSettingsPanel suiteUrl={onSuite ? config.suite_base_url : undefined} />
       <TagPanel />
     </div>
   )
