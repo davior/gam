@@ -9,11 +9,14 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
+from gecko_suite_client import SuiteError
 from sqlmodel import Session, col, delete, select
 
+from app import suite
 from app.clock import utcnow
 from app.enrichment import deepgram
 from app.enrichment.audio import AudioExtractionError, extract_audio
@@ -41,6 +44,38 @@ def can_transcribe(asset: Asset) -> bool:
     return asset.asset_type in TRANSCRIBABLE_TYPES and bool(asset.storage_key)
 
 
+def can_auto_transcribe(session: Session, user_id: str) -> bool:
+    """Whether a transcription started now would find a Deepgram key.
+
+    The one question the upload chain and the URL import both ask before doing work that
+    would otherwise fail. On the suite the key is the suite's, so it is asked there.
+    """
+    if suite.enabled():
+        return suite.transcription_ready(user_id)
+    return bool(load_deepgram_key(session, user_id))
+
+
+def _transcribe_on_suite(user_id: str, audio_path: Path, model: str, subject: str) -> deepgram.Transcript:
+    """The suite's transcript, as the same `Transcript` Deepgram's client returns, so
+    storing it is the code that already exists."""
+    try:
+        connection, speech = suite.speech(user_id, timeout=suite.TRANSCRIBE_TIMEOUT)
+        with closing(connection):
+            result = speech.transcribe(audio_path.read_bytes(), content_type="audio/flac",
+                                       model=model, subject_ref=subject)
+    except SuiteError as exc:
+        raise TranscriptionError(suite.sentence(exc)) from exc
+    except OSError as exc:
+        raise TranscriptionError(f"Could not read the audio file: {exc}") from exc
+    return deepgram.Transcript(
+        segments=[
+            deepgram.Segment(
+                text=s.text, start=s.start, end=s.end, speaker=s.speaker,
+                words=[deepgram.Word(text=w.text, start=w.start, end=w.end) for w in s.words])
+            for s in result.segments],
+        language=result.language, model=result.model)
+
+
 def run(session: Session, asset: Asset, progress: Progress) -> int:
     """Transcribe one asset. Returns how many segments were stored.
 
@@ -51,8 +86,9 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
     if not can_transcribe(asset):
         raise TranscriptionError("Only audio and video assets can be transcribed")
 
-    api_key = load_deepgram_key(session, asset.user_id)
-    if not api_key:
+    # On the suite the key is the suite's, and it says so itself if there is none.
+    api_key = None if suite.enabled() else load_deepgram_key(session, asset.user_id)
+    if not suite.enabled() and not api_key:
         raise TranscriptionError(
             "No Deepgram API key is configured. Add one in Settings to transcribe."
         )
@@ -73,26 +109,33 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
         size_mb = audio_path.stat().st_size / (1024 * 1024)
         progress("Transcribing", 25, f"{size_mb:.1f} MB of audio")
 
-        try:
-            transcript = deepgram.transcribe_file(audio_path, api_key, model=model)
-        except deepgram.DeepgramError as exc:
-            raise TranscriptionError(str(exc)) from exc
+        if suite.enabled():
+            transcript = _transcribe_on_suite(asset.user_id, audio_path, model,
+                                              f"gam:asset:{asset.id}")
+        else:
+            try:
+                transcript = deepgram.transcribe_file(audio_path, api_key, model=model)
+            except deepgram.DeepgramError as exc:
+                raise TranscriptionError(str(exc)) from exc
 
     # Recorded with no cost: Deepgram bills per minute and its rate is not in
     # `usage/pricing.py`, which covers LLM tokens only. Inventing a figure would be worse
     # than none — but omitting the *event* would make a library total that silently
     # excluded transcription read as complete spend, so the seconds are stored and the
     # readout says they are not costed.
-    usage_events.record(
-        session,
-        user_id=asset.user_id,
-        asset_id=asset.id,
-        kind=KIND_STT,
-        units=int(asset.duration_seconds or 0),
-        unit_type=UNIT_SECONDS,
-        provider="deepgram",
-        model=transcript.model or model,
-    )
+    if not suite.enabled():
+        # On the suite it has already written this call's seconds, under GAM and this
+        # asset. A second row here would count the transcription twice.
+        usage_events.record(
+            session,
+            user_id=asset.user_id,
+            asset_id=asset.id,
+            kind=KIND_STT,
+            units=int(asset.duration_seconds or 0),
+            unit_type=UNIT_SECONDS,
+            provider="deepgram",
+            model=transcript.model or model,
+        )
 
     # Checkpoint before writing: a cancel pressed during a long upstream call should
     # not still land a transcript afterwards.

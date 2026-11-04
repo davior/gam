@@ -307,10 +307,9 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
     import chain leads back through `app.enrichment.describe` to this one, and
     importing it at the top of this file would be a cycle.
     """
-    from app.enrichment.transcribe import can_transcribe
+    from app.enrichment.transcribe import can_auto_transcribe, can_transcribe
     from app.jobs import enrichment as enrichment_jobs
     from app.models.job import KIND_TRANSCRIBE
-    from app.settings_store import load_deepgram_key
 
     if not can_transcribe(asset):
         return
@@ -327,7 +326,7 @@ def _chain_transcription(session: Session, asset: Asset) -> None:
         return
 
     try:
-        if not load_deepgram_key(session, asset.user_id):
+        if not can_auto_transcribe(session, asset.user_id):
             logger.info(
                 "Not transcribing asset %s: no Deepgram key configured for this user",
                 asset.id,

@@ -22,7 +22,10 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
 - **The suite counts the spend**, so `record_completion` writes nothing in that mode.
   Image and video generation goes through the suite too (`generation/backend.py`): the suite
   holds the fal.ai key, runs the queue and records the cost, so a generation writes no
-  `UsageEvent` here. Speech usage is still GAM's own until the suite takes speech (M3b).
+  `UsageEvent` here. So does transcription (`enrichment/transcribe.py`): the audio goes to the
+  suite, which holds the Deepgram key and records the seconds. Whether a key exists is the
+  suite's answer (`can_auto_transcribe`), asked before the upload chain queues work and
+  treated as "no" when the suite is down, so an upload never leaves a red row behind.
 - **Generation's model catalogue stays in GAM.** Each fal endpoint's request format
   (`GenerationModel`) and the request builder are this app's; the suite is a gateway for the
   key, the queue and the bill, and takes the catalogue over later. The job persists the

@@ -20,7 +20,7 @@ import TagPanel from '@/components/TagPanel'
 import UsagePanel from '@/components/UsagePanel'
 import { useSavedFlash } from '@/utils/useSavedFlash'
 
-function SpeechPanel() {
+function SpeechPanel({ suiteUrl }: { suiteUrl?: string }) {
   const [settings, setSettings] = useState<SpeechSettings | null>(null)
   const [keyInput, setKeyInput] = useState('')
   const [saving, setSaving] = useState(false)
@@ -60,19 +60,36 @@ function SpeechPanel() {
         </h2>
       </header>
 
-      <p className="text-xs text-gray-600 dark:text-gray-400">
-        Transcription uses{' '}
-        <a
-          href="https://console.deepgram.com/"
-          target="_blank"
-          rel="noreferrer"
-          className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
-        >
-          Deepgram
-        </a>
-        . Your key is encrypted before it is stored and is never sent back to the browser
-        — this app makes the calls on your behalf.
-      </p>
+      {/* On Gecko Suite the Deepgram key is the suite's, and one saved here would never be
+          used. The model below is still sent with each transcription. */}
+      {suiteUrl ? (
+        <p className="text-xs text-gray-600 dark:text-gray-400">
+          Transcription uses the Deepgram key kept in Gecko Suite, and what it spends is
+          counted there.{' '}
+          <a
+            href={`${suiteUrl.replace(/\/$/, '')}/providers`}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+          >
+            Manage the Deepgram key
+          </a>
+        </p>
+      ) : (
+        <p className="text-xs text-gray-600 dark:text-gray-400">
+          Transcription uses{' '}
+          <a
+            href="https://console.deepgram.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+          >
+            Deepgram
+          </a>
+          . Your key is encrypted before it is stored and is never sent back to the
+          browser — this app makes the calls on your behalf.
+        </p>
+      )}
 
       {error && (
         <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
@@ -80,42 +97,46 @@ function SpeechPanel() {
         </p>
       )}
 
-      <div>
-        <label className="label" htmlFor="deepgram-key">
-          API key
-        </label>
-        <div className="flex gap-2">
-          <input
-            id="deepgram-key"
-            type="password"
-            className="input flex-1"
-            placeholder={
-              settings?.deepgram_key_configured ? 'A key is configured' : 'Paste your key'
-            }
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-            autoComplete="off"
-          />
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={!keyInput.trim() || saving}
-            onClick={() => save({ deepgram_api_key: keyInput })}
-            aria-label="Save Deepgram key"
-          >
-            Save
-          </button>
+      {!suiteUrl && (
+        <div>
+          <label className="label" htmlFor="deepgram-key">
+            API key
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="deepgram-key"
+              type="password"
+              className="input flex-1"
+              placeholder={
+                settings?.deepgram_key_configured
+                  ? 'A key is configured'
+                  : 'Paste your key'
+              }
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!keyInput.trim() || saving}
+              onClick={() => save({ deepgram_api_key: keyInput })}
+              aria-label="Save Deepgram key"
+            >
+              Save
+            </button>
+          </div>
+          {settings?.deepgram_key_configured && (
+            <button
+              type="button"
+              className="mt-1.5 text-xs text-red-600 hover:underline dark:text-red-400"
+              onClick={() => save({ deepgram_api_key: '' })}
+            >
+              Remove the stored key
+            </button>
+          )}
         </div>
-        {settings?.deepgram_key_configured && (
-          <button
-            type="button"
-            className="mt-1.5 text-xs text-red-600 hover:underline dark:text-red-400"
-            onClick={() => save({ deepgram_api_key: '' })}
-          >
-            Remove the stored key
-          </button>
-        )}
-      </div>
+      )}
 
       {settings && (
         <div>
@@ -534,7 +555,7 @@ export default function SettingsView() {
       <StoragePanel />
       {!onSuite && <EmbeddingPanel />}
       <LibraryScanPanel />
-      <SpeechPanel />
+      <SpeechPanel suiteUrl={onSuite ? config.suite_base_url : undefined} />
       <GenerationSettingsPanel suiteUrl={onSuite ? config.suite_base_url : undefined} />
       <TagPanel />
     </div>
