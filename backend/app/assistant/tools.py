@@ -69,6 +69,13 @@ SPECS: List[ToolSpec] = [
         "The person's existing tags, most used first. Look here before proposing a tag.",
         {"type": "object", "properties": {}}),
     ToolSpec(
+        "web_search",
+        "Search the web, for what the library cannot say: who someone is, when something "
+        "happened, what a term means. Returns titles, links and short passages. Use it to "
+        "inform a proposal or an answer, and say where a fact came from; it is not a way to "
+        "find the person's own assets (use search_assets).",
+        {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+    ToolSpec(
         "propose_changes",
         "Propose edits to one asset's name, description, summary or tags. Nothing is changed "
         "until the person applies the proposal. Call it once per asset; a second call for the "
@@ -94,7 +101,10 @@ SPECS: List[ToolSpec] = [
 ]
 
 # Tools that only look. The worker reports a step for the rest.
-READS = frozenset({"search_assets", "get_asset", "read_transcript", "list_tags"})
+READS = frozenset({"search_assets", "get_asset", "read_transcript", "list_tags", "web_search"})
+
+# What a web search may hand back to the model in one call. A page of results, not a crawl.
+MAX_WEB_CHARS = 6_000
 
 
 def _fail(message: str) -> tuple:
@@ -122,6 +132,9 @@ class Working:
         self._step = on_step
         # asset_id -> the proposal's entry for it, in the order they were first proposed.
         self.items: Dict[str, dict] = {}
+        # Set by the worker once it holds a connection to the suite: `query -> results`.
+        # Unset, the tool says so instead of failing.
+        self.search: Optional[Callable[[str], list]] = None
 
     # ─── dispatch ────────────────────────────────────────────────────────────
 
@@ -132,6 +145,7 @@ class Working:
             "get_asset": self.get_asset,
             "read_transcript": self.read_transcript,
             "list_tags": self.list_tags,
+            "web_search": self.web_search,
             "propose_changes": self.propose_changes,
             "propose_enrichment": self.propose_enrichment,
         }
@@ -226,6 +240,22 @@ class Working:
                 lines.append(line)
                 used += len(line) + 1
             return "\n".join(lines)
+
+    def web_search(self, args: dict) -> object:
+        query = _clean(args.get("query"))
+        if not query:
+            return _fail("Give a query to search the web for.")
+        if self.search is None:
+            return _fail("Web search is not available right now.")
+        self._step("search", f"Searching the web: {query!r}")
+        try:
+            results = self.search(query)
+        except Exception as exc:  # noqa: BLE001 - a failed search is information for the model
+            return _fail(f"The web search failed: {exc}")
+        from gecko_suite_client import format_results
+
+        text = format_results(results)
+        return text[:MAX_WEB_CHARS] + ("\n[cut off]" if len(text) > MAX_WEB_CHARS else "")
 
     def list_tags(self, args: dict) -> object:
         with self._session() as session:

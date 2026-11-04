@@ -152,12 +152,30 @@ def build_llm(user_id: str, task: str = DEFAULT_TASK,
 
 # ─── the assistant ───────────────────────────────────────────────────────────
 
+# `READINESS_TIMEOUT` is defined under "speech" below; both are short calls on a path a
+# person is waiting on.
+
 # The job the assistant's conversation names, so it can be given a model of its own.
 ASSISTANT_TASK = "chat.assistant"
 
 
-def assistant_chat(connection: SuiteClient, subject: Optional[str]) -> SuiteChat:
-    return SuiteChat(connection, task=ASSISTANT_TASK, app=APP, subject_ref=subject)
+def assistant_chat(connection: SuiteClient, subject: Optional[str],
+                   persona_id: Optional[str] = None) -> SuiteChat:
+    return SuiteChat(connection, task=ASSISTANT_TASK, app=APP, subject_ref=subject,
+                     persona_id=persona_id)
+
+
+def personas(user_id: str) -> list[dict]:
+    """The personas this person may ask the assistant as: the suite's, for GAM and for every
+    app. Empty for any reason at all (the suite down, none made): a picker with nothing in
+    it is not shown, and the assistant works without one."""
+    try:
+        with closing(client(user_id, timeout=READINESS_TIMEOUT)) as connection:
+            rows = connection.request("GET", "/api/v1/personas", params={"app": APP})
+    except SuiteError as exc:
+        logger.info("No personas from Gecko Suite: %s", sentence(exc))
+        return []
+    return rows if isinstance(rows, list) else []
 
 
 # ─── speech ──────────────────────────────────────────────────────────────────

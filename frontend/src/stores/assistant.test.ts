@@ -18,6 +18,7 @@ function turn(overrides: Partial<AssistantTurn> = {}): AssistantTurn {
     error: null,
     prompt: 'Tidy this',
     focus_asset_id: null,
+    persona_id: null,
     steps: [],
     reply: '',
     proposal: null,
@@ -43,6 +44,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.spyOn(assistantApi, 'status').mockResolvedValue(READY)
   vi.spyOn(assistantApi, 'listSessions').mockResolvedValue([])
+  vi.spyOn(assistantApi, 'personas').mockResolvedValue([])
   useAssistantStore.getState().reset()
 })
 
@@ -74,7 +76,7 @@ describe('assistant store', () => {
     await useAssistantStore.getState().send('  Tidy this  ')
 
     // The open asset goes with the message, so "this" means something.
-    expect(ask).toHaveBeenCalledWith('s1', 'Tidy this', 'a1')
+    expect(ask).toHaveBeenCalledWith('s1', 'Tidy this', 'a1', null)
     expect(useAssistantStore.getState().active?.turns[0].status).toBe('queued')
 
     await vi.advanceTimersByTimeAsync(1500)
@@ -163,5 +165,49 @@ describe('assistant store', () => {
     expect(apply).toHaveBeenCalledWith('t1', ['a1'])
     expect(useAssistantStore.getState().active?.turns[0].outcome).toBe('applied')
     expect(useAssistantStore.getState().applied?.[0].applied).toEqual(['name'])
+  })
+
+  it('asks as the chosen persona, and as none once it is cleared', async () => {
+    vi.spyOn(assistantApi, 'createSession').mockResolvedValue({
+      id: 's1',
+      title: '',
+      created_at: '',
+      updated_at: '',
+    })
+    const ask = vi.spyOn(assistantApi, 'ask').mockResolvedValue(turn())
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(turn({ status: 'done' }))
+    vi.spyOn(assistantApi, 'getSession').mockResolvedValue(
+      detail([turn({ status: 'done' })])
+    )
+
+    useAssistantStore.getState().setPersona('p-arch')
+    await useAssistantStore.getState().send('Is this original?')
+    expect(ask).toHaveBeenLastCalledWith('s1', 'Is this original?', undefined, 'p-arch')
+
+    useAssistantStore.getState().setPersona(null)
+    await vi.advanceTimersByTimeAsync(3000)
+    await useAssistantStore.getState().send('And now?')
+    expect(ask).toHaveBeenLastCalledWith('s1', 'And now?', undefined, null)
+  })
+
+  it('drops a chosen persona the suite no longer offers', async () => {
+    const persona = { id: 'p-arch', name: 'Archivist', description: '', avatar: null }
+    const list = vi.spyOn(assistantApi, 'personas').mockResolvedValue([persona])
+    useAssistantStore.getState().setPersona('p-arch')
+    await useAssistantStore.getState().load()
+    expect(useAssistantStore.getState().personaId).toBe('p-arch')
+
+    // Deleted in the suite since: sending it again would end every turn with an error.
+    list.mockResolvedValue([])
+    await useAssistantStore.getState().load()
+    expect(useAssistantStore.getState().personaId).toBeNull()
+  })
+
+  it('works without a picker when the personas cannot be fetched', async () => {
+    vi.spyOn(assistantApi, 'personas').mockRejectedValue(new Error('down'))
+    await useAssistantStore.getState().load()
+    expect(useAssistantStore.getState().personas).toEqual([])
+    expect(useAssistantStore.getState().status?.ready).toBe(true)
+    expect(useAssistantStore.getState().error).toBeNull()
   })
 })

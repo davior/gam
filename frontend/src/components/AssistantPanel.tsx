@@ -27,9 +27,20 @@ const STEP_LABEL: Record<string, string> = {
 }
 
 export default function AssistantPanel() {
-  const { status, sessions, active, focus, sending, error, applied } = useAssistantStore()
+  const {
+    status,
+    sessions,
+    personas,
+    personaId,
+    active,
+    focus,
+    sending,
+    error,
+    applied,
+  } = useAssistantStore()
   const send = useAssistantStore((s) => s.send)
   const stop = useAssistantStore((s) => s.stop)
+  const setPersona = useAssistantStore((s) => s.setPersona)
   const select = useAssistantStore((s) => s.select)
   const newChat = useAssistantStore((s) => s.newChat)
   const remove = useAssistantStore((s) => s.remove)
@@ -180,6 +191,22 @@ export default function AssistantPanel() {
           <p className="mb-2 truncate text-xs text-gray-500 dark:text-gray-400">
             About: <span className="font-medium">{focus.name}</span>
           </p>
+        )}
+        {personas.length > 0 && (
+          <select
+            aria-label="Persona"
+            className="input mb-2 w-full text-xs"
+            value={personaId ?? ''}
+            title={personas.find((p) => p.id === personaId)?.description || undefined}
+            onChange={(event) => setPersona(event.target.value || null)}
+          >
+            <option value="">Assistant (no persona)</option>
+            {personas.map((persona) => (
+              <option key={persona.id} value={persona.id}>
+                {persona.name}
+              </option>
+            ))}
+          </select>
         )}
         <div className="flex items-end gap-2">
           <textarea

@@ -46,6 +46,10 @@ class FakeSuite:
         self.headers: List[Dict[str, str]] = []
         self.default: Optional[dict] = model()
         self.down = False
+        self.searches: List[dict] = []
+        self.search_down = False
+        self.persona_queries: List[dict] = []
+        self.personas: List[dict] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.down:
@@ -56,6 +60,18 @@ class FakeSuite:
             if task == "embed.text":
                 return httpx.Response(200, json={"data": {"model": None}})
             return httpx.Response(200, json={"data": {"model": self.default}})
+        if request.url.path == "/api/v1/search/web":
+            body = json.loads(request.content)
+            self.searches.append(body)
+            if self.search_down:
+                return httpx.Response(502, json={"detail": {"code": "upstream_error", "message": "search is down"}})
+            return httpx.Response(200, json={"data": {"results": [
+                {"title": "Giordano, a profile", "url": "https://example.test/g",
+                 "snippet": "Born in 1950 in Naples."}]}})
+        if request.url.path == "/api/v1/personas":
+            self.persona_queries.append(dict(request.url.params))
+            return httpx.Response(200, json={"data": self.personas, "total": len(self.personas),
+                                             "limit": 0, "offset": 0})
         if request.url.path == "/api/v1/ai/chat":
             self.chats.append(json.loads(request.content))
             assert self.script, "the suite was asked more often than the script allows"
@@ -346,3 +362,117 @@ def test_deleting_a_conversation_removes_its_turns(library, session, fake_suite)
     assert library.delete(f"/api/assistant/sessions/{sid}").status_code == 204
     assert len(session.exec(select(AssistantTurn)).all()) == 0
     assert library.get(f"/api/assistant/sessions/{sid}").status_code == 404
+
+
+# ─── the web ─────────────────────────────────────────────────────────────────
+
+
+def test_the_assistant_can_search_the_web_and_that_changes_nothing(library, session, fake_suite):
+    asset = an_asset(library, session)
+    original = asset.name
+    fake_suite.script += [
+        reply("", ("web_search", {"query": "Giordano neuroweapons"})),
+        reply("He was born in Naples, per the web."),
+    ]
+    sid = new_session(library)
+    done = run(library, sid, "Who is Giordano?")
+
+    assert done["status"] == "done" and done["proposal"] is None
+    # Asked of the suite as GAM for the person, credited to this conversation.
+    (search,) = fake_suite.searches
+    assert search["query"] == "Giordano neuroweapons" and search["app"] == "gam"
+    assert search["subject_ref"] == f"gam:assistant:{sid}"
+    assert fake_suite.headers[-1].get("x-on-behalf-of") == TEST_USER
+    # The model was given the results to read, numbered so it can cite them.
+    result = [r for m in fake_suite.chats[1]["messages"] if m["role"] == "tool" for r in m["results"]][0]
+    assert result["is_error"] is False and "[1] Giordano, a profile" in result["content"]
+    assert "https://example.test/g" in result["content"]
+    assert any(s["kind"] == "search" and "web" in s["text"] for s in done["steps"])
+    # And it offered the tool, and said when to use it.
+    first = fake_suite.chats[0]
+    assert "web_search" in [t["name"] for t in first["tools"]]
+    assert "web_search" in first["system"][0]
+    session.refresh(asset)
+    assert asset.name == original
+
+
+def test_a_search_that_fails_is_something_for_the_model_to_read_not_a_failed_turn(
+        library, fake_suite):
+    fake_suite.search_down = True
+    fake_suite.script += [
+        reply("", ("web_search", {"query": "anything"})),
+        reply("I couldn't search the web just now."),
+    ]
+    done = run(library, new_session(library), "Look something up")
+    assert done["status"] == "done" and "couldn't search" in done["reply"]
+    result = [r for m in fake_suite.chats[1]["messages"] if m["role"] == "tool" for r in m["results"]][0]
+    assert result["is_error"] is True and "search failed" in result["content"]
+
+
+def test_an_empty_query_is_refused_without_asking_the_suite(library, fake_suite):
+    fake_suite.script += [reply("", ("web_search", {"query": "  "})), reply("Never mind.")]
+    run(library, new_session(library))
+    assert fake_suite.searches == []
+
+
+# ─── personas ────────────────────────────────────────────────────────────────
+
+PERSONAS = [
+    {"id": "p-arch", "name": "Archivist", "description": "Careful and literal.",
+     "avatar": None, "system_prompt": "SECRET PROMPT", "scope": "instance", "app": None,
+     "model_overrides": {}, "sort_order": 0, "writable": False},
+    {"id": "p-gam", "name": "Librarian", "description": "", "avatar": "https://example.test/a.png",
+     "system_prompt": "x", "scope": "user", "app": "gam", "model_overrides": {}, "sort_order": 1,
+     "writable": True},
+]
+
+
+def test_the_picker_lists_the_suites_personas_without_their_prompts(library, fake_suite):
+    fake_suite.personas = PERSONAS
+    res = library.get("/api/assistant/personas")
+    assert res.status_code == 200
+    assert [p["name"] for p in res.json()["data"]] == ["Archivist", "Librarian"]
+    # Only what a picker shows: the system prompt is the suite's to keep.
+    assert "SECRET PROMPT" not in res.text and "system_prompt" not in res.text
+    # Asked for GAM's, which the suite narrows to GAM's and everyone's.
+    assert fake_suite.persona_queries == [{"app": "gam"}]
+
+
+def test_no_personas_when_the_suite_has_none_or_is_down_or_not_in_use(library, fake_suite, monkeypatch):
+    assert library.get("/api/assistant/personas").json()["data"] == []
+    fake_suite.personas = PERSONAS
+    fake_suite.down = True
+    assert library.get("/api/assistant/personas").json()["data"] == []
+    fake_suite.down = False
+    monkeypatch.setattr(settings, "ai_backend", "local")
+    assert library.get("/api/assistant/personas").json()["data"] == []
+
+
+def test_a_turn_asked_as_a_persona_is_sent_to_the_suite_as_that_persona(library, fake_suite):
+    fake_suite.script += [reply("As the archivist: no."), reply("Still the archivist.")]
+    sid = new_session(library)
+    first = run(library, sid, "Is this the original?", persona_id="p-arch")
+    assert first["persona_id"] == "p-arch"
+    assert fake_suite.chats[0]["persona_id"] == "p-arch"
+    # Asked as another or none, the next turn is: a persona belongs to the turn.
+    second = run(library, sid, "And now?")
+    assert second["persona_id"] is None and "persona_id" not in fake_suite.chats[1]
+
+
+def test_a_persona_the_suite_refuses_ends_the_turn_with_its_sentence(library, fake_suite, monkeypatch):
+    def refuse(request):
+        return httpx.Response(404, json={"detail": {"code": "not_found", "message": "persona not found"}})
+
+    sid = new_session(library)
+    turn = ask(library, sid, "Hello", persona_id="gone")
+    original = fake_suite.handler
+
+    def handler(request):
+        if request.url.path == "/api/v1/ai/chat":
+            return refuse(request)
+        return original(request)
+
+    monkeypatch.setattr(suite, "TRANSPORT", httpx.MockTransport(handler))
+    worker._run(turn["id"])
+    done = library.get(f"/api/assistant/turns/{turn['id']}").json()["data"]
+    assert done["status"] == "error" and "persona not found" in done["error"]
