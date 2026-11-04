@@ -6,6 +6,7 @@ import { useAssistantStore } from '@/stores/assistant'
 import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
+import { useAppThemeStore } from '@/stores/appTheme'
 
 /**
  * Who is signed in.
@@ -82,6 +83,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     useActivityStore.getState().reset()
     // Conversations are personal, and a running turn's poll would keep asking as them.
     useAssistantStore.getState().reset()
+    // The theme this person wore must not dress the sign-in page for the next one.
+    useAppThemeStore.getState().reset()
     void redirectToLogin()
   },
 
