@@ -312,3 +312,16 @@ def test_a_lookalike_origin_does_not_pass(real_auth_library, monkeypatch):
     )
 
     assert response.status_code == 403
+
+
+def test_a_two_factor_challenge_is_not_a_session(client):
+    """Notes hands back a five-minute challenge after the password step of a 2FA sign-in,
+    signed with the shared secret and carrying the person's `sub`. It must not open GAM:
+    that would let the password alone past the second factor."""
+    challenge = jwt.encode(
+        {"sub": "notes-user-1", "twofa_pending": True, "method": "totp",
+         "exp": utcnow() + timedelta(minutes=5)},
+        settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    assert client.get("/api/me", headers={"Authorization": f"Bearer {challenge}"}).status_code == 401
+    client.cookies.set("gecko_session", challenge)
+    assert client.get("/api/me").status_code == 401

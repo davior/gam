@@ -229,6 +229,11 @@ def current_user(
     subject = payload.get("sub")
     if not subject:
         raise _unauthorized("Token carries no subject")
+    if payload.get("twofa_pending"):
+        # A two-factor challenge from Notes' (or the suite's) sign-in: proof that the
+        # password step passed, signed with the same secret and carrying the same `sub`.
+        # Accepted as a session, it would let a password alone past the second factor.
+        raise _unauthorized("This sign-in still needs its second step")
 
     return UserCtx(id=subject, username=payload.get("username") or "")
 
