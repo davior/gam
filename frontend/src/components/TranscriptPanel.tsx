@@ -29,18 +29,39 @@ export default function TranscriptPanel({ assetId, onSeek, currentTime }: Props)
   const [error, setError] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
 
+  // The transcription being watched. Kept outside state because `load` reads it and must
+  // not be rebuilt (and its polling restarted) each time the job changes.
+  const followed = useRef<ActivityJob | null>(null)
+
   const load = useCallback(async () => {
     try {
       const [fetched, jobs] = await Promise.all([
         transcriptsApi.get(assetId),
         activityApi.list({ active: true, asset_id: assetId }),
       ])
-      setTranscript(fetched)
       // Only this asset's *transcription*. `activityApi.list` returns active jobs of
       // every action for the asset, newest first, and transcription now queues an embed
       // job the moment it succeeds — so taking jobs[0] showed the embed job's progress
       // under the transcription heading and pointed Cancel at the wrong job.
-      setJob(jobs.find((j) => j.action === 'transcribe') ?? null)
+      let current = jobs.find((j) => j.action === 'transcribe') ?? null
+      if (!current && followed.current) {
+        // It ended since the last poll, so it left the *active* list. Read it by id:
+        // dropping it here is what made a failure show "error" and never say why.
+        current = await activityApi
+          .get(followed.current.kind, followed.current.id)
+          .catch(() => null)
+      } else if (!current && fetched.status === 'error') {
+        // Opened after it failed: the transcript row keeps only the status, the reason
+        // is on the job.
+        const recent = await activityApi.list({ asset_id: assetId, limit: 10 })
+        current = recent.find((j) => j.action === 'transcribe') ?? null
+      }
+      followed.current =
+        current && (current.status === 'queued' || current.status === 'processing')
+          ? current
+          : null
+      setTranscript(fetched)
+      setJob(current)
       setError(null)
     } catch (err) {
       setError(apiErrorMessage(err, 'Could not load the transcript'))
@@ -50,6 +71,7 @@ export default function TranscriptPanel({ assetId, onSeek, currentTime }: Props)
   }, [assetId])
 
   useEffect(() => {
+    followed.current = null
     setLoading(true)
     void load()
   }, [load])
@@ -68,7 +90,9 @@ export default function TranscriptPanel({ assetId, onSeek, currentTime }: Props)
   const start = async () => {
     setError(null)
     try {
-      setJob(await transcriptsApi.start(assetId))
+      const started = await transcriptsApi.start(assetId)
+      followed.current = started
+      setJob(started)
     } catch (err) {
       // The one failure worth its own wording: nothing is wrong with the file, the
       // user just has not added a key yet.

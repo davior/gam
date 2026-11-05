@@ -15,6 +15,7 @@ bytes, since a transcript is searched for years after the upload is forgotten.
 from __future__ import annotations
 
 import logging
+import math
 import subprocess
 from pathlib import Path
 
@@ -84,3 +85,64 @@ def extract_audio(source: Path, target: Path, duration_seconds: float | None = N
         raise AudioExtractionError("This file has no audio track to transcribe")
 
     return target
+
+
+def audio_duration(path: Path) -> float:
+    """Seconds of audio in `path`, read from the file rather than trusted from the asset:
+    the parts' offsets are built from this, and an offset that drifts puts every later
+    word at the wrong moment in the player."""
+    try:
+        completed = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=60,
+        )
+        return float((completed.stdout or "").strip())
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise AudioExtractionError("Could not read the length of the extracted audio") from exc
+
+
+def split_audio(source: Path, workdir: Path, part_seconds: float,
+                duration_seconds: float | None = None) -> list[tuple[Path, float]]:
+    """`source` as pieces of at most `part_seconds`, each with the second it starts at.
+
+    Why pieces at all: one request carrying a long recording outgrows every limit on the
+    way (the suite's 300 MB body cap and its nginx in front, read timeouts, Deepgram's own
+    processing time); a two-hour YouTube import is what found it. Pieces keep each request
+    small at any length. Audio no longer than one piece comes back as itself, untouched,
+    so a short file takes exactly the path it always did.
+
+    Each piece is cut on its own (`-ss` before `-i`, re-encoded, which ffmpeg seeks
+    sample-accurately) rather than with the segment muxer: the muxer's FLAC pieces carry
+    no length in their header and its cut points are only approximately where asked, and
+    the offsets here are what put every later word at the right moment in the player.
+    """
+    total = audio_duration(source)
+    if total <= part_seconds:
+        return [(source, 0.0)]
+
+    count = math.ceil(total / part_seconds)
+    per_part_timeout = timeout_for(part_seconds)
+    parts: list[tuple[Path, float]] = []
+    for index in range(count):
+        offset = index * part_seconds
+        target = workdir / f"part-{index:04d}.flac"
+        argv = [
+            "ffmpeg", "-nostdin", "-ss", f"{offset:.3f}", "-t", f"{part_seconds:.3f}",
+            "-i", str(source), "-c:a", "flac", "-y", str(target),
+        ]
+        try:
+            completed = subprocess.run(argv, capture_output=True, text=True, timeout=per_part_timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise AudioExtractionError("Splitting the audio took too long") from exc
+        except OSError as exc:
+            raise AudioExtractionError(f"Could not run ffmpeg: {exc}") from exc
+        if completed.returncode != 0:
+            logger.warning("Splitting audio failed: %s", (completed.stderr or "").strip()[-400:])
+            raise AudioExtractionError("Could not split the audio into parts")
+        # The last cut can land past the end by a rounding hair and come out empty.
+        if target.is_file() and target.stat().st_size > 0 and audio_duration(target) > 0:
+            parts.append((target, offset))
+    if not parts:
+        raise AudioExtractionError("Could not split the audio into parts")
+    return parts

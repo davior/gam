@@ -134,6 +134,31 @@ def test_a_recording_too_long_for_the_suite_says_so(library, session, speech):
         run_transcribe(session, asset, lambda *_a, **_k: None)
 
 
+@needs_ffmpeg
+def test_a_long_recording_goes_in_parts_and_comes_back_as_one_timeline(library, session, speech, monkeypatch):
+    """A two-hour import in one request was refused with a 413. In parts, each request is
+    small, and every word lands where it was said on the whole recording."""
+    import app.enrichment.transcribe as transcribe
+
+    monkeypatch.setattr(transcribe, "PART_SECONDS", 0.8)
+    asset = session.get(Asset, _upload_video(library)["id"])  # two seconds: three parts
+    reported = []
+    count = run_transcribe(session, asset, lambda stage, pct, detail="": reported.append(detail))
+
+    assert len(speech.posts()) == 3 and all(p.content[:4] == b"fLaC" for p in speech.posts())
+    assert count == 6 and "part 3 of 3" in reported
+
+    one = _suite_transcript()["segments"]
+    stored = session.exec(select(TranscriptSegment).where(TranscriptSegment.asset_id == asset.id)
+                          .order_by(TranscriptSegment.idx)).all()
+    # The first part as Deepgram said it; the second moved by where it starts (~0.8 s).
+    assert stored[0].start_time == pytest.approx(one[0]["start"])
+    assert stored[2].start_time == pytest.approx(one[0]["start"] + 0.8, abs=0.05)
+    assert json.loads(stored[2].words)[0]["s"] == pytest.approx(one[0]["words"][0]["start"] + 0.8, abs=0.05)
+    session.refresh(asset)
+    assert asset.transcript_status == "done"
+
+
 # ─── whether to transcribe on upload ─────────────────────────────────────────
 
 

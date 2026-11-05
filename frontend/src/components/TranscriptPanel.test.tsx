@@ -2,7 +2,12 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TranscriptPanel from '@/components/TranscriptPanel'
-import { activityApi, transcriptsApi, type Transcript } from '@/api/transcripts'
+import {
+  activityApi,
+  transcriptsApi,
+  type ActivityJob,
+  type Transcript,
+} from '@/api/transcripts'
 
 function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
   return {
@@ -32,6 +37,28 @@ function makeTranscript(overrides: Partial<Transcript> = {}): Transcript {
         words: [],
       },
     ],
+    ...overrides,
+  }
+}
+
+function makeJob(overrides: Partial<ActivityJob> = {}): ActivityJob {
+  return {
+    id: 'j1',
+    kind: 'enrichment',
+    action: 'transcribe',
+    status: 'queued',
+    stalled: false,
+    stage: '',
+    progress: 0,
+    detail: '',
+    asset_id: 'a1',
+    asset_name: 'Interview',
+    model: '',
+    result_asset_id: null,
+    result_asset_ids: [],
+    error_message: null,
+    created_at: '2026-11-05T07:00:00Z',
+    updated_at: '2026-11-05T07:00:00Z',
     ...overrides,
   }
 }
@@ -253,6 +280,56 @@ describe('TranscriptPanel', () => {
 
     expect(
       await screen.findByText(/No Deepgram API key is configured/)
+    ).toBeInTheDocument()
+  })
+
+  it('says why a transcription failed while it was being watched', async () => {
+    // A job that fails leaves the *active* list; the panel must still read its reason.
+    const job = makeJob({ status: 'processing', stage: 'Transcribing' })
+    vi.spyOn(transcriptsApi, 'get').mockResolvedValue(
+      makeTranscript({ segments: [], status: null, model: null })
+    )
+    vi.spyOn(transcriptsApi, 'start').mockResolvedValue(job)
+    const byId = vi.spyOn(activityApi, 'get').mockResolvedValue({
+      ...job,
+      status: 'error',
+      error_message: 'Gecko Suite refused the audio.',
+    })
+
+    render(<TranscriptPanel assetId="a1" onSeek={vi.fn()} currentTime={0} />)
+    await userEvent.click(await screen.findByRole('button', { name: /transcribe/i }))
+
+    expect(
+      await screen.findByText('Gecko Suite refused the audio.', {}, { timeout: 4000 })
+    ).toBeInTheDocument()
+    expect(byId).toHaveBeenCalledWith('enrichment', 'j1')
+  })
+
+  it('says why when opened after a transcription failed', async () => {
+    vi.spyOn(transcriptsApi, 'get').mockResolvedValue(
+      makeTranscript({ segments: [], status: 'error', model: null })
+    )
+    vi.spyOn(activityApi, 'list').mockImplementation(async (params) =>
+      params?.active
+        ? []
+        : [
+            makeJob({
+              id: 'e1',
+              action: 'embed',
+              status: 'error',
+              error_message: 'not this',
+            }),
+            makeJob({
+              status: 'error',
+              error_message: 'Could not split the audio into parts',
+            }),
+          ]
+    )
+
+    render(<TranscriptPanel assetId="a1" onSeek={vi.fn()} currentTime={0} />)
+
+    expect(
+      await screen.findByText('Could not split the audio into parts')
     ).toBeInTheDocument()
   })
 
