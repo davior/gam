@@ -166,6 +166,14 @@ describe('AssistantPanel', () => {
     expect(discard).toHaveBeenCalledWith('t1')
   })
 
+  it('draws a reply written in Markdown instead of showing its marks', async () => {
+    await show(READY, [turn({ reply: 'Two **files** match:\n\n- IMG_001\n- IMG_002' })])
+
+    expect((await screen.findByText('files')).tagName).toBe('STRONG')
+    expect(screen.getAllByRole('listitem')).toHaveLength(2)
+    expect(screen.queryByText(/\*\*/)).toBeNull()
+  })
+
   it('offers Stop, not Send, while a turn runs', async () => {
     await show(READY, [
       turn({ status: 'processing', reply: '', steps: [{ kind: 'search', text: 'x' }] }),

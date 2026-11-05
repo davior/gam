@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ExternalLink, Loader2, Plus, Send, Square, Trash2, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import Markdown from '@/components/Markdown'
 import {
   isActiveTurn,
   type ApplyResult,
@@ -293,11 +294,7 @@ function Turn({ turn, applied }: { turn: AssistantTurn; applied: ApplyResult[] |
       {turn.status === 'cancelled' && (
         <p className="text-gray-500 dark:text-gray-400">Stopped.</p>
       )}
-      {turn.status === 'done' && turn.reply && (
-        <p className="whitespace-pre-wrap text-gray-900 dark:text-gray-100">
-          {turn.reply}
-        </p>
-      )}
+      {turn.status === 'done' && turn.reply && <Markdown text={turn.reply} />}
       {turn.proposal && turn.outcome && (
         <ProposalCard turn={turn} items={turn.proposal.items} applied={applied} />
       )}
