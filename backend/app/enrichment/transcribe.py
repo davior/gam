@@ -19,7 +19,7 @@ from sqlmodel import Session, col, delete, select
 from app import suite
 from app.clock import utcnow
 from app.enrichment import deepgram
-from app.enrichment.audio import AudioExtractionError, extract_audio
+from app.enrichment.audio import AudioExtractionError, extract_audio, split_audio
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.models.asset import Asset
 from app.models.transcript import TranscriptSegment
@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 Progress = Callable[[str, int, str], None]
 
 TRANSCRIBABLE_TYPES = frozenset({TYPE_AUDIO, TYPE_VIDEO})
+
+# How much audio goes in one request. Half an hour of 16 kHz mono FLAC is a few tens of
+# MB, far inside the suite's 300 MB cap, and Deepgram answers it in a minute or two. A
+# whole long recording in one request is what failed with a 413 (`audio.split_audio`).
+PART_SECONDS = 30 * 60
 
 
 class TranscriptionError(Exception):
@@ -76,6 +81,27 @@ def _transcribe_on_suite(user_id: str, audio_path: Path, model: str, subject: st
         language=result.language, model=result.model)
 
 
+def join_parts(pieces: list[tuple[deepgram.Transcript, float]]) -> deepgram.Transcript:
+    """One transcript from the parts, each part's times moved by where it starts.
+
+    Speaker numbers are per request (Deepgram diarizes each part on its own), so speaker 0
+    in one part need not be speaker 0 in the next. They are kept as given rather than
+    guessed at: a wrong match would be worse than a renumbering a person can see.
+    """
+    if len(pieces) == 1 and pieces[0][1] == 0:
+        return pieces[0][0]
+    segments: list[deepgram.Segment] = []
+    for piece, offset in pieces:
+        for s in piece.segments:
+            segments.append(deepgram.Segment(
+                text=s.text, start=s.start + offset, end=s.end + offset, speaker=s.speaker,
+                words=[deepgram.Word(text=w.text, start=w.start + offset, end=w.end + offset)
+                       for w in s.words]))
+    language = next((p.language for p, _ in pieces if p.language), "")
+    model = next((p.model for p, _ in pieces if p.model), "")
+    return deepgram.Transcript(segments=segments, language=language, model=model)
+
+
 def run(session: Session, asset: Asset, progress: Progress) -> int:
     """Transcribe one asset. Returns how many segments were stored.
 
@@ -109,14 +135,28 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
         size_mb = audio_path.stat().st_size / (1024 * 1024)
         progress("Transcribing", 25, f"{size_mb:.1f} MB of audio")
 
-        if suite.enabled():
-            transcript = _transcribe_on_suite(asset.user_id, audio_path, model,
-                                              f"gam:asset:{asset.id}")
-        else:
-            try:
-                transcript = deepgram.transcribe_file(audio_path, api_key, model=model)
-            except deepgram.DeepgramError as exc:
-                raise TranscriptionError(str(exc)) from exc
+        try:
+            parts = split_audio(audio_path, Path(workdir), PART_SECONDS, asset.duration_seconds)
+        except AudioExtractionError as exc:
+            raise TranscriptionError(str(exc)) from exc
+
+        pieces: list[tuple[deepgram.Transcript, float]] = []
+        for index, (part_path, offset) in enumerate(parts):
+            if len(parts) > 1:
+                # Also the cancellation checkpoint: a cancel stops between parts rather
+                # than after the whole recording has been paid for.
+                progress("Transcribing", 25 + (60 * index) // len(parts),
+                         f"part {index + 1} of {len(parts)}")
+            if suite.enabled():
+                piece = _transcribe_on_suite(asset.user_id, part_path, model,
+                                             f"gam:asset:{asset.id}")
+            else:
+                try:
+                    piece = deepgram.transcribe_file(part_path, api_key, model=model)
+                except deepgram.DeepgramError as exc:
+                    raise TranscriptionError(str(exc)) from exc
+            pieces.append((piece, offset))
+        transcript = join_parts(pieces)
 
     # Recorded with no cost: Deepgram bills per minute and its rate is not in
     # `usage/pricing.py`, which covers LLM tokens only. Inventing a figure would be worse

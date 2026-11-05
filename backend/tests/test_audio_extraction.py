@@ -4,7 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from app.enrichment.audio import AudioExtractionError, extract_audio, timeout_for
+from app.enrichment.audio import (
+    AudioExtractionError,
+    audio_duration,
+    extract_audio,
+    split_audio,
+    timeout_for,
+)
 from app.media_tools import ffmpeg_available
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -118,3 +124,33 @@ def test_timeout_scales_with_length():
     assert timeout_for(5400) == 2700
     # Bounded, so a corrupt duration cannot hang a worker for a day.
     assert timeout_for(10_000_000) == 7200
+
+
+def _tone(path: Path, seconds: float) -> Path:
+    import subprocess
+
+    subprocess.run(["ffmpeg", "-y", "-nostdin", "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+                    "-ac", "1", "-ar", "16000", "-c:a", "flac", str(path)], check=True, capture_output=True)
+    return path
+
+
+@needs_ffmpeg
+def test_long_audio_is_split_into_parts_with_their_offsets(tmp_path):
+    """A long recording goes to the speech service in pieces; each piece's offset is
+    where its words belong on the whole recording's timeline."""
+    source = _tone(tmp_path / "audio.flac", 5)
+    parts_dir = tmp_path / "parts"
+    parts_dir.mkdir()
+
+    parts = split_audio(source, parts_dir, 2)
+
+    assert len(parts) == 3
+    offsets = [offset for _, offset in parts]
+    assert offsets[0] == 0 and offsets[1] == pytest.approx(2, abs=0.05) and offsets[2] == pytest.approx(4, abs=0.05)
+    assert sum(audio_duration(p) for p, _ in parts) == pytest.approx(5, abs=0.05)
+
+
+@needs_ffmpeg
+def test_short_audio_is_sent_as_it_is(tmp_path):
+    source = _tone(tmp_path / "audio.flac", 1.5)
+    assert split_audio(source, tmp_path, 2) == [(source, 0.0)]
