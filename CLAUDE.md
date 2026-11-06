@@ -35,7 +35,7 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
 - **The assistant exists only in `suite` mode, and never writes.** Its tools look
   (`search_assets`, `get_asset`, `read_transcript`, `list_clips`, `list_tags`,
   `list_playlists`) or record a proposal (`propose_changes`, `propose_enrichment`,
-  `propose_clip`, `propose_cut`, `propose_playlist`);
+  `propose_clip`, `propose_cut`, `propose_playlist`, `propose_note`);
   `assistant/apply.py` is the only place a proposal reaches the library, and only when a
   person presses Apply. A new tool that writes would break that, so make it a proposal
   kind instead. Every tool re-checks that the asset is the caller's: the model chooses
@@ -46,7 +46,10 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   guard, because several moments of one video is the ordinary request. Both are checked
   when proposed (`services/assets.cut_problem`) and again when applied. A proposal's
   `playlists` (each with its own `playlist_ref`) are made or appended through
-  `services/playlists` on Apply.
+  `services/playlists` on Apply. A proposal's `notes` are written into Gecko Notes on
+  Apply (`app/notes_client.py`, Notes' `POST /api/notes/from-markdown`) with the caller's
+  own token, which only the Apply request has; their `/a/<id>` links are made absolute
+  there. Notes failing is a skipped item with a sentence, never a failed Apply.
   `web_search` is one of the looking tools: the suite runs the search (its own backend, else
   DuckDuckGo) and credits it to the conversation, and what comes back is for the model to
   read and cite, never a write. A **persona** is the suite's, chosen per turn and kept on the

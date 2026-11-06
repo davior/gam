@@ -8,6 +8,7 @@ import {
   type AssistantTurn,
   type Proposal,
   type ProposalClip,
+  type ProposalNote,
   type ProposalPlaylist,
   type ProposalItem,
 } from '@/api/assistant'
@@ -396,14 +397,17 @@ function ProposalCard({
   const items = proposal.items
   const clips = proposal.clips ?? []
   const playlists = proposal.playlists ?? []
+  const notes = proposal.notes ?? []
   // Ticked off by id: an asset's id for its edits, a clip's own id for a clip or a cut,
-  // a playlist's ref for a playlist.
+  // a playlist's ref for a playlist, a note's for a note.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const chosen = items.filter((item) => !skipped.has(item.asset_id))
   const chosenClips = clips.filter((clip) => !skipped.has(clip.clip_id))
   const chosenPlaylists = playlists.filter((p) => !skipped.has(p.playlist_ref))
-  const total = items.length + clips.length + playlists.length
-  const picked = chosen.length + chosenClips.length + chosenPlaylists.length
+  const chosenNotes = notes.filter((n) => !skipped.has(n.note_ref))
+  const total = items.length + clips.length + playlists.length + notes.length
+  const picked =
+    chosen.length + chosenClips.length + chosenPlaylists.length + chosenNotes.length
   const pending = turn.outcome === 'pending'
 
   function toggle(id: string) {
@@ -482,6 +486,20 @@ function ProposalCard({
             }
           />
         ))}
+        {notes.map((note) => (
+          <NoteRow
+            key={note.note_ref}
+            note={note}
+            pending={pending}
+            included={!skipped.has(note.note_ref)}
+            onToggle={() => toggle(note.note_ref)}
+            result={
+              !pending && turn.outcome === 'applied'
+                ? applied?.find((r) => r.note_ref === note.note_ref)
+                : undefined
+            }
+          />
+        ))}
       </ul>
       {pending && (
         <div className="flex gap-2">
@@ -498,6 +516,7 @@ function ProposalCard({
                       assetIds: chosen.map((c) => c.asset_id),
                       clipIds: chosenClips.map((c) => c.clip_id),
                       playlistRefs: chosenPlaylists.map((p) => p.playlist_ref),
+                      noteRefs: chosenNotes.map((n) => n.note_ref),
                     }
               )
             }
@@ -666,6 +685,84 @@ function PlaylistRow({
               >
                 Open it
               </Link>
+              .{' '}
+            </>
+          )}
+          {result.skipped.join(' ')}
+        </p>
+      )}
+    </li>
+  )
+}
+
+/** A note for Gecko Notes: its title and folder, and the text, to read before applying. */
+function NoteRow({
+  note,
+  pending,
+  included,
+  onToggle,
+  result,
+}: {
+  note: ProposalNote
+  pending: boolean
+  included: boolean
+  onToggle: () => void
+  result?: ApplyResult
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        {pending && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${note.title}`}
+            checked={included}
+            onChange={onToggle}
+          />
+        )}
+        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+          New note
+        </span>
+        <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+          {note.title}
+        </span>
+      </div>
+      <p className="text-xs text-gray-600 dark:text-gray-400">
+        In Gecko Notes, folder “{note.folder || 'From GAM'}”
+        {note.asset_ids.length > 0 &&
+          `, linking ${note.asset_ids.length} ${note.asset_ids.length === 1 ? 'asset' : 'assets'}`}
+        .{' '}
+        <button
+          type="button"
+          className="text-blue-700 hover:underline dark:text-blue-300"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? 'Hide the text' : 'Read it'}
+        </button>
+      </p>
+      {open && (
+        <div
+          aria-label={`Text of ${note.title}`}
+          className="max-h-72 overflow-auto rounded border border-gray-200 p-2 text-xs dark:border-gray-700"
+        >
+          <Markdown text={note.markdown} />
+        </div>
+      )}
+      {result && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {result.note_url && (
+            <>
+              Note created.{' '}
+              <a
+                href={result.note_url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-blue-700 hover:underline dark:text-blue-300"
+              >
+                Open in Gecko Notes
+              </a>
               .{' '}
             </>
           )}

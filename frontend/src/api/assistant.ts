@@ -104,12 +104,26 @@ export interface ProposalPlaylist {
   items: ProposalPlaylistItem[]
 }
 
+/**
+ * A note for Gecko Notes, in Markdown. Written there, as the person, only on Apply: into
+ * "From GAM", or `folder` when they named one. Its `/a/<id>` links become links to GAM.
+ */
+export interface ProposalNote {
+  note_ref: string
+  title: string
+  markdown: string
+  folder: string | null
+  asset_ids: string[]
+}
+
 export interface Proposal {
   items: ProposalItem[]
   /** Absent on a turn from before clips could be proposed. */
   clips?: ProposalClip[]
   /** Absent on a turn from before playlists could be proposed. */
   playlists?: ProposalPlaylist[]
+  /** Absent on a turn from before notes could be proposed. */
+  notes?: ProposalNote[]
 }
 
 export type TurnStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
@@ -153,6 +167,9 @@ export interface ApplyResult {
    *  added to. */
   playlist_ref?: string | null
   playlist_id?: string | null
+  /** Set on the result of a note: which proposed one, and its page in Gecko Notes. */
+  note_ref?: string | null
+  note_url?: string | null
 }
 
 /**
@@ -163,6 +180,7 @@ export interface ApplySelection {
   assetIds?: string[]
   clipIds?: string[]
   playlistRefs?: string[]
+  noteRefs?: string[]
 }
 
 export function isActiveTurn(turn: Pick<AssistantTurn, 'status'>): boolean {
@@ -240,6 +258,7 @@ export const assistantApi = {
         asset_ids: selection?.assetIds ?? null,
         clip_ids: selection?.clipIds ?? null,
         playlist_refs: selection?.playlistRefs ?? null,
+        note_refs: selection?.noteRefs ?? null,
       })
       .then((r) => r.data.data)
   },

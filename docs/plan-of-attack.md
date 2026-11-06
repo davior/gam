@@ -91,6 +91,11 @@ suite rather than beside its own providers. Decisions, so they are not re-litiga
 - *Playlists* (`docs/playlists.md`): the assistant proposes one (`propose_playlist`) the way
   it proposes clips, and Apply makes it. Its moments are ranges kept in the playlist, not
   clips in the library, and the item shape is what Video Creator will read.
+- *Notes* in Gecko Notes (`propose_note`): the assistant drafts one in Markdown, the person
+  reads it on the card and applies it, and GAM sends it to Notes as them
+  ([davior/gecko-notes#224](https://github.com/davior/gecko-notes/pull/224) turns it into
+  blocks and files it under "From GAM"). The one write outside the library, and still only
+  on Apply.
 - *Not yet:* generating images from the panel (suite M3), and reading pictures the person
   attaches. Both are additions to the tool list, not changes to the shape.
 

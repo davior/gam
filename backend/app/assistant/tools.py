@@ -1,7 +1,7 @@
 """The assistant's tools: those that look, and those that propose.
 
 None of them writes to the library. `propose_changes`, `propose_enrichment`, `propose_clip`,
-`propose_cut` and `propose_playlist` add to a `Working` proposal that the turn ends with,
+`propose_cut`, `propose_playlist` and `propose_note` add to a `Working` proposal that the turn ends with,
 and that is all they do. The person applies
 it (routers/assistant.py) or throws it away, so a model that misreads a request costs a
 discarded card and not a rewritten library.
@@ -18,6 +18,7 @@ way the REST API does, so a guessed id learns nothing.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from contextlib import contextmanager
 from typing import Callable, ContextManager, Dict, Iterator, List, Optional
@@ -50,6 +51,14 @@ MAX_CLIPS = 25
 REASON_MAX = 300
 # Two proposals for the same moment (within this many seconds at both ends) are one.
 SAME_RANGE_SECONDS = 0.5
+# Notes for Gecko Notes one turn may propose, and how long one may be. A note is a
+# summary or a report, not an export of the library.
+MAX_NOTES = 3
+NOTE_MAX = 50_000
+# How a note links an asset: `[Name](/a/<id>)`. Made absolute at Apply, where GAM's own
+# address is known (assistant/apply.py).
+ASSET_LINK = re.compile(r"\]\(\s*/a/([A-Za-z0-9-]+)\s*\)")
+
 # Playlist items one turn may propose, across every playlist it proposes. Higher than
 # MAX_CLIPS because a playlist is the request for many moments, and each costs nothing
 # until applied; past this the model is told to stop and say what is left.
@@ -130,6 +139,19 @@ SPECS: List[ToolSpec] = [
                            "description": "One sentence on why it belongs, shown to the person."},
             }, "required": ["asset_id"]}},
         }, "required": ["items"]}),
+    ToolSpec(
+        "propose_note",
+        "Propose a new note in Gecko Notes, the person's notes app: a summary, a report or "
+        "a list written from what is in the library. Write it in Markdown (headings, lists, "
+        "tables). Link each asset it mentions as [Name](/a/<asset_id>), which becomes a link "
+        "to that asset in GAM. Nothing is written until the person applies the proposal; it "
+        "then lands in their \"From GAM\" folder, or the folder they asked for.",
+        {"type": "object", "properties": {
+            "title": {"type": "string"},
+            "markdown": {"type": "string", "description": "The whole note, in Markdown."},
+            "folder": {"type": "string",
+                       "description": "Only when the person names a folder for it."},
+        }, "required": ["title", "markdown"]}),
     ToolSpec(
         "propose_changes",
         "Propose edits to one asset's name, description, summary or tags. Nothing is changed "
@@ -258,6 +280,8 @@ class Working:
         # Playlists proposed this turn, each with its own `playlist_ref` so the person can
         # take one and not another.
         self.playlists: List[dict] = []
+        # Notes for Gecko Notes, each with its own `note_ref`.
+        self.notes: List[dict] = []
         # Set by the worker once it holds a connection to the suite: `query -> results`.
         # Unset, the tool says so instead of failing.
         self.search: Optional[Callable[[str], list]] = None
@@ -279,6 +303,7 @@ class Working:
             "propose_clip": self.propose_clip,
             "propose_cut": self.propose_cut,
             "propose_playlist": self.propose_playlist,
+            "propose_note": self.propose_note,
         }
 
     @contextmanager
@@ -622,6 +647,43 @@ class Working:
         return (f"Recorded {len(added)} item(s) {where} ({len(entry['items'])} in all)."
                 + (" Not added: " + " ".join(problems) if problems else ""))
 
+    def propose_note(self, args: dict) -> object:
+        """Record a note for Gecko Notes. Its asset links are checked now, while the model
+        can still fix them: a link to an id it guessed would land in the note as a link to
+        nothing, or to an asset it was never shown."""
+        title = _clean(args.get("title"))
+        markdown = args.get("markdown") if isinstance(args.get("markdown"), str) else ""
+        if not markdown.strip():
+            return _fail("Give the note's text, in Markdown.")
+        if not title:
+            return _fail("Give the note a title.")
+        if len(title) > NAME_MAX:
+            return _fail(f"The title is too long ({len(title)} of {NAME_MAX} characters).")
+        if len(markdown) > NOTE_MAX:
+            return _fail(f"The note is too long ({len(markdown)} of {NOTE_MAX} characters). "
+                         "Make it shorter, or split it into notes.")
+        held = next((n for n in self.notes if n["title"].lower() == title.lower()), None)
+        if held is None and len(self.notes) >= MAX_NOTES:
+            return _fail(f"That is {MAX_NOTES} notes already, the most one request may make.")
+        ids = set(ASSET_LINK.findall(markdown))
+        with self._session() as session:
+            unknown = sorted(i for i in ids if self._owned(session, i) is None)
+        if unknown:
+            return _fail("These linked ids are not assets in the library: "
+                         + ", ".join(unknown) + ". Use ids from search_assets.")
+        folder = _clean(args.get("folder"))
+        entry = {"note_ref": held["note_ref"] if held else str(uuid.uuid4()),
+                 "title": title, "markdown": markdown,
+                 "folder": folder[:120] if folder else None, "asset_ids": sorted(ids)}
+        if held:
+            # The same title again is a rewrite of that note, not a second one.
+            self.notes[self.notes.index(held)] = entry
+        else:
+            self.notes.append(entry)
+        self._step("propose", f"Proposing a note in Gecko Notes: {title}")
+        return (f"Recorded the note {title!r} ({len(markdown)} characters, "
+                f"{len(ids)} linked asset(s)).")
+
     def _playlist_entry(self, existing, name: Optional[str], description: Optional[str]) -> dict:
         for held in self.playlists:
             if existing is not None and held["playlist_id"] == existing.id:
@@ -690,9 +752,10 @@ class Working:
         items = [i for i in self.items.values()
                  if any(i.get(f) for f in ("name", "description", "summary", "add_tags",
                                            "remove_tags", "enrich"))]
-        if not (items or self.clips or self.playlists):
+        if not (items or self.clips or self.playlists or self.notes):
             return None
-        return {"items": items, "clips": list(self.clips), "playlists": list(self.playlists)}
+        return {"items": items, "clips": list(self.clips), "playlists": list(self.playlists),
+                "notes": list(self.notes)}
 
     def proposal_json(self) -> Optional[str]:
         proposal = self.proposal()

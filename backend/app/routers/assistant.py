@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlmodel import Session, col, delete, func, select
 
@@ -89,12 +89,14 @@ class TurnCreate(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    # Apply only these assets' entries, these clips and cuts, and these playlists. All
+    # Apply only these assets' entries, these clips and cuts, these playlists and these
+    # notes. All
     # absent: all of it. Any present: each restricts its own kind, and a kind left out is
     # not applied (see `apply_service.apply`).
     asset_ids: Optional[List[str]] = None
     clip_ids: Optional[List[str]] = None
     playlist_refs: Optional[List[str]] = None
+    note_refs: Optional[List[str]] = None
 
 
 class ItemResult(BaseModel):
@@ -111,6 +113,9 @@ class ItemResult(BaseModel):
     # added to.
     playlist_ref: Optional[str] = None
     playlist_id: Optional[str] = None
+    # Set on the result of a note: which proposed one, and where it is in Gecko Notes.
+    note_ref: Optional[str] = None
+    note_url: Optional[str] = None
 
 
 def _turn_read(row: AssistantTurn) -> TurnRead:
@@ -302,6 +307,25 @@ def cancel_turn(turn_id: str, user: CurrentUser,
     return DataResponse(data=_turn_read(turn))
 
 
+def _caller_token(request: Request) -> Optional[str]:
+    """The caller's own token, as `current_user` read it, for Gecko Notes to verify in
+    turn. Only a note needs it, and only here: a turn runs as GAM, with none."""
+    header = request.headers.get("authorization") or ""
+    if header.startswith("Bearer "):
+        return header[7:].strip() or None
+    return (request.cookies.get("gecko_session") or "").strip() or None
+
+
+def _origin(request: Request) -> str:
+    """GAM's address as the person reaches it, for links to assets in a note. The page's
+    own origin when the browser sent one (in development the API is on another port from
+    the pages), else this request's, which the proxy headers make the public one."""
+    origin = request.headers.get("origin")
+    if origin and origin.startswith(("http://", "https://")):
+        return origin.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
 def _pending(turn: AssistantTurn) -> dict:
     proposal = apply_service.decode(turn.proposal)
     if proposal is None or turn.outcome != "pending":
@@ -312,7 +336,7 @@ def _pending(turn: AssistantTurn) -> dict:
 
 
 @router.post("/turns/{turn_id}/apply", response_model=DataResponse[List[ItemResult]])
-def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
+def apply_turn(turn_id: str, user: CurrentUser, request: Request, body: ApplyBody = ApplyBody(),
                session: Session = Depends(get_session)) -> DataResponse[List[ItemResult]]:
     """Make the proposed changes (all of them, or those for `asset_ids`, `clip_ids` and
     `playlist_refs`).
@@ -329,7 +353,8 @@ def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
     session.add(turn)
     session.commit()
     results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids,
-                                  body.playlist_refs)
+                                  body.playlist_refs, body.note_refs,
+                                  token=_caller_token(request), origin=_origin(request))
     return DataResponse(data=[ItemResult(**r) for r in results])
 
 
