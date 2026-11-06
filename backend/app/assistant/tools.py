@@ -1,8 +1,8 @@
 """The assistant's tools: those that look, and those that propose.
 
-None of them writes to the library. `propose_changes`, `propose_enrichment`, `propose_clip`
-and `propose_cut` add to a `Working` proposal that the turn ends with, and that is all they
-do. The person applies
+None of them writes to the library. `propose_changes`, `propose_enrichment`, `propose_clip`,
+`propose_cut` and `propose_playlist` add to a `Working` proposal that the turn ends with,
+and that is all they do. The person applies
 it (routers/assistant.py) or throws it away, so a model that misreads a request costs a
 discarded card and not a rewritten library.
 
@@ -34,6 +34,7 @@ from app.models.asset import Asset
 from app.models.tag import Tag
 from app.models.transcript import TranscriptSegment
 from app.services import assets as asset_service
+from app.services import playlists as playlist_service
 from app.services import search as search_service
 from app.services import tags as tag_service
 
@@ -49,6 +50,10 @@ MAX_CLIPS = 25
 REASON_MAX = 300
 # Two proposals for the same moment (within this many seconds at both ends) are one.
 SAME_RANGE_SECONDS = 0.5
+# Playlist items one turn may propose, across every playlist it proposes. Higher than
+# MAX_CLIPS because a playlist is the request for many moments, and each costs nothing
+# until applied; past this the model is told to stop and say what is left.
+MAX_PLAYLIST_ITEMS = 60
 
 SPECS: List[ToolSpec] = [
     ToolSpec(
@@ -96,6 +101,35 @@ SPECS: List[ToolSpec] = [
         "inform a proposal or an answer, and say where a fact came from; it is not a way to "
         "find the person's own assets (use search_assets).",
         {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}),
+    ToolSpec(
+        "list_playlists",
+        "The person's playlists, with their ids and how many items each holds. Look here when "
+        "asked to add to a playlist that already exists.",
+        {"type": "object", "properties": {}}),
+    ToolSpec(
+        "propose_playlist",
+        "Propose a playlist: a named, ordered list of videos, audio, images and moments of "
+        "them, played one after another. Each item is an asset, whole or with a range in "
+        "seconds (taken from the transcript, starting at the beginning of a sentence and "
+        "ending at the end of one). The moments live in the playlist; no clips are made. "
+        "Give playlist_id to add to an existing playlist (from list_playlists), otherwise "
+        "a name for a new one. Call again with the same name or playlist_id to add more "
+        "items. Nothing is made until the person applies the proposal.",
+        {"type": "object", "properties": {
+            "name": {"type": "string", "description": "The new playlist's name."},
+            "playlist_id": {"type": "string",
+                            "description": "An existing playlist to add to, instead of a new one."},
+            "description": {"type": "string", "description": "One sentence on what it is."},
+            "items": {"type": "array", "items": {"type": "object", "properties": {
+                "asset_id": {"type": "string"},
+                "start_seconds": {"type": "number",
+                                  "description": "Omit both times for the whole asset."},
+                "end_seconds": {"type": "number"},
+                "label": {"type": "string", "description": "A short plain name for this moment."},
+                "reason": {"type": "string",
+                           "description": "One sentence on why it belongs, shown to the person."},
+            }, "required": ["asset_id"]}},
+        }, "required": ["items"]}),
     ToolSpec(
         "propose_changes",
         "Propose edits to one asset's name, description, summary or tags. Nothing is changed "
@@ -154,7 +188,7 @@ SPECS: List[ToolSpec] = [
 
 # Tools that only look. The worker reports a step for the rest.
 READS = frozenset({"search_assets", "get_asset", "read_transcript", "list_clips", "list_tags",
-                   "web_search"})
+                   "list_playlists", "web_search"})
 
 # What a web search may hand back to the model in one call. A page of results, not a crawl.
 MAX_WEB_CHARS = 6_000
@@ -221,6 +255,9 @@ class Working:
         # Clips and cuts proposed this turn, in order. Each has its own `clip_id`, since
         # several can be proposed from one asset and the person may take only some.
         self.clips: List[dict] = []
+        # Playlists proposed this turn, each with its own `playlist_ref` so the person can
+        # take one and not another.
+        self.playlists: List[dict] = []
         # Set by the worker once it holds a connection to the suite: `query -> results`.
         # Unset, the tool says so instead of failing.
         self.search: Optional[Callable[[str], list]] = None
@@ -235,11 +272,13 @@ class Working:
             "read_transcript": self.read_transcript,
             "list_clips": self.list_clips,
             "list_tags": self.list_tags,
+            "list_playlists": self.list_playlists,
             "web_search": self.web_search,
             "propose_changes": self.propose_changes,
             "propose_enrichment": self.propose_enrichment,
             "propose_clip": self.propose_clip,
             "propose_cut": self.propose_cut,
+            "propose_playlist": self.propose_playlist,
         }
 
     @contextmanager
@@ -384,6 +423,19 @@ class Working:
         rows = sorted(rows, key=lambda t: (-counts.get(t.id, 0), t.name.lower()))[:200]
         return "\n".join(f"{t.name} ({counts.get(t.id, 0)})" for t in rows)
 
+    def list_playlists(self, args: dict) -> object:
+        from app.models.playlist import Playlist
+
+        with self._session() as session:
+            rows = session.exec(select(Playlist).where(Playlist.user_id == self.user_id)
+                                .order_by(col(Playlist.updated_at).desc()).limit(100)).all()
+            if not rows:
+                return "There are no playlists yet."
+            summaries = playlist_service.summaries(session, rows)
+            self._step("read", "Looking at the playlists")
+            return "\n".join(f"- {p.id} | {p.name} | {summaries[p.id]['count']} item(s)"
+                             for p in rows)
+
     # ─── proposing ───────────────────────────────────────────────────────────
 
     def propose_changes(self, args: dict) -> object:
@@ -496,6 +548,111 @@ class Working:
         return (f"Recorded {what}: {entry['asset_name']} {_precise(start)}–{_precise(end)}"
                 + (f", called {name!r}." if name else "."))
 
+    def propose_playlist(self, args: dict) -> object:
+        """Record a playlist, or more items for one already proposed this turn.
+
+        Items are checked one by one and the good ones kept: a model that got one range
+        wrong out of twelve should hear which, and fix or drop it, without redoing the
+        other eleven. Every item goes through `playlists.resolve`, the rule a person's own
+        additions meet, and apply checks again.
+        """
+        raw_items = args.get("items")
+        if not isinstance(raw_items, list) or not raw_items:
+            return _fail("Give at least one item.")
+        name = _clean(args.get("name"))
+        if name and len(name) > NAME_MAX:
+            return _fail(f"The name is too long ({len(name)} of {NAME_MAX} characters).")
+        target_id = _clean(args.get("playlist_id"))
+
+        with self._session() as session:
+            existing = None
+            if target_id:
+                existing = playlist_service.owned(session, self.user_id, target_id)
+                if existing is None:
+                    return _fail("No such playlist. Use an id from list_playlists, or give a "
+                                 "name for a new one.")
+            elif not name:
+                return _fail("Give a name for the new playlist, or the playlist_id of one to add to.")
+            entry = self._playlist_entry(existing, name, _clean(args.get("description")))
+
+            used = sum(len(p["items"]) for p in self.playlists)
+            added, problems = [], []
+            for index, raw in enumerate(raw_items, start=1):
+                if not isinstance(raw, dict):
+                    problems.append(f"item {index}: not an object.")
+                    continue
+                if used + len(added) >= MAX_PLAYLIST_ITEMS:
+                    problems.append(f"item {index} and after: that is {MAX_PLAYLIST_ITEMS} items "
+                                    "already, the most one request may propose. Say what is left.")
+                    break
+                start, end = raw.get("start_seconds"), raw.get("end_seconds")
+                start = _seconds(start) if start is not None else None
+                end = _seconds(end) if end is not None else None
+                if (raw.get("start_seconds") is not None and start is None) or \
+                        (raw.get("end_seconds") is not None and end is None):
+                    problems.append(f"item {index}: give the times as numbers of seconds.")
+                    continue
+                try:
+                    resolved = playlist_service.resolve(session, self.user_id, raw.get("asset_id"),
+                                                        start, end)
+                except playlist_service.PlaylistProblem as exc:
+                    problems.append(f"item {index}: {exc.message}")
+                    continue
+                if self._already_listed(entry, resolved):
+                    problems.append(f"item {index}: already in this playlist.")
+                    continue
+                label = _clean(raw.get("label"))
+                reason = _clean(raw.get("reason"))
+                item = {
+                    "asset_id": resolved.asset.id, "asset_name": resolved.asset.name,
+                    "asset_type": resolved.asset.asset_type,
+                    "in_point": resolved.in_point, "out_point": resolved.out_point,
+                    "label": label[:playlist_service.LABEL_MAX] if label else None,
+                    "reason": reason[:REASON_MAX] if reason else None,
+                }
+                entry["items"].append(item)
+                added.append(item)
+
+            if added and entry not in self.playlists:
+                self.playlists.append(entry)
+        if not added:
+            return _fail("Nothing was added. " + " ".join(problems))
+        where = f"added to {entry['name']}" if entry["playlist_id"] else f"in new playlist {entry['name']!r}"
+        self._step("propose", f"Proposing {len(added)} item(s) {where}")
+        return (f"Recorded {len(added)} item(s) {where} ({len(entry['items'])} in all)."
+                + (" Not added: " + " ".join(problems) if problems else ""))
+
+    def _playlist_entry(self, existing, name: Optional[str], description: Optional[str]) -> dict:
+        for held in self.playlists:
+            if existing is not None and held["playlist_id"] == existing.id:
+                return held
+            if existing is None and held["playlist_id"] is None and name \
+                    and held["name"].lower() == name.lower():
+                if description and not held.get("description"):
+                    held["description"] = description
+                return held
+        return {
+            "playlist_ref": str(uuid.uuid4()),
+            "playlist_id": existing.id if existing is not None else None,
+            "name": existing.name if existing is not None else name,
+            "description": None if existing is not None else description,
+            "items": [],
+        }
+
+    @staticmethod
+    def _already_listed(entry: dict, resolved) -> bool:
+        for held in entry["items"]:
+            if held["asset_id"] != resolved.asset.id:
+                continue
+            if held["in_point"] is None or resolved.in_point is None:
+                if held["in_point"] is None and resolved.in_point is None:
+                    return True
+                continue
+            if (abs(held["in_point"] - resolved.in_point) < SAME_RANGE_SECONDS
+                    and abs(held["out_point"] - resolved.out_point) < SAME_RANGE_SECONDS):
+                return True
+        return False
+
     # ─── the result ──────────────────────────────────────────────────────────
 
     def _entry(self, asset: Asset, tags: List[str]) -> dict:
@@ -533,9 +690,9 @@ class Working:
         items = [i for i in self.items.values()
                  if any(i.get(f) for f in ("name", "description", "summary", "add_tags",
                                            "remove_tags", "enrich"))]
-        if not (items or self.clips):
+        if not (items or self.clips or self.playlists):
             return None
-        return {"items": items, "clips": list(self.clips)}
+        return {"items": items, "clips": list(self.clips), "playlists": list(self.playlists)}
 
     def proposal_json(self) -> Optional[str]:
         proposal = self.proposal()

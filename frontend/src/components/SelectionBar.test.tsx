@@ -6,14 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SelectionBar from '@/components/SelectionBar'
 import { enrichmentApi } from '@/api/enrichment'
 import { generateApi } from '@/api/generate'
+import { playlistsApi } from '@/api/playlists'
 import { tagsApi } from '@/api/tags'
 import { useActivityStore } from '@/stores/activity'
 import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
+import { usePlaylistStore } from '@/stores/playlists'
 import { useTagStore } from '@/stores/tags'
 import type { Asset } from '@/api/assets'
 import type { ActivityJob } from '@/api/transcripts'
-import { noAttribution } from '@/test-fixtures'
+import { makePlaylist, noAttribution } from '@/test-fixtures'
 
 function asset(id: string): Asset {
   return {
@@ -286,5 +288,37 @@ describe('SelectionBar generation (M8)', () => {
       .getAllByRole('listitem')
       .map((item) => item.textContent)
     expect(bases).toEqual(['Base 1Picked first', 'Base 2Grid first'])
+  })
+
+  it('adds the selection to a new playlist, leaving out what cannot play', async () => {
+    usePlaylistStore.getState().reset()
+    vi.spyOn(playlistsApi, 'list').mockResolvedValue([])
+    const create = vi
+      .spyOn(playlistsApi, 'create')
+      .mockResolvedValue(makePlaylist([], { id: 'p9', name: 'Crisis' }))
+    const doc = { ...asset('d1'), asset_type: 'document' as const }
+    render(
+      <MemoryRouter>
+        <SelectionBar
+          selected={new Set(['a2', 'd1', 'a1'])}
+          assets={[asset('a1'), asset('a2'), doc]}
+          onSelectAll={() => {}}
+          onClear={() => {}}
+        />
+      </MemoryRouter>
+    )
+    expect(screen.getByText(/1 of the selection can't be played/i)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /add to playlist/i }))
+    await userEvent.type(await screen.findByLabelText(/new playlist name/i), 'Crisis')
+    await userEvent.click(screen.getByRole('button', { name: /^add 2$/i }))
+    // In the order they were picked.
+    expect(create).toHaveBeenCalledWith('Crisis', [
+      { asset_id: 'a2' },
+      { asset_id: 'a1' },
+    ])
+    expect(await screen.findByRole('link', { name: 'Crisis' })).toHaveAttribute(
+      'href',
+      '/playlists/p9'
+    )
   })
 })

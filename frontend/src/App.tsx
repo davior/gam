@@ -4,6 +4,8 @@ import AppShell from '@/components/AppShell'
 import RequireAuth from '@/components/RequireAuth'
 import AssetView from '@/views/AssetView'
 import LibraryView from '@/views/LibraryView'
+import PlaylistView from '@/views/PlaylistView'
+import PlaylistsView from '@/views/PlaylistsView'
 import SearchView from '@/views/SearchView'
 import SettingsView from '@/views/SettingsView'
 import { loadConfig } from '@/api/config'
@@ -100,6 +102,26 @@ export default function App() {
             <RequireAuth>
               <AppShell>
                 <AssetView />
+              </AppShell>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/playlists"
+          element={
+            <RequireAuth>
+              <AppShell>
+                <PlaylistsView />
+              </AppShell>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/playlists/:id"
+          element={
+            <RequireAuth>
+              <AppShell>
+                <PlaylistView />
               </AppShell>
             </RequireAuth>
           }

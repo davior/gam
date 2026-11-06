@@ -15,6 +15,7 @@ from app.models.document import DocumentPage
 from app.models.embedding import Embedding
 from app.models.generation import GenerationModel
 from app.models.job import EnrichmentJob
+from app.models.playlist import Playlist, PlaylistItem
 from app.models.provider import AIProvider
 from app.models.setting import UserSetting
 from app.models.suggestion import Suggestion
@@ -35,6 +36,8 @@ __all__ = [
     "Embedding",
     "EnrichmentJob",
     "GenerationModel",
+    "Playlist",
+    "PlaylistItem",
     "Suggestion",
     "Tag",
     "TagCategory",

@@ -88,6 +88,9 @@ suite rather than beside its own providers. Decisions, so they are not re-litiga
   without the `tools` capability is refused with a sentence saying where to change it.
 - *Local mode says so.* The local providers answer single prompts; the assistant needs tool
   calls, and this app keeps no second code path for them. Not adding one is the point.
+- *Playlists* (`docs/playlists.md`): the assistant proposes one (`propose_playlist`) the way
+  it proposes clips, and Apply makes it. Its moments are ranges kept in the playlist, not
+  clips in the library, and the item shape is what Video Creator will read.
 - *Not yet:* generating images from the panel (suite M3), and reading pictures the person
   attaches. Both are additions to the tool list, not changes to the shape.
 

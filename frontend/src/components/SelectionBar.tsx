@@ -17,6 +17,7 @@ import { canBeBase } from '@/api/generate'
 import { isActive, useActivityStore } from '@/stores/activity'
 import type { Asset } from '@/api/assets'
 import type { Tag } from '@/api/tags'
+import AddToPlaylist from '@/components/AddToPlaylist'
 import GenerateForm from '@/components/GenerateForm'
 import TagInput from '@/components/TagInput'
 import { useLibraryStore } from '@/stores/library'
@@ -99,6 +100,11 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
   // generate from something other than what is highlighted.
   const generatable = picked.length === ids.length && picked.every(canBeBase)
   const [generating, setGenerating] = useState(false)
+  // A document has nothing to play, so a playlist leaves it out.
+  const playable = useMemo(
+    () => picked.filter((a) => ['video', 'audio', 'image'].includes(a.asset_type)),
+    [picked]
+  )
 
   /** Tags present on at least one selected asset, with how many carry each. */
   const onSelection = useMemo(() => {
@@ -250,6 +256,19 @@ export default function SelectionBar({ selected, assets, onSelectAll, onClear }:
         )}
         {bulkError && (
           <p className="text-xs text-red-700 dark:text-red-400">{bulkError}</p>
+        )}
+      </div>
+
+      <div className="border-t border-blue-200 pt-2 dark:border-blue-900">
+        <AddToPlaylist
+          items={playable.map((a) => ({ asset_id: a.id }))}
+          emptyHint="Only video, audio and images can go in a playlist."
+        />
+        {playable.length > 0 && playable.length < ids.length && (
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            {ids.length - playable.length} of the selection can't be played and will be
+            left out.
+          </p>
         )}
       </div>
 

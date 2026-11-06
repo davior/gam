@@ -89,15 +89,17 @@ class TurnCreate(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    # Apply only these assets' entries, and only these clips and cuts. Both absent: all
-    # of it. Either present: each restricts its own kind, and a kind left out is not
-    # applied (see `apply_service.apply`).
+    # Apply only these assets' entries, these clips and cuts, and these playlists. All
+    # absent: all of it. Any present: each restricts its own kind, and a kind left out is
+    # not applied (see `apply_service.apply`).
     asset_ids: Optional[List[str]] = None
     clip_ids: Optional[List[str]] = None
+    playlist_refs: Optional[List[str]] = None
 
 
 class ItemResult(BaseModel):
-    asset_id: str
+    # None on a playlist's result, which is about no one asset.
+    asset_id: Optional[str] = None
     asset_name: str
     applied: List[str]
     skipped: List[str]
@@ -105,6 +107,10 @@ class ItemResult(BaseModel):
     # live clip, `created_asset_id` is the clip; a cut is made by a job and has none yet.
     clip_id: Optional[str] = None
     created_asset_id: Optional[str] = None
+    # Set on the result of a playlist: which proposed one, and the playlist it made or
+    # added to.
+    playlist_ref: Optional[str] = None
+    playlist_id: Optional[str] = None
 
 
 def _turn_read(row: AssistantTurn) -> TurnRead:
@@ -308,7 +314,8 @@ def _pending(turn: AssistantTurn) -> dict:
 @router.post("/turns/{turn_id}/apply", response_model=DataResponse[List[ItemResult]])
 def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
                session: Session = Depends(get_session)) -> DataResponse[List[ItemResult]]:
-    """Make the proposed changes (all of them, or those for `asset_ids` and `clip_ids`).
+    """Make the proposed changes (all of them, or those for `asset_ids`, `clip_ids` and
+    `playlist_refs`).
 
     Applying twice would repeat a rename over an edit made in between, so the proposal is
     marked applied before anything is written and a second request is refused. A failure
@@ -321,7 +328,8 @@ def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
     turn.updated_at = utcnow()
     session.add(turn)
     session.commit()
-    results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids)
+    results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids,
+                                  body.playlist_refs)
     return DataResponse(data=[ItemResult(**r) for r in results])
 
 

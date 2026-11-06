@@ -452,6 +452,11 @@ def _delete_dependents(session: Session, asset_id: str) -> None:
     session.exec(delete(DocumentPage).where(col(DocumentPage.asset_id) == asset_id))
     # A foreign key, like the tag join. Their files are unlinked by `delete_asset`.
     session.exec(delete(AssetVersion).where(col(AssetVersion.asset_id) == asset_id))
+    # A foreign key too. The playlist loses the item and keeps the rest. Imported here
+    # because services/playlists imports this module for `cut_problem`.
+    from app.services import playlists
+
+    playlists.delete_for_assets(session, [asset_id])
 
 
 def still_referenced(session: Session, user_id: str, key: str) -> bool:

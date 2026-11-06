@@ -149,7 +149,11 @@ describe('AssistantPanel', () => {
       within(card).getByRole('checkbox', { name: /include img_002/i })
     )
     await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 2/i }))
-    expect(apply).toHaveBeenCalledWith('t1', { assetIds: ['a1'], clipIds: [] })
+    expect(apply).toHaveBeenCalledWith('t1', {
+      assetIds: ['a1'],
+      clipIds: [],
+      playlistRefs: [],
+    })
   })
 
   it('shows a clip and a cut with their range and reason, and applies the ones ticked', async () => {
@@ -201,7 +205,130 @@ describe('AssistantPanel', () => {
       within(card).getByRole('checkbox', { name: /include clip of interview/i })
     )
     await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 2/i }))
-    expect(apply).toHaveBeenCalledWith('t1', { assetIds: [], clipIds: ['k1'] })
+    expect(apply).toHaveBeenCalledWith('t1', {
+      assetIds: [],
+      clipIds: ['k1'],
+      playlistRefs: [],
+    })
+  })
+
+  it('shows a proposed playlist with each moment, and applies only the playlists ticked', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([])
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(turn())
+    await show(READY, [
+      turn({
+        outcome: 'pending',
+        proposal: {
+          items: [],
+          clips: [],
+          playlists: [
+            {
+              playlist_ref: 'p1',
+              playlist_id: null,
+              name: 'The crisis',
+              description: 'Everyone on 2008.',
+              items: [
+                {
+                  asset_id: 'v1',
+                  asset_name: 'Interview',
+                  asset_type: 'video',
+                  in_point: 62,
+                  out_point: 101,
+                  label: 'On the bailout',
+                  reason: 'Explains the bailout.',
+                },
+                {
+                  asset_id: 'v2',
+                  asset_name: 'Panel',
+                  asset_type: 'video',
+                  in_point: null,
+                  out_point: null,
+                  label: null,
+                  reason: null,
+                },
+              ],
+            },
+            {
+              playlist_ref: 'p2',
+              playlist_id: 'existing',
+              name: 'Mine',
+              items: [
+                {
+                  asset_id: 'v2',
+                  asset_name: 'Panel',
+                  asset_type: 'video',
+                  in_point: null,
+                  out_point: null,
+                  label: null,
+                  reason: null,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ])
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(within(card).getByText('New playlist')).toBeInTheDocument()
+    expect(within(card).getByText('Add to playlist')).toBeInTheDocument()
+    expect(within(card).getByText('On the bailout')).toBeInTheDocument()
+    expect(within(card).getByText(/1:02–1:41/)).toBeInTheDocument()
+    expect(within(card).getByText('Explains the bailout.')).toBeInTheDocument()
+    expect(within(card).getByText('2 items')).toBeInTheDocument()
+
+    await userEvent.click(within(card).getByRole('checkbox', { name: /include mine/i }))
+    await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 2/i }))
+    expect(apply).toHaveBeenCalledWith('t1', {
+      assetIds: [],
+      clipIds: [],
+      playlistRefs: ['p1'],
+    })
+  })
+
+  it('links to the playlist that was made once applied', async () => {
+    vi.spyOn(assistantApi, 'apply').mockResolvedValue([
+      {
+        asset_id: null,
+        asset_name: 'The crisis',
+        applied: ['playlist made', '1 item(s)'],
+        skipped: ['Gone: No such asset.'],
+        playlist_ref: 'p1',
+        playlist_id: 'made-1',
+      },
+    ])
+    const proposal = {
+      items: [],
+      playlists: [
+        {
+          playlist_ref: 'p1',
+          playlist_id: null,
+          name: 'The crisis',
+          items: [
+            {
+              asset_id: 'v1',
+              asset_name: 'Interview',
+              asset_type: 'video',
+              in_point: 1,
+              out_point: 2,
+              label: null,
+              reason: null,
+            },
+          ],
+        },
+      ],
+    }
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(
+      turn({ outcome: 'applied', proposal })
+    )
+    await show(READY, [turn({ outcome: 'pending', proposal })])
+    await userEvent.click(await screen.findByRole('button', { name: /apply all/i }))
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(await within(card).findByText(/Playlist made\./)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open it' })).toHaveAttribute(
+      'href',
+      '/playlists/made-1'
+    )
+    expect(within(card).getByText(/Gone: No such asset\./)).toBeInTheDocument()
   })
 
   it('applies everything with no selection when nothing is unticked', async () => {

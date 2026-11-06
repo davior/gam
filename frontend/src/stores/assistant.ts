@@ -12,6 +12,7 @@ import {
 } from '@/api/assistant'
 import { apiErrorMessage } from '@/api/client'
 import { useLibraryStore } from '@/stores/library'
+import { usePlaylistStore } from '@/stores/playlists'
 import { useTagStore } from '@/stores/tags'
 
 /**
@@ -263,6 +264,10 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
         // The library on screen and the tag vocabulary are now behind what was written.
         void useLibraryStore.getState().load()
         useTagStore.getState().reset()
+        // A playlist it made or added to, perhaps the one open on the page beside it.
+        const playlists = usePlaylistStore.getState()
+        if (playlists.loaded) void playlists.load()
+        void playlists.refresh()
       } catch (error) {
         if (mine !== epoch) return
         set({ error: apiErrorMessage(error, 'Could not apply that') })

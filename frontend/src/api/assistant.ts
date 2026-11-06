@@ -81,10 +81,35 @@ export interface ProposalClip {
   reason: string | null
 }
 
+/** One moment (or whole asset) of a proposed playlist. Both points null: the whole asset. */
+export interface ProposalPlaylistItem {
+  asset_id: string
+  asset_name: string
+  asset_type: string
+  in_point: number | null
+  out_point: number | null
+  label: string | null
+  reason: string | null
+}
+
+/**
+ * A playlist the assistant proposes: a new one (`playlist_id` null) or more items for one
+ * the person has. Its moments are ranges kept in the playlist; no clips are made.
+ */
+export interface ProposalPlaylist {
+  playlist_ref: string
+  playlist_id: string | null
+  name: string
+  description?: string | null
+  items: ProposalPlaylistItem[]
+}
+
 export interface Proposal {
   items: ProposalItem[]
   /** Absent on a turn from before clips could be proposed. */
   clips?: ProposalClip[]
+  /** Absent on a turn from before playlists could be proposed. */
+  playlists?: ProposalPlaylist[]
 }
 
 export type TurnStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
@@ -115,7 +140,8 @@ export interface AssistantSessionDetail extends AssistantSession {
 }
 
 export interface ApplyResult {
-  asset_id: string
+  /** Null on a playlist's result, which is about no one asset. */
+  asset_id: string | null
   asset_name: string
   applied: string[]
   skipped: string[]
@@ -123,15 +149,20 @@ export interface ApplyResult {
   clip_id?: string | null
   /** The clip that was made. A cut has none yet: a job makes it. */
   created_asset_id?: string | null
+  /** Set on the result of a playlist: which proposed one, and the playlist it made or
+   *  added to. */
+  playlist_ref?: string | null
+  playlist_id?: string | null
 }
 
 /**
- * What to apply. Neither list: everything. Either: each restricts its own kind, and a kind
- * left out is not applied.
+ * What to apply. No list: everything. Any: each restricts its own kind, and a kind left
+ * out is not applied.
  */
 export interface ApplySelection {
   assetIds?: string[]
   clipIds?: string[]
+  playlistRefs?: string[]
 }
 
 export function isActiveTurn(turn: Pick<AssistantTurn, 'status'>): boolean {
@@ -208,6 +239,7 @@ export const assistantApi = {
       .post<DataResponse<ApplyResult[]>>(`/assistant/turns/${id}/apply`, {
         asset_ids: selection?.assetIds ?? null,
         clip_ids: selection?.clipIds ?? null,
+        playlist_refs: selection?.playlistRefs ?? null,
       })
       .then((r) => r.data.data)
   },

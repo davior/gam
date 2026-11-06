@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { LogOut, Moon, Search, Settings, Sparkles, Sun } from 'lucide-react'
+import { ListVideo, LogOut, Moon, Search, Settings, Sparkles, Sun } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { currentConfig, loadConfig } from '@/api/config'
 import ActivityIndicator from '@/components/ActivityIndicator'
@@ -84,6 +84,14 @@ export default function AppShell({ children }: Props) {
             )}
             <Link to="/search" className="btn btn-ghost p-2" aria-label="Search">
               <Search className="h-4 w-4" />
+            </Link>
+            <Link
+              to="/playlists"
+              className="btn btn-ghost p-2"
+              aria-label="Playlists"
+              title="Playlists"
+            >
+              <ListVideo className="h-4 w-4" />
             </Link>
             {/* Not on an archive: it proposes changes, and an archive refuses them. */}
             {!readOnly && (
