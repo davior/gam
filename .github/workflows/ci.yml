@@ -44,16 +44,33 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
 
       # Media probing, thumbnails and clip extraction all shell out to it, and
-      # /api/health reports whether it is present. Conditional because the runner
-      # image may already ship it and `apt-get update` is not free.
+      # /api/health reports whether it is present.
+      #
+      # The runners' Ubuntu mirror stalls often enough to time this job out before a test
+      # runs (87 packages, some at 30 s each). So the downloaded .debs are kept in the
+      # Actions cache and apt is pointed at them: after one good run only the package
+      # index comes from the mirror. Retries and a step timeout make a stall that still
+      # happens fail here, with a reason, instead of using up the whole job.
+      - name: Cache ffmpeg packages
+        uses: actions/cache@v4
+        with:
+          path: ~/apt-archives
+          key: apt-ffmpeg-${{ runner.os }}-${{ runner.arch }}-v1
+
       - name: Ensure ffmpeg is available
+        timeout-minutes: 6
         run: |
           if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
             echo "ffmpeg already present: $(ffmpeg -version | head -1)"
-          else
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg
+            exit 0
           fi
+          mkdir -p ~/apt-archives/partial
+          apt_opts="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Dir::Cache::Archives=$HOME/apt-archives"
+          sudo apt-get $apt_opts update
+          sudo apt-get $apt_opts install -y --no-install-recommends ffmpeg
+          # The cache action runs as the runner user; apt left these owned by root.
+          sudo chown -R "$USER" ~/apt-archives
+          rm -rf ~/apt-archives/partial ~/apt-archives/lock
 
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
