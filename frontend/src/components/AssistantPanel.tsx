@@ -6,11 +6,14 @@ import {
   isActiveTurn,
   type ApplyResult,
   type AssistantTurn,
+  type Proposal,
+  type ProposalClip,
   type ProposalItem,
 } from '@/api/assistant'
 import { currentConfig, loadConfig } from '@/api/config'
 import { suiteSpeechApi, type DictationReadiness } from '@/api/suiteSpeech'
 import { useDictation } from '@/hooks/useDictation'
+import { formatDuration } from '@/utils/format'
 import { useAssistantStore } from '@/stores/assistant'
 
 /**
@@ -372,7 +375,7 @@ function Turn({ turn, applied }: { turn: AssistantTurn; applied: ApplyResult[] |
       )}
       {turn.status === 'done' && turn.reply && <Markdown text={turn.reply} />}
       {turn.proposal && turn.outcome && (
-        <ProposalCard turn={turn} items={turn.proposal.items} applied={applied} />
+        <ProposalCard turn={turn} proposal={turn.proposal} applied={applied} />
       )}
     </section>
   )
@@ -380,17 +383,23 @@ function Turn({ turn, applied }: { turn: AssistantTurn; applied: ApplyResult[] |
 
 function ProposalCard({
   turn,
-  items,
+  proposal,
   applied,
 }: {
   turn: AssistantTurn
-  items: ProposalItem[]
+  proposal: Proposal
   applied: ApplyResult[] | null
 }) {
   const apply = useAssistantStore((s) => s.apply)
   const discard = useAssistantStore((s) => s.discard)
+  const items = proposal.items
+  const clips = proposal.clips ?? []
+  // Ticked off by id: an asset's id for its edits, a clip's own id for a clip or a cut.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const chosen = items.filter((item) => !skipped.has(item.asset_id))
+  const chosenClips = clips.filter((clip) => !skipped.has(clip.clip_id))
+  const total = items.length + clips.length
+  const picked = chosen.length + chosenClips.length
   const pending = turn.outcome === 'pending'
 
   function toggle(id: string) {
@@ -435,9 +444,25 @@ function ProposalCard({
             </div>
             <Changes item={item} />
             {!pending && turn.outcome === 'applied' && (
-              <Outcome result={applied?.find((r) => r.asset_id === item.asset_id)} />
+              <Outcome
+                result={applied?.find((r) => !r.clip_id && r.asset_id === item.asset_id)}
+              />
             )}
           </li>
+        ))}
+        {clips.map((clip) => (
+          <ClipRow
+            key={clip.clip_id}
+            clip={clip}
+            pending={pending}
+            included={!skipped.has(clip.clip_id)}
+            onToggle={() => toggle(clip.clip_id)}
+            result={
+              !pending && turn.outcome === 'applied'
+                ? applied?.find((r) => r.clip_id === clip.clip_id)
+                : undefined
+            }
+          />
         ))}
       </ul>
       {pending && (
@@ -445,18 +470,20 @@ function ProposalCard({
           <button
             type="button"
             className="btn btn-primary px-3 py-1"
-            disabled={chosen.length === 0}
+            disabled={picked === 0}
             onClick={() =>
               void apply(
                 turn.id,
-                chosen.length === items.length ? undefined : chosen.map((c) => c.asset_id)
+                picked === total
+                  ? undefined
+                  : {
+                      assetIds: chosen.map((c) => c.asset_id),
+                      clipIds: chosenClips.map((c) => c.clip_id),
+                    }
               )
             }
           >
-            Apply{' '}
-            {chosen.length === items.length
-              ? 'all'
-              : `${chosen.length} of ${items.length}`}
+            Apply {picked === total ? 'all' : `${picked} of ${total}`}
           </button>
           <button
             type="button"
@@ -468,6 +495,81 @@ function ProposalCard({
         </div>
       )}
     </div>
+  )
+}
+
+/** One clip or cut: what it is, where it comes from, and why this stretch. */
+function ClipRow({
+  clip,
+  pending,
+  included,
+  onToggle,
+  result,
+}: {
+  clip: ProposalClip
+  pending: boolean
+  included: boolean
+  onToggle: () => void
+  result?: ApplyResult
+}) {
+  const title = clip.name || `Clip of ${clip.asset_name}`
+  const length = Math.round(clip.out_point - clip.in_point)
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        {pending && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${title}`}
+            checked={included}
+            onChange={onToggle}
+          />
+        )}
+        <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-blue-800 dark:bg-blue-900/40 dark:text-blue-200">
+          {clip.kind === 'cut' ? 'New video' : 'Clip'}
+        </span>
+        <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+          {title}
+        </span>
+      </div>
+      <p className="text-xs text-gray-600 dark:text-gray-400">
+        From{' '}
+        <Link
+          to={`/a/${clip.asset_id}`}
+          className="text-blue-700 hover:underline dark:text-blue-300"
+        >
+          {clip.asset_name}
+        </Link>
+        , {formatDuration(clip.in_point)}–{formatDuration(clip.out_point)} ({length}{' '}
+        {length === 1 ? 'second' : 'seconds'})
+      </p>
+      {clip.reason && (
+        <p className="text-xs italic text-gray-600 dark:text-gray-400">{clip.reason}</p>
+      )}
+      {result && <ClipOutcome result={result} />}
+    </li>
+  )
+}
+
+function ClipOutcome({ result }: { result: ApplyResult }) {
+  return (
+    <p className="text-xs text-gray-500 dark:text-gray-400">
+      {result.applied.includes('clip made') && result.created_asset_id && (
+        <>
+          Clip made.{' '}
+          <Link
+            to={`/a/${result.created_asset_id}`}
+            className="text-blue-700 hover:underline dark:text-blue-300"
+          >
+            Open it
+          </Link>
+          .{' '}
+        </>
+      )}
+      {result.applied.includes('cut queued') &&
+        'Cut queued. The new video appears in the library when it has been made (see Background activity). '}
+      {result.skipped.join(' ')}
+    </p>
   )
 }
 

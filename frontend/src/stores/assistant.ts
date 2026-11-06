@@ -3,6 +3,7 @@ import {
   assistantApi,
   isActiveTurn,
   type ApplyResult,
+  type ApplySelection,
   type AssistantPersona,
   type AssistantSession,
   type AssistantSessionDetail,
@@ -52,7 +53,7 @@ interface AssistantState {
   newChat: () => void
   send: (prompt: string) => Promise<void>
   stop: () => Promise<void>
-  apply: (turnId: string, assetIds?: string[]) => Promise<void>
+  apply: (turnId: string, selection?: ApplySelection) => Promise<void>
   discard: (turnId: string) => Promise<void>
   remove: (id: string) => Promise<void>
   reset: () => void
@@ -250,10 +251,10 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
       }
     },
 
-    async apply(turnId, assetIds) {
+    async apply(turnId, selection) {
       const mine = epoch
       try {
-        const results = await assistantApi.apply(turnId, assetIds)
+        const results = await assistantApi.apply(turnId, selection)
         if (mine !== epoch) return
         set({ applied: results, error: null })
         const turn = await assistantApi.getTurn(turnId)

@@ -191,7 +191,9 @@ def test_a_turn_searches_proposes_and_changes_nothing_until_applied(
 
     # The search result and the transcript went back to the model, with timestamps.
     seen = json.dumps(fake_suite.chats[2]["messages"])
-    assert "Giordano on neuroweapons." in seen and "[0:00]" in seen
+    # Each line carries its segment's start and end to a tenth, so a range read off it can
+    # be cut without clipping the last word.
+    assert "Giordano on neuroweapons." in seen and "[0:00.0" in seen and "0:01.0]" in seen
 
     # Nothing has been written.
     session.refresh(asset)
