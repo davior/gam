@@ -47,7 +47,9 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   when proposed (`services/assets.cut_problem`) and again when applied. A proposal's
   `playlists` (each with its own `playlist_ref`) are made or appended through
   `services/playlists` on Apply. A proposal's `notes` are written into Gecko Notes on
-  Apply (`app/notes_client.py`, Notes' `POST /api/notes/from-markdown`) with the caller's
+  Apply (`app/notes_client.py`, Notes' `POST /api/notes/from-markdown` at
+  `NOTES_URL`, the Notes app; people sign in at the suite, `SUITE_PUBLIC_URL` else
+  `SUITE_BASE_URL`, and the old `NOTES_BASE_URL` is not read) with the caller's
   own token, which only the Apply request has; their `/a/<id>` links are made absolute
   there. Notes failing is a skipped item with a sentence, never a failed Apply.
   `web_search` is one of the looking tools: the suite runs the search (its own backend, else

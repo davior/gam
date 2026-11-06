@@ -94,7 +94,7 @@ beforeEach(() => {
     },
   })
   vi.spyOn(configModule, 'loadConfig').mockResolvedValue({
-    notes_base_url: 'https://notes.example.test',
+    sign_in_url: 'https://suite.example.test',
     read_only: false,
     ai_backend: 'suite',
     suite_base_url: 'https://suite.example.test/',

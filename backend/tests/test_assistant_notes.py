@@ -38,10 +38,22 @@ class FakeNotes:
                                                   "title": body["title"]}})
 
 
+def test_notes_go_to_the_notes_app_not_to_where_people_sign_in(
+        library, session, fake_suite, notes, monkeypatch):
+    # Sign-in moved to Gecko Suite. When one setting meant both, a note went to the suite
+    # and was answered 405 ("needs updating") by a Notes that was up to date all along.
+    monkeypatch.setattr(settings, "suite_public_url", "https://suite.example")
+    fake_suite.script += [propose_note(title="Dogs", markdown="text"), reply("Done.")]
+    done = run(library, new_session(library))
+    (result,) = apply(library, done["id"]).json()["data"]
+    assert result["applied"] == ["note created"]
+    assert result["note_url"].startswith(f"{NOTES}/notes/")
+
+
 @pytest.fixture(name="notes")
 def notes_fixture(monkeypatch):
     fake = FakeNotes()
-    monkeypatch.setattr(settings, "notes_base_url", NOTES)
+    monkeypatch.setattr(settings, "notes_url", NOTES)
     monkeypatch.setattr(notes_client, "TRANSPORT", httpx.MockTransport(fake.handler))
     return fake
 
@@ -112,7 +124,9 @@ def test_the_same_title_again_rewrites_that_note_and_a_named_folder_is_kept(
 @pytest.mark.parametrize("trouble, sentence", [
     ("down", "can't be reached"),
     (401, "JWT_SECRET_KEY"),
-    (404, "needs updating"),
+    (404, f"Gecko Notes at {NOTES} answered 404"),
+    # What a Notes from before the endpoint answers: it has /api/notes/{id}, but no POST.
+    (405, f"Gecko Notes at {NOTES} answered 405"),
 ])
 def test_notes_failing_is_a_sentence_and_the_rest_still_applies(
         library, session, fake_suite, notes, trouble, sentence):
@@ -130,6 +144,9 @@ def test_notes_failing_is_a_sentence_and_the_rest_still_applies(
     results = apply(library, done["id"]).json()["data"]
     by_kind = {("note" if r.get("note_ref") else "item"): r for r in results}
     assert by_kind["note"]["applied"] == [] and sentence in by_kind["note"]["skipped"][0]
+    if trouble in (404, 405):
+        # Both causes named, since an old Notes and a wrong address look alike from here.
+        assert "NOTES_URL" in by_kind["note"]["skipped"][0]
     assert by_kind["item"]["applied"] == ["name"]
 
 

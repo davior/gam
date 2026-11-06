@@ -64,10 +64,11 @@ describe('Content-Security-Policy', () => {
     expect(policy()).not.toContain('unsafe-eval')
   })
 
-  it('keeps the Notes origin templated rather than hardcoded', () => {
-    // It has to follow NOTES_BASE_URL, or a deployment pointing somewhere else gets a
+  it('keeps the sign-in origin templated rather than hardcoded', () => {
+    // It has to follow SIGN_IN_URL, or a deployment pointing somewhere else gets a
     // policy nobody edited silently blocking its auth fetch.
-    expect(directive('connect-src')).toContain('${NOTES_BASE_URL}')
+    expect(directive('connect-src')).toContain('${SIGN_IN_URL}')
+    expect(directive('connect-src')).not.toContain('NOTES_BASE_URL')
     expect(directive('connect-src')).not.toContain('geckopico.com')
   })
   it('lets the theme picker reach Gecko Suite and draw theme backgrounds', () => {

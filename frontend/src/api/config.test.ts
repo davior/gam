@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import client from '@/api/client'
 import { currentConfig, loadConfig, resetConfig } from '@/api/config'
-import { notesBaseUrl, redirectToLogin } from '@/api/auth'
+import { signInUrl, redirectToLogin } from '@/api/auth'
 
-const served = (url: string) =>
-  Promise.resolve({ data: { data: { notes_base_url: url } } })
+const served = (url: string) => Promise.resolve({ data: { data: { sign_in_url: url } } })
 
 let get: ReturnType<typeof vi.spyOn>
 
@@ -12,7 +11,7 @@ beforeEach(() => {
   resetConfig()
   get = vi
     .spyOn(client, 'get')
-    .mockImplementation(() => served('https://notes.example.test')) as never
+    .mockImplementation(() => served('https://suite.example.test')) as never
 })
 
 afterEach(() => {
@@ -41,16 +40,16 @@ describe('loadConfig', () => {
 
     await expect(loadConfig()).rejects.toThrow()
 
-    get.mockImplementation(() => served('https://notes.example.test') as never)
+    get.mockImplementation(() => served('https://suite.example.test') as never)
     await expect(loadConfig()).resolves.toEqual({
-      notes_base_url: 'https://notes.example.test',
+      sign_in_url: 'https://suite.example.test',
     })
   })
 
   it('is null until it has arrived', async () => {
     expect(currentConfig()).toBeNull()
     await loadConfig()
-    expect(currentConfig()).toEqual({ notes_base_url: 'https://notes.example.test' })
+    expect(currentConfig()).toEqual({ sign_in_url: 'https://suite.example.test' })
   })
 })
 
@@ -58,10 +57,10 @@ describe('the sign-in redirect', () => {
   it('goes where the backend says, not to a compiled-in address', async () => {
     /**
      * The whole point of the endpoint. A hardcoded production fallback used to sit in
-     * `auth.ts`, which is why a dev instance with `NOTES_BASE_URL` set in `.env` still
+     * `auth.ts`, which is why a dev instance with the sign-in address set in `.env` still
      * sent people to the live Notes login — silently, and looking like it worked.
      */
-    expect(await notesBaseUrl()).toBe('https://notes.example.test')
+    expect(await signInUrl()).toBe('https://suite.example.test')
   })
 
   it('carries the current page back as the return URL', async () => {
@@ -80,7 +79,7 @@ describe('the sign-in redirect', () => {
     await redirectToLogin()
 
     expect(assign).toHaveBeenCalledWith(
-      'https://notes.example.test/login?redirect=' +
+      'https://suite.example.test/login?redirect=' +
         encodeURIComponent('http://localhost:5174/library?tag=NATO')
     )
     Object.defineProperty(window, 'location', { configurable: true, value: original })
