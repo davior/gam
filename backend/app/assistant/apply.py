@@ -16,6 +16,10 @@ Clips and cuts (`proposal["clips"]`) go through the services the Clip tab uses. 
 a live window onto the original (`create_clip`: a row, no file, instant). A cut is the same
 job the "extract sub-video" button queues, so it is made by the worker, appears in the
 activity feed, and the new video shows up in the library when it finishes.
+
+Playlists (`proposal["playlists"]`) go through services/playlists, the same as a person
+building one. Each item is checked again; one whose asset has gone or whose range no
+longer fits is left out and reported, and the rest of the playlist is still made.
 """
 
 from __future__ import annotations
@@ -35,6 +39,7 @@ from app.models.job import KIND_AUTOTAG, KIND_DESCRIBE, KIND_EXTRACT_SUBVIDEO, K
 from app.providers import build_provider
 from app.providers.base import ProviderError
 from app.services import assets as asset_service
+from app.services import playlists as playlist_service
 from app.services import tags as tag_service
 from app.storage import capacity
 
@@ -45,16 +50,18 @@ KINDS = {"summarize": KIND_SUMMARIZE, "describe": KIND_DESCRIBE, "autotag": KIND
 
 def apply(session: Session, user_id: str, proposal: dict,
           only: Optional[Iterable[str]] = None,
-          only_clips: Optional[Iterable[str]] = None) -> list[dict]:
-    """Apply the proposal's items and clips, one result per entry.
+          only_clips: Optional[Iterable[str]] = None,
+          only_playlists: Optional[Iterable[str]] = None) -> list[dict]:
+    """Apply the proposal's items, clips and playlists, one result per entry.
 
-    Neither list given: everything. Either given: each restricts its own kind, and a kind
-    left out is not applied (a client that names the assets it wants has never heard of
-    clips, and must not get them as a side effect).
+    No list given: everything. Any given: each restricts its own kind, and a kind left
+    out is not applied (a client that names the assets it wants has never heard of clips
+    or playlists, and must not get them as a side effect).
     """
-    everything = only is None and only_clips is None
+    everything = only is None and only_clips is None and only_playlists is None
     wanted = set(only) if only is not None else set()
     wanted_clips = set(only_clips) if only_clips is not None else set()
+    wanted_playlists = set(only_playlists) if only_playlists is not None else set()
     results = []
     for item in proposal.get("items", []):
         if everything or item["asset_id"] in wanted:
@@ -62,7 +69,56 @@ def apply(session: Session, user_id: str, proposal: dict,
     for entry in proposal.get("clips", []):
         if everything or entry["clip_id"] in wanted_clips:
             results.append(_apply_clip(session, user_id, entry))
+    for entry in proposal.get("playlists", []):
+        if everything or entry["playlist_ref"] in wanted_playlists:
+            results.append(_apply_playlist(session, user_id, entry))
     return results
+
+
+def _apply_playlist(session: Session, user_id: str, entry: dict) -> dict:
+    result = {"asset_id": None, "asset_name": entry.get("name") or "",
+              "applied": [], "skipped": [], "playlist_ref": entry["playlist_ref"],
+              "playlist_id": None}
+    target = None
+    if entry.get("playlist_id"):
+        target = playlist_service.owned(session, user_id, entry["playlist_id"])
+        if target is None:
+            result["skipped"].append("The playlist no longer exists.")
+            return result
+
+    specs = []
+    for item in entry.get("items", []):
+        label = item.get("label") or item.get("asset_name") or "An item"
+        try:
+            # Checked one by one, so a single stale item is reported rather than sinking
+            # the playlist: the service itself refuses a batch with any bad item in it.
+            playlist_service.resolve(session, user_id, item["asset_id"],
+                                     item.get("in_point"), item.get("out_point"))
+        except playlist_service.PlaylistProblem as exc:
+            result["skipped"].append(f"{label}: {exc.message}")
+            continue
+        specs.append(playlist_service.ItemSpec(
+            asset_id=item["asset_id"], in_point=item.get("in_point"),
+            out_point=item.get("out_point"), label=item.get("label"), note=item.get("reason")))
+    if not specs:
+        result["skipped"].append("None of its items could be added.")
+        return result
+    try:
+        if target is None:
+            target = playlist_service.create(session, user_id, entry.get("name") or "Playlist",
+                                             entry.get("description"), specs)
+            result["applied"].append("playlist made")
+        else:
+            playlist_service.add(session, target, specs)
+            result["applied"].append("items added")
+    except playlist_service.PlaylistProblem as exc:
+        session.rollback()
+        result["skipped"].append(exc.message)
+        return result
+    result["playlist_id"] = target.id
+    result["asset_name"] = target.name
+    result["applied"].append(f"{len(specs)} item(s)")
+    return result
 
 
 def _apply_item(session: Session, user_id: str, item: dict) -> dict:

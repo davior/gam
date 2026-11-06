@@ -8,6 +8,7 @@ import {
   type AssistantTurn,
   type Proposal,
   type ProposalClip,
+  type ProposalPlaylist,
   type ProposalItem,
 } from '@/api/assistant'
 import { currentConfig, loadConfig } from '@/api/config'
@@ -394,12 +395,15 @@ function ProposalCard({
   const discard = useAssistantStore((s) => s.discard)
   const items = proposal.items
   const clips = proposal.clips ?? []
-  // Ticked off by id: an asset's id for its edits, a clip's own id for a clip or a cut.
+  const playlists = proposal.playlists ?? []
+  // Ticked off by id: an asset's id for its edits, a clip's own id for a clip or a cut,
+  // a playlist's ref for a playlist.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const chosen = items.filter((item) => !skipped.has(item.asset_id))
   const chosenClips = clips.filter((clip) => !skipped.has(clip.clip_id))
-  const total = items.length + clips.length
-  const picked = chosen.length + chosenClips.length
+  const chosenPlaylists = playlists.filter((p) => !skipped.has(p.playlist_ref))
+  const total = items.length + clips.length + playlists.length
+  const picked = chosen.length + chosenClips.length + chosenPlaylists.length
   const pending = turn.outcome === 'pending'
 
   function toggle(id: string) {
@@ -464,6 +468,20 @@ function ProposalCard({
             }
           />
         ))}
+        {playlists.map((playlist) => (
+          <PlaylistRow
+            key={playlist.playlist_ref}
+            playlist={playlist}
+            pending={pending}
+            included={!skipped.has(playlist.playlist_ref)}
+            onToggle={() => toggle(playlist.playlist_ref)}
+            result={
+              !pending && turn.outcome === 'applied'
+                ? applied?.find((r) => r.playlist_ref === playlist.playlist_ref)
+                : undefined
+            }
+          />
+        ))}
       </ul>
       {pending && (
         <div className="flex gap-2">
@@ -479,6 +497,7 @@ function ProposalCard({
                   : {
                       assetIds: chosen.map((c) => c.asset_id),
                       clipIds: chosenClips.map((c) => c.clip_id),
+                      playlistRefs: chosenPlaylists.map((p) => p.playlist_ref),
                     }
               )
             }
@@ -570,6 +589,90 @@ function ClipOutcome({ result }: { result: ApplyResult }) {
         'Cut queued. The new video appears in the library when it has been made (see Background activity). '}
       {result.skipped.join(' ')}
     </p>
+  )
+}
+
+/** A proposed playlist: new or added to, and each moment in it with why it was chosen. */
+function PlaylistRow({
+  playlist,
+  pending,
+  included,
+  onToggle,
+  result,
+}: {
+  playlist: ProposalPlaylist
+  pending: boolean
+  included: boolean
+  onToggle: () => void
+  result?: ApplyResult
+}) {
+  const count = playlist.items.length
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        {pending && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${playlist.name}`}
+            checked={included}
+            onChange={onToggle}
+          />
+        )}
+        <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-purple-800 dark:bg-purple-900/40 dark:text-purple-200">
+          {playlist.playlist_id ? 'Add to playlist' : 'New playlist'}
+        </span>
+        <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+          {playlist.name}
+        </span>
+        <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+          {count} {count === 1 ? 'item' : 'items'}
+        </span>
+      </div>
+      {playlist.description && (
+        <p className="text-xs text-gray-600 dark:text-gray-400">{playlist.description}</p>
+      )}
+      <ol className="ml-5 list-decimal space-y-1 text-xs text-gray-700 dark:text-gray-300">
+        {playlist.items.map((item, at) => (
+          <li key={`${item.asset_id}-${item.in_point ?? 'whole'}-${at}`}>
+            <span className="font-medium">{item.label || item.asset_name}</span>
+            {' — '}
+            <Link
+              to={`/a/${item.asset_id}`}
+              className="text-blue-700 hover:underline dark:text-blue-300"
+            >
+              {item.asset_name}
+            </Link>
+            {item.in_point !== null && item.out_point !== null
+              ? `, ${formatDuration(item.in_point)}–${formatDuration(item.out_point)}`
+              : item.asset_type === 'image'
+                ? ''
+                : ', whole'}
+            {item.reason && (
+              <span className="block italic text-gray-500 dark:text-gray-400">
+                {item.reason}
+              </span>
+            )}
+          </li>
+        ))}
+      </ol>
+      {result && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {result.playlist_id && (
+            <>
+              {result.applied.includes('playlist made') ? 'Playlist made.' : 'Added.'}{' '}
+              <Link
+                to={`/playlists/${result.playlist_id}`}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+              >
+                Open it
+              </Link>
+              .{' '}
+            </>
+          )}
+          {result.skipped.join(' ')}
+        </p>
+      )}
+    </li>
   )
 }
 

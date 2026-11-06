@@ -1,5 +1,6 @@
 import type { Asset } from '@/api/assets'
 import type { GenerationModel, GenerationOptions } from '@/api/generate'
+import type { PlaylistDetail, PlaylistItem } from '@/api/playlists'
 
 /**
  * The attribution half of an `Asset`, empty — and M8's `generation`, null.
@@ -101,5 +102,49 @@ export function makeGenerationModel(
       custom_size: null,
       ...overrides.options,
     },
+  }
+}
+
+/** A playlist item: a whole video unless told otherwise. */
+export function makePlaylistItem(overrides: Partial<PlaylistItem> = {}): PlaylistItem {
+  return {
+    id: 'i1',
+    position: 0,
+    asset_id: 'v1',
+    asset_name: 'Interview',
+    asset_type: 'video',
+    in_point: null,
+    out_point: null,
+    start: 0,
+    end: 60,
+    image_seconds: null,
+    label: null,
+    note: null,
+    asset_duration_seconds: 60,
+    mime_type: 'video/mp4',
+    width: 640,
+    height: 360,
+    file_url: '/media/v1.mp4?exp=1&sig=x',
+    thumb_url: null,
+    missing: false,
+    ...overrides,
+  }
+}
+
+export function makePlaylist(
+  items: PlaylistItem[] = [],
+  overrides: Partial<PlaylistDetail> = {}
+): PlaylistDetail {
+  return {
+    id: 'p1',
+    name: 'The crisis',
+    description: null,
+    item_count: items.length,
+    total_seconds: 0,
+    thumb_url: null,
+    created_at: '2026-11-06T00:00:00',
+    updated_at: '2026-11-06T00:00:00',
+    items,
+    ...overrides,
   }
 }

@@ -3,6 +3,7 @@ import { authApi, redirectToLogin, type User } from '@/api/auth'
 import { apiErrorCode, apiErrorMessage, clearToken } from '@/api/client'
 import { useActivityStore } from '@/stores/activity'
 import { useAssistantStore } from '@/stores/assistant'
+import { usePlaylistStore } from '@/stores/playlists'
 import { useGenerationStore } from '@/stores/generation'
 import { useLibraryStore } from '@/stores/library'
 import { useTagStore } from '@/stores/tags'
@@ -83,6 +84,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     useActivityStore.getState().reset()
     // Conversations are personal, and a running turn's poll would keep asking as them.
     useAssistantStore.getState().reset()
+    usePlaylistStore.getState().reset()
     // The theme this person wore must not dress the sign-in page for the next one.
     useAppThemeStore.getState().reset()
     void redirectToLogin()

@@ -36,6 +36,7 @@ import {
 import { useAutoGrow } from '@/utils/useAutoGrow'
 import AssetThumb from '@/components/AssetThumb'
 import AttributionPanel from '@/components/AttributionPanel'
+import AddToPlaylist from '@/components/AddToPlaylist'
 import ClipEditor from '@/components/ClipEditor'
 import ClipRangeForm from '@/components/ClipRangeForm'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
@@ -550,6 +551,10 @@ export default function AssetDetail({
         )}
       </dl>
 
+      {/* A clip goes in as itself; the server stores its original and its window. */}
+      {['video', 'audio', 'image'].includes(asset.asset_type) && !asset.missing && (
+        <AddToPlaylist items={[{ asset_id: asset.id }]} />
+      )}
       {dependentClips ? (
         <div className="space-y-2 rounded-md border border-amber-200 p-3 dark:border-amber-900">
           <p className="text-xs text-gray-700 dark:text-gray-300">
