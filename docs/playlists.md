@@ -89,14 +89,17 @@ translate: `id = asset_id`, `in = in_point`, `out = out_point` (both absent for 
 asset). `GET /api/playlists` and `GET /api/playlists/{id}`, called with the person's own
 token as GVC already calls GAM's search and assets, are all it needs.
 
-**Proposed change in GVC** (to be specified in its plan, not applied from here):
+**In GVC** ([davior/gvc#50](https://github.com/davior/gvc/pull/50)): it lists playlists
+through `GET /api/gam/playlists`, and "From a GAM playlist" builds a project from one
+(`POST /api/projects/from-playlist`, its `spec/from_playlist.py`):
 
-1. `GamClient.list_playlists()` / `get_playlist(id)`, and `GET /api/gam/playlists[/{id}]`
-   through GVC's backend, as its other GAM reads go.
-2. "New project from a playlist": one scene per item, in order, each with its media as
-   the item's GAM ref and its duration `end - start` (an image's `image_seconds`), the
-   item's `label` as the scene's working title.
-3. The same list in GVC's GAM picker, so a playlist can be dropped into an existing
-   project's timeline.
+1. a title card from the playlist's name and description;
+2. a video item as a `clip` segment, trimmed to the range, playing its own sound;
+3. an image as a silent scene held for `image_seconds`;
+4. a sound as a scene on the background with a lower third, the sound an audio track
+   anchored to that scene's start and end.
+
+Each item's label is the segment's label and chapter mark. The playlist is read once and
+copied: editing it afterwards changes nothing in the project.
 
 Nothing about this needs GAM to change further: the playlist is the contract.
