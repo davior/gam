@@ -29,4 +29,6 @@ ENV SUITE_BASE_URL=https://suite.geckopico.com
 # Only these are substituted; nginx's own $variables ($uri, $host, $remote_addr …)
 # must survive untouched, which is why envsubst is given an explicit list rather than
 # left to replace everything it recognises.
-CMD ["/bin/sh", "-c", "envsubst '${UPLOAD_MAX_SIZE} ${NOTES_BASE_URL} ${SUITE_BASE_URL}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+# SUITE_WS_URL is SUITE_BASE_URL as a websocket address (https -> wss), for live dictation's
+# stream. Derived here so there is still only one setting to get right.
+CMD ["/bin/sh", "-c", "export SUITE_WS_URL=$(echo \"$SUITE_BASE_URL\" | sed 's#^http#ws#') && envsubst '${UPLOAD_MAX_SIZE} ${NOTES_BASE_URL} ${SUITE_BASE_URL} ${SUITE_WS_URL}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

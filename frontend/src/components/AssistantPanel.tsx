@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { ExternalLink, Loader2, Plus, Send, Square, Trash2, X } from 'lucide-react'
+import { ExternalLink, Loader2, Mic, Plus, Send, Square, Trash2, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Markdown from '@/components/Markdown'
 import {
@@ -9,6 +9,8 @@ import {
   type ProposalItem,
 } from '@/api/assistant'
 import { currentConfig, loadConfig } from '@/api/config'
+import { suiteSpeechApi, type DictationReadiness } from '@/api/suiteSpeech'
+import { useDictation } from '@/hooks/useDictation'
 import { useAssistantStore } from '@/stores/assistant'
 
 /**
@@ -47,6 +49,25 @@ export default function AssistantPanel() {
   const remove = useAssistantStore((s) => s.remove)
   const close = useAssistantStore((s) => s.setOpen)
   const [text, setText] = useState('')
+  // Dictation: each finished phrase is appended to what is typed; nothing is sent until the
+  // person presses Send. Offered when the suite can transcribe, and explained when it cannot.
+  const [dictationReady, setDictationReady] = useState<DictationReadiness>({
+    state: 'local',
+  })
+  const [showWhyNot, setShowWhyNot] = useState(false)
+  const dictation = useDictation((phrase) =>
+    setText((prev) => (prev.trim() ? `${prev.trimEnd()} ${phrase}` : phrase))
+  )
+  useEffect(() => {
+    let live = true
+    suiteSpeechApi
+      .ready()
+      .then((ready) => live && setDictationReady(ready))
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [])
   const [suiteUrl, setSuiteUrl] = useState(() => currentConfig()?.suite_base_url ?? '')
   const bottom = useRef<HTMLDivElement>(null)
 
@@ -72,6 +93,8 @@ export default function AssistantPanel() {
   const canType = status?.ready === true
   function submit() {
     if (!canType || running || sending || !text.trim()) return
+    // Sending ends a dictation: what was said so far is what is sent.
+    if (dictation.status === 'recording') dictation.stop()
     void send(text)
     setText('')
   }
@@ -222,6 +245,41 @@ export default function AssistantPanel() {
             onChange={(event) => setText(event.target.value)}
             onKeyDown={onKey}
           />
+          {canType && dictationReady.state === 'unavailable' && (
+            // Not `disabled`: a disabled button takes no click, and the click is how the
+            // person finds out why (a title alone does not show on touch screens).
+            <button
+              type="button"
+              className="btn btn-secondary p-2 opacity-50"
+              aria-label="Dictate (unavailable)"
+              aria-disabled="true"
+              title={dictationReady.reason}
+              onClick={() => setShowWhyNot((v) => !v)}
+            >
+              <Mic className="h-4 w-4" />
+            </button>
+          )}
+          {canType && dictationReady.state === 'ready' && (
+            <button
+              type="button"
+              className={`btn p-2 ${
+                dictation.status === 'recording'
+                  ? 'btn-danger animate-pulse'
+                  : 'btn-secondary'
+              }`}
+              aria-label={dictation.status === 'recording' ? 'Stop dictating' : 'Dictate'}
+              aria-pressed={dictation.status === 'recording'}
+              title={dictation.status === 'recording' ? 'Stop dictating' : 'Dictate'}
+              disabled={dictation.status === 'finishing'}
+              onClick={dictation.toggle}
+            >
+              {dictation.status === 'finishing' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
+            </button>
+          )}
           {running ? (
             <button
               type="button"
@@ -245,6 +303,24 @@ export default function AssistantPanel() {
             </button>
           )}
         </div>
+        {dictation.interim && (
+          <p
+            className="mt-1 truncate text-xs italic text-gray-500 dark:text-gray-400"
+            aria-live="polite"
+          >
+            {dictation.interim}…
+          </p>
+        )}
+        {showWhyNot && dictationReady.state === 'unavailable' && (
+          <p role="alert" className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+            Dictation is off: {dictationReady.reason}
+          </p>
+        )}
+        {dictation.status === 'error' && dictation.error && (
+          <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+            {dictation.error}
+          </p>
+        )}
       </footer>
     </aside>
   )

@@ -76,4 +76,9 @@ describe('Content-Security-Policy', () => {
     expect(directive('connect-src')).toContain('${SUITE_BASE_URL}')
     expect(directive('img-src')).toContain('https:')
   })
+
+  it('lets dictation open its websocket to Gecko Suite', () => {
+    // The microphone streams to wss://suite; an https source is not enough everywhere.
+    expect(directive('connect-src')).toContain('${SUITE_WS_URL}')
+  })
 })
