@@ -9,11 +9,12 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 from contextlib import closing
 from pathlib import Path
 from typing import Callable
 
-from gecko_suite_client import SuiteError
+from gecko_suite_client import SuiteError, SuiteUnavailable
 from sqlmodel import Session, col, delete, select
 
 from app import suite
@@ -35,14 +36,32 @@ Progress = Callable[[str, int, str], None]
 
 TRANSCRIBABLE_TYPES = frozenset({TYPE_AUDIO, TYPE_VIDEO})
 
-# How much audio goes in one request. Half an hour of 16 kHz mono FLAC is a few tens of
-# MB, far inside the suite's 300 MB cap, and Deepgram answers it in a minute or two. A
-# whole long recording in one request is what failed with a 413 (`audio.split_audio`).
-PART_SECONDS = 30 * 60
+# How much audio goes in one request. Ten minutes of 16 kHz mono FLAC is about ten MB,
+# far inside every size cap, and Deepgram answers it in well under a minute. A whole long
+# recording in one request is what failed with a 413 (`audio.split_audio`); and the shorter
+# the part, the less one stalled request costs, since a hang at Deepgram holds a request for
+# the full wait before it is given up on (half an hour at the suite).
+PART_SECONDS = 10 * 60
+
+# A part that timed out or met a vendor error is asked again before the recording is given
+# up on: the parts before it are already paid for, and a stall at Deepgram is usually gone
+# on the next try. The wait grows with each attempt.
+TRANSCRIBE_ATTEMPTS = 3
+RETRY_DELAY = 10.0
+
+# What the suite calls a failure worth asking again about: Deepgram not answering, not
+# being reachable, or erroring on its side. Anything else (no key, a refused key, no
+# credit, audio it will not take) fails the same way every time and is reported at once.
+RETRYABLE_SUITE_CODES = frozenset({"upstream_timeout", "upstream_unreachable", "upstream_error"})
 
 
 class TranscriptionError(Exception):
-    """Something the user can be told about."""
+    """Something the user can be told about. `retryable` marks the failures that are worth
+    asking again about (see `RETRYABLE_SUITE_CODES`); the rest are final."""
+
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def can_transcribe(asset: Asset) -> bool:
@@ -69,7 +88,8 @@ def _transcribe_on_suite(user_id: str, audio_path: Path, model: str, subject: st
             result = speech.transcribe(audio_path.read_bytes(), content_type="audio/flac",
                                        model=model, subject_ref=subject)
     except SuiteError as exc:
-        raise TranscriptionError(suite.sentence(exc)) from exc
+        retryable = isinstance(exc, SuiteUnavailable) or exc.code in RETRYABLE_SUITE_CODES
+        raise TranscriptionError(suite.sentence(exc), retryable=retryable) from exc
     except OSError as exc:
         raise TranscriptionError(f"Could not read the audio file: {exc}") from exc
     return deepgram.Transcript(
@@ -79,6 +99,26 @@ def _transcribe_on_suite(user_id: str, audio_path: Path, model: str, subject: st
                 words=[deepgram.Word(text=w.text, start=w.start, end=w.end) for w in s.words])
             for s in result.segments],
         language=result.language, model=result.model)
+
+
+def _with_retries(attempt, progress: Progress, percent: int, where: str) -> deepgram.Transcript:
+    """`attempt()`, asked again (up to `TRANSCRIBE_ATTEMPTS` times) while it fails in a way
+    worth asking again about. The progress call between attempts says so, and is also the
+    cancellation checkpoint, so a cancel is not held up by the wait."""
+    for number in range(1, TRANSCRIBE_ATTEMPTS + 1):
+        try:
+            return attempt()
+        except TranscriptionError as exc:
+            if not exc.retryable:
+                raise
+            if number == TRANSCRIBE_ATTEMPTS:
+                raise TranscriptionError(f"{exc} (tried {TRANSCRIBE_ATTEMPTS} times)") from exc
+            logger.warning("Transcription of %s failed (attempt %d of %d): %s",
+                           where, number, TRANSCRIBE_ATTEMPTS, exc)
+            progress("Transcribing", percent,
+                     f"{where}: {exc} Trying again ({number + 1} of {TRANSCRIBE_ATTEMPTS})")
+            time.sleep(RETRY_DELAY * number)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def join_parts(pieces: list[tuple[deepgram.Transcript, float]]) -> deepgram.Transcript:
@@ -142,14 +182,17 @@ def run(session: Session, asset: Asset, progress: Progress) -> int:
 
         pieces: list[tuple[deepgram.Transcript, float]] = []
         for index, (part_path, offset) in enumerate(parts):
+            percent = 25 + (60 * index) // len(parts)
+            where = f"part {index + 1} of {len(parts)}" if len(parts) > 1 else "the recording"
             if len(parts) > 1:
                 # Also the cancellation checkpoint: a cancel stops between parts rather
                 # than after the whole recording has been paid for.
-                progress("Transcribing", 25 + (60 * index) // len(parts),
-                         f"part {index + 1} of {len(parts)}")
+                progress("Transcribing", percent, where)
             if suite.enabled():
-                piece = _transcribe_on_suite(asset.user_id, part_path, model,
-                                             f"gam:asset:{asset.id}")
+                piece = _with_retries(
+                    lambda path=part_path: _transcribe_on_suite(
+                        asset.user_id, path, model, f"gam:asset:{asset.id}"),
+                    progress, percent, where)
             else:
                 try:
                     piece = deepgram.transcribe_file(part_path, api_key, model=model)
