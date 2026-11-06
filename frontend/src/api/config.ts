@@ -5,7 +5,7 @@ import client from '@/api/client'
  *
  * A Vite `import.meta.env` value is fixed when the bundle is *built*, so a setting read
  * that way needs one image per environment and cannot be changed by a deployment. That
- * is why `NOTES_BASE_URL` could be set in `.env`, plumbed through docker-compose, and
+ * is why the sign-in address could be set in `.env`, plumbed through docker-compose, and
  * still have no effect on where the sign-in button pointed.
  *
  * Fetched once and held here, not in a Zustand store: it is the same for everybody, it
@@ -14,7 +14,7 @@ import client from '@/api/client'
  */
 
 export interface ClientConfig {
-  notes_base_url: string
+  sign_in_url: string
   /** A copy run against the NAS mirror: the server refuses every write. */
   read_only: boolean
   /** Where enrichment's model and the embeddings come from: this app's own providers, or

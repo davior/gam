@@ -377,7 +377,8 @@ Non-milestone PRs, so a `git log` that does not match the table above still make
 [#8](https://github.com/davior/gam/pull/8) added the startup warning for an unmigrated
 database and the docs that go with it;
 [#9](https://github.com/davior/gam/pull/9) documented `.env` for local dev and made the
-CSP's Notes origin follow `NOTES_BASE_URL`.
+CSP's Notes origin follow `NOTES_BASE_URL`. (Since retired: people sign in at the suite,
+`SUITE_PUBLIC_URL` else `SUITE_BASE_URL`, and the Notes app is `NOTES_URL`.)
 [#22](https://github.com/davior/gam/pull/22) is the library and asset-detail layout
 rework — full-bleed intrinsic grid, the resizable docked panel, `DetailDock`/`Tabs`, and
 `/a/{id}` as a page. Also non-milestone: M1 built that UI for one screen size and M3–M6

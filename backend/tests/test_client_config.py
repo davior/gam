@@ -1,7 +1,7 @@
 """The settings the browser is allowed to know.
 
 `/api/config` exists because a Vite `import.meta.env` value is fixed at build time, so
-`NOTES_BASE_URL` could be set in `.env`, plumbed through docker-compose, and still have
+the sign-in address could be set in `.env`, plumbed through docker-compose, and still have
 no effect on where the login button pointed.
 """
 
@@ -9,11 +9,11 @@ from app.config import settings
 
 
 def test_it_serves_the_configured_notes_url(client, monkeypatch):
-    monkeypatch.setattr(settings, "notes_base_url", "https://notes.example.test")
+    monkeypatch.setattr(settings, "suite_public_url", "https://suite.example.test")
 
     body = client.get("/api/config").json()
 
-    assert body["data"]["notes_base_url"] == "https://notes.example.test"
+    assert body["data"]["sign_in_url"] == "https://suite.example.test"
 
 
 def test_it_needs_no_session(client):
@@ -38,5 +38,5 @@ def test_it_exposes_nothing_but_what_it_promises(client):
     """
     data = client.get("/api/config").json()["data"]
 
-    assert set(data) == {"notes_base_url", "read_only", "ai_backend", "suite_base_url"}
+    assert set(data) == {"sign_in_url", "read_only", "ai_backend", "suite_base_url"}
     assert settings.jwt_secret_key not in str(data)

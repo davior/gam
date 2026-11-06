@@ -2,11 +2,11 @@ import client from '@/api/client'
 import { loadConfig } from '@/api/config'
 
 /**
- * Identity comes from Gecko Notes, not from here.
+ * Identity comes from Gecko Suite, not from here.
  *
- * GAM has no login form, no registration and no password reset. Notes signs the token;
- * this module verifies who that makes us, and sends the browser to Notes when nobody
- * is signed in.
+ * GAM has no login form, no registration and no password reset. The suite signs the
+ * token; this module verifies who that makes us, and sends the browser to the suite
+ * when nobody is signed in.
  */
 
 export interface User {
@@ -37,25 +37,24 @@ export const authApi = {
  * misconfigured development instance silently sent people to the live Notes login
  * instead of failing in a way anyone would notice.
  */
-export async function notesBaseUrl(): Promise<string> {
+export async function signInUrl(): Promise<string> {
   const config = await loadConfig()
-  return config.notes_base_url
+  return config.sign_in_url
 }
 
 /**
- * Hand the browser to Gecko Notes to sign in, asking to be sent back here.
+ * Hand the browser to Gecko Suite to sign in, asking to be sent back here.
  *
  * If the config never arrives the redirect does not happen, which is the right
  * outcome: the backend being unreachable is what `RequireAuth` already reports, and
  * bouncing to another domain would hide it.
  *
- * The return URL is passed as a parameter rather than remembered on Notes' side so
- * this works for any app in the suite without Notes knowing about them. Notes
- * validates it against a *.geckopico.com allowlist — see GN-2 — which is what keeps
- * this from being an open redirect.
+ * The return URL is passed as a parameter rather than remembered on the suite's side so
+ * this works for any app without the suite knowing about them. The suite validates it
+ * against its own allow-list, which is what keeps this from being an open redirect.
  */
 export async function redirectToLogin(): Promise<void> {
-  const base = await notesBaseUrl()
+  const base = await signInUrl()
   const target = encodeURIComponent(window.location.href)
   window.location.href = `${base}/login?redirect=${target}`
 }

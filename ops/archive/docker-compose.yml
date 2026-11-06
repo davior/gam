@@ -28,7 +28,8 @@ services:
       # Not production's. Here it only signs media URLs, and the production secret on a
       # NAS would let anyone who can read the NAS mint a Notes session for any account.
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY in ops/archive/.env}
-      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
+      - SUITE_PUBLIC_URL=${SUITE_PUBLIC_URL:-}
       - ENVIRONMENT=production
       - TZ=${TZ:-UTC}
     expose:
@@ -46,7 +47,8 @@ services:
     ports:
       - "${ARCHIVE_PORT:-18083}:80"
     environment:
-      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
+      - SUITE_PUBLIC_URL=${SUITE_PUBLIC_URL:-}
     depends_on:
       - backend
 

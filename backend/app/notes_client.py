@@ -46,7 +46,7 @@ def create_note(token: Optional[str], *, title: str, markdown: str,
     if not token:
         # The dev user signs in without a token, and Notes has no one to file the note for.
         raise NotesError("Sign in through Gecko Notes to create notes.")
-    base = settings.notes_base_url.rstrip("/")
+    base = settings.notes_url.rstrip("/")
     body = {"title": title, "markdown": markdown, "folder_name": folder_name,
             "tags": tags or [], "source_app": "gam"}
     try:
@@ -59,9 +59,18 @@ def create_note(token: Optional[str], *, title: str, markdown: str,
     if response.status_code == 401:
         raise NotesError("Gecko Notes did not accept your session. GAM and Notes probably "
                          "have different JWT_SECRET_KEY values.")
+    if response.status_code != 201:
+        # Where it went and what came back, every time: "needs updating" alone sent a
+        # person who had just updated Notes looking for a fault that was in the address.
+        logger.warning("Gecko Notes at %s answered %s to a new note", base, response.status_code)
     if response.status_code in (404, 405):
-        # A Notes from before the endpoint (gecko-notes#224).
-        raise NotesError("Gecko Notes needs updating before it can take notes from GAM.")
+        # A Notes from before the endpoint (gecko-notes#224) answers 405: it has
+        # GET/PUT/DELETE at /api/notes/{id} and takes "from-markdown" for an id. So does
+        # anything else at that address, which is why the address is in the sentence.
+        raise NotesError(
+            f"Gecko Notes at {base} answered {response.status_code} to a new note: that "
+            "Notes is older than the update that takes notes from GAM, or NOTES_URL "
+            "points at the wrong one.")
     if response.status_code != 201:
         message = None
         try:

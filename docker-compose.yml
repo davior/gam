@@ -12,11 +12,18 @@ services:
       # secret means every token is rejected. No default — the app refuses to start.
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
-      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
+      # Passed only so the app can warn that it is set and no longer read: people sign in
+      # at the suite (SUITE_PUBLIC_URL, else SUITE_BASE_URL, below).
+      - NOTES_BASE_URL=${NOTES_BASE_URL:-}
+      # The Gecko Notes app itself: where the assistant's notes are filed.
+      - NOTES_URL=${NOTES_URL:-https://notes.geckopico.com}
       # Where enrichment's model and the embeddings come from: "local" (the providers this
       # app keeps) or "suite" (Gecko Suite). Changing it is a restart, not a rebuild.
       - AI_BACKEND=${AI_BACKEND:-local}
       - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
+      # The suite as browsers reach it, where people sign in; only needed when
+      # SUITE_BASE_URL is an internal address. As in Notes.
+      - SUITE_PUBLIC_URL=${SUITE_PUBLIC_URL:-}
       # Required when AI_BACKEND=suite; the app refuses to start without it.
       - SUITE_APP_SECRET=${SUITE_APP_SECRET:-}
       - SUITE_EMBEDDING_DIMENSIONS=${SUITE_EMBEDDING_DIMENSIONS:-512}
@@ -60,11 +67,11 @@ services:
     environment:
       # Larger than gecko-notes' 1g default: this app exists to hold long video.
       - UPLOAD_MAX_SIZE=${UPLOAD_MAX_SIZE:-4g}
-      # Same value the backend gets: it is the CSP's connect-src here, so the two must
-      # agree or the browser-side call to Notes is blocked by a policy nobody edited.
-      - NOTES_BASE_URL=${NOTES_BASE_URL:-https://notes.geckopico.com}
-      # Same value the backend gets: connect-src for the theme picker's calls (M7).
+      # The same values the backend gets: the suite is the CSP's connect-src here (sign-in,
+      # the theme picker), so they must agree or the browser's calls are blocked by a
+      # policy nobody edited.
       - SUITE_BASE_URL=${SUITE_BASE_URL:-https://suite.geckopico.com}
+      - SUITE_PUBLIC_URL=${SUITE_PUBLIC_URL:-}
     depends_on:
       - backend
     networks:

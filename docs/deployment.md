@@ -55,7 +55,7 @@ Edit `.env`:
 ```env
 APP_PORT=18082                      # 18081 is gecko-notes
 JWT_SECRET_KEY=<same as Notes>
-NOTES_BASE_URL=https://notes.geckopico.com
+NOTES_URL=https://notes.geckopico.com      # the Notes app; sign-in is the suite (SUITE_BASE_URL)
 COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml
 ```
 

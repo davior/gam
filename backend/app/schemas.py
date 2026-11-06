@@ -44,7 +44,8 @@ class ClientConfig(BaseModel):
     act rather than an accident.
     """
 
-    notes_base_url: str
+    # Where to send someone to sign in: Gecko Suite (SUITE_PUBLIC_URL, else SUITE_BASE_URL).
+    sign_in_url: str
     # So the frontend can say it is an archive. Public by nature: anyone who can reach
     # an archive can already see that writes are refused.
     read_only: bool = False

@@ -50,8 +50,15 @@ class Settings(BaseSettings):
     # The cookie gecko-notes sets on the parent domain once GN-1 is applied. Read
     # only; GAM never sets it.
     auth_cookie_name: str = "gecko_session"
-    # Where an unauthenticated visitor is sent to sign in.
-    notes_base_url: str = "https://notes.geckopico.com"
+    # Retired. It was where people signed in, named for the app that signed them in when
+    # it was added, and it came to point at Gecko Suite while still being read as Notes'
+    # address, which is what sent the assistant's notes to the suite. Sign-in is now the
+    # suite's public address (`sign_in_url`, below), and the Notes app is NOTES_URL. Read
+    # only so the app can say, once at startup, that it is set and ignored.
+    notes_base_url: str = ""
+    # The Gecko Notes app itself: where the assistant's notes are filed on Apply
+    # (`app/notes_client.py`) and where "Open in Gecko Notes" links.
+    notes_url: str = "https://notes.geckopico.com"
 
     # ─── storage ─────────────────────────────────────────────────────────────
     database_url: str = ""
@@ -148,6 +155,10 @@ class Settings(BaseSettings):
     # way; "local" goes with the suite's M8.
     ai_backend: str = "local"
     suite_base_url: str = "https://suite.geckopico.com"
+    # The suite as people's browsers reach it, when SUITE_BASE_URL is an address only the
+    # server can (a compose service name). Where people are sent to sign in. Unset: the
+    # same as SUITE_BASE_URL. As in Notes.
+    suite_public_url: str = ""
     # What lets enrichment jobs call the suite as the user who owns the asset, long after
     # the request that queued them (and its session) is gone. Issued by an administrator
     # on the suite's Apps screen, and shown there once. Required when ai_backend is
@@ -208,6 +219,13 @@ class Settings(BaseSettings):
                 "issues one for GAM on Gecko Suite's Apps screen."
             )
         return self
+
+    @property
+    def sign_in_url(self) -> str:
+        """Where an unauthenticated visitor is sent to sign in: Gecko Suite, at the address
+        people's browsers reach it by. The same rule as Notes (`identity.py`): its public
+        address when SUITE_BASE_URL is an internal one, else SUITE_BASE_URL."""
+        return (self.suite_public_url.strip() or self.suite_base_url).rstrip("/")
 
     @model_validator(mode="after")
     def _read_only_user_needs_read_only(self) -> "Settings":

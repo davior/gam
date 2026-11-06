@@ -69,7 +69,7 @@ function coverage(overrides: Partial<EmbeddingCoverage> = {}): EmbeddingCoverage
 
 function serveConfig(aiBackend: 'local' | 'suite') {
   vi.spyOn(configModule, 'loadConfig').mockResolvedValue({
-    notes_base_url: 'https://notes.example.test',
+    sign_in_url: 'https://suite.example.test',
     read_only: false,
     ai_backend: aiBackend,
     suite_base_url: 'https://suite.example.test/',

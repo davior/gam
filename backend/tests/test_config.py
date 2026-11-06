@@ -17,6 +17,9 @@ _ENV_VARS = (
     "ENVIRONMENT",
     "DEV_AUTH_USER",
     "NOTES_BASE_URL",
+    "SUITE_BASE_URL",
+    "SUITE_PUBLIC_URL",
+    "NOTES_URL",
     "MEDIA_URL_TTL_SECONDS",
 )
 
@@ -80,3 +83,25 @@ def test_dev_auth_needs_both_conditions():
     assert not _settings(**base, dev_auth_user="x", environment="production").dev_auth_enabled
     assert not _settings(**base, dev_auth_user="", environment="development").dev_auth_enabled
     assert _settings(**base, dev_auth_user="x", environment="development").dev_auth_enabled
+
+
+def test_people_sign_in_at_the_suites_public_address_and_notes_are_separate(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 64)
+    defaults = Settings(_env_file=None)
+    assert defaults.sign_in_url == "https://suite.geckopico.com"
+    assert defaults.notes_url == "https://notes.geckopico.com"
+
+    # An internal SUITE_BASE_URL (a compose service) is no use to a browser.
+    monkeypatch.setenv("SUITE_BASE_URL", "http://suite-backend:8000")
+    monkeypatch.setenv("SUITE_PUBLIC_URL", "https://suite.example/")
+    assert Settings(_env_file=None).sign_in_url == "https://suite.example"
+
+
+def test_an_old_notes_base_url_is_ignored(monkeypatch):
+    """It came to point at the suite while also being read as Notes' address, which is what
+    sent the assistant's notes to the suite. Neither address follows it now."""
+    monkeypatch.setenv("JWT_SECRET_KEY", "x" * 64)
+    monkeypatch.setenv("NOTES_BASE_URL", "https://elsewhere.example")
+    old = Settings(_env_file=None)
+    assert old.sign_in_url == "https://suite.geckopico.com"
+    assert old.notes_url == "https://notes.geckopico.com"
