@@ -49,6 +49,8 @@ class FakeSuiteSpeech:
         self.ready = True
         self.down = False
         self.stt_response = None
+        # Answers for the next calls, in order, before `stt_response` or the default.
+        self.stt_queue: list = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if self.down:
@@ -57,6 +59,8 @@ class FakeSuiteSpeech:
         if request.method == "GET" and request.url.path == "/api/v1/ai/speech/stt/ready":
             return httpx.Response(200, json={"data": {"ready": self.ready, "provider": "Deepgram"}})
         if request.method == "POST" and request.url.path == "/api/v1/ai/speech/stt":
+            if self.stt_queue:
+                return self.stt_queue.pop(0)
             if self.stt_response is not None:
                 return self.stt_response
             return httpx.Response(200, json={"data": _suite_transcript()})
@@ -155,6 +159,72 @@ def test_a_long_recording_goes_in_parts_and_comes_back_as_one_timeline(library, 
     assert stored[0].start_time == pytest.approx(one[0]["start"])
     assert stored[2].start_time == pytest.approx(one[0]["start"] + 0.8, abs=0.05)
     assert json.loads(stored[2].words)[0]["s"] == pytest.approx(one[0]["words"][0]["start"] + 0.8, abs=0.05)
+    session.refresh(asset)
+    assert asset.transcript_status == "done"
+
+
+def _timeout():
+    return httpx.Response(504, json={"detail": {
+        "code": "upstream_timeout",
+        "message": "Deepgram did not respond in time (gave up waiting for its answer after 1800 s)"}})
+
+
+@needs_ffmpeg
+def test_a_part_that_times_out_is_asked_again_before_the_recording_is_given_up_on(
+        library, session, speech, monkeypatch):
+    import app.enrichment.transcribe as transcribe
+
+    monkeypatch.setattr(transcribe, "RETRY_DELAY", 0)
+    speech.stt_queue = [_timeout()]
+    asset = session.get(Asset, _upload_video(library)["id"])
+    said = []
+    count = run_transcribe(session, asset, lambda stage, pct, detail="": said.append(detail))
+
+    assert count == 2 and len(speech.posts()) == 2  # the first try, and the one that worked
+    assert any("Trying again (2 of 3)" in d and "did not respond in time" in d for d in said)
+    session.refresh(asset)
+    assert asset.transcript_status == "done"
+
+
+@needs_ffmpeg
+def test_a_part_that_keeps_timing_out_fails_with_a_sentence_after_three_tries(
+        library, session, speech, monkeypatch):
+    import app.enrichment.transcribe as transcribe
+
+    monkeypatch.setattr(transcribe, "RETRY_DELAY", 0)
+    speech.stt_response = _timeout()
+    asset = session.get(Asset, _upload_video(library)["id"])
+    with pytest.raises(TranscriptionError, match=r"did not respond in time.*tried 3 times"):
+        run_transcribe(session, asset, lambda *_a, **_k: None)
+    assert len(speech.posts()) == 3
+
+
+@needs_ffmpeg
+def test_a_failure_that_would_repeat_is_not_asked_again(library, session, speech, monkeypatch):
+    import app.enrichment.transcribe as transcribe
+
+    monkeypatch.setattr(transcribe, "RETRY_DELAY", 0)
+    speech.stt_response = httpx.Response(409, json={"detail": {
+        "code": "ai_not_configured", "message": "No Deepgram key is set up."}})
+    asset = session.get(Asset, _upload_video(library)["id"])
+    with pytest.raises(TranscriptionError, match="No Deepgram key"):
+        run_transcribe(session, asset, lambda *_a, **_k: None)
+    assert len(speech.posts()) == 1
+
+
+@needs_ffmpeg
+def test_only_the_part_that_failed_is_asked_again(library, session, speech, monkeypatch):
+    """The parts before it are kept: a stall in part two does not redo part one."""
+    import app.enrichment.transcribe as transcribe
+
+    monkeypatch.setattr(transcribe, "RETRY_DELAY", 0)
+    monkeypatch.setattr(transcribe, "PART_SECONDS", 0.8)
+    ok = httpx.Response(200, json={"data": _suite_transcript()})
+    speech.stt_queue = [ok, _timeout()]  # part 1 fine, part 2 times out once, then works
+    asset = session.get(Asset, _upload_video(library)["id"])
+    run_transcribe(session, asset, lambda *_a, **_k: None)
+
+    assert len(speech.posts()) == 4  # 3 parts + 1 retry, not 3 + 3
     session.refresh(asset)
     assert asset.transcript_status == "done"
 
