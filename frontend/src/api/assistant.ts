@@ -64,8 +64,27 @@ export interface ProposalItem {
   enrich: string[]
 }
 
+/**
+ * A clip or a cut the assistant proposes from a video or audio asset. A `clip` is a live
+ * window onto the original, made at once with no new file; a `cut` is a new video (or
+ * audio) file, made by a background job after Apply.
+ */
+export interface ProposalClip {
+  clip_id: string
+  kind: 'clip' | 'cut'
+  asset_id: string
+  asset_name: string
+  in_point: number
+  out_point: number
+  name: string | null
+  /** Why this stretch, in the assistant's words. */
+  reason: string | null
+}
+
 export interface Proposal {
   items: ProposalItem[]
+  /** Absent on a turn from before clips could be proposed. */
+  clips?: ProposalClip[]
 }
 
 export type TurnStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
@@ -100,6 +119,19 @@ export interface ApplyResult {
   asset_name: string
   applied: string[]
   skipped: string[]
+  /** Set on the result of a clip or a cut, whose `asset_id` is then its source. */
+  clip_id?: string | null
+  /** The clip that was made. A cut has none yet: a job makes it. */
+  created_asset_id?: string | null
+}
+
+/**
+ * What to apply. Neither list: everything. Either: each restricts its own kind, and a kind
+ * left out is not applied.
+ */
+export interface ApplySelection {
+  assetIds?: string[]
+  clipIds?: string[]
 }
 
 export function isActiveTurn(turn: Pick<AssistantTurn, 'status'>): boolean {
@@ -171,10 +203,11 @@ export const assistantApi = {
       .then((r) => r.data.data)
   },
 
-  apply(id: string, assetIds?: string[]): Promise<ApplyResult[]> {
+  apply(id: string, selection?: ApplySelection): Promise<ApplyResult[]> {
     return client
       .post<DataResponse<ApplyResult[]>>(`/assistant/turns/${id}/apply`, {
-        asset_ids: assetIds ?? null,
+        asset_ids: selection?.assetIds ?? null,
+        clip_ids: selection?.clipIds ?? null,
       })
       .then((r) => r.data.data)
   },

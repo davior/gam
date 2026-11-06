@@ -149,7 +149,145 @@ describe('AssistantPanel', () => {
       within(card).getByRole('checkbox', { name: /include img_002/i })
     )
     await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 2/i }))
-    expect(apply).toHaveBeenCalledWith('t1', ['a1'])
+    expect(apply).toHaveBeenCalledWith('t1', { assetIds: ['a1'], clipIds: [] })
+  })
+
+  it('shows a clip and a cut with their range and reason, and applies the ones ticked', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([])
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(turn())
+    await show(READY, [
+      turn({
+        outcome: 'pending',
+        proposal: {
+          items: [],
+          clips: [
+            {
+              clip_id: 'k1',
+              kind: 'clip',
+              asset_id: 'v1',
+              asset_name: 'Interview',
+              in_point: 62.4,
+              out_point: 101,
+              name: 'The river line',
+              reason: 'Where the river is first mentioned.',
+            },
+            {
+              clip_id: 'k2',
+              kind: 'cut',
+              asset_id: 'v1',
+              asset_name: 'Interview',
+              in_point: 300,
+              out_point: 301,
+              name: null,
+              reason: null,
+            },
+          ],
+        },
+      }),
+    ])
+    const card = await screen.findByLabelText(/proposed changes/i)
+    // A clip is a window; a cut is a new file, and the card says which.
+    expect(within(card).getByText('Clip')).toBeInTheDocument()
+    expect(within(card).getByText('New video')).toBeInTheDocument()
+    expect(within(card).getByText('The river line')).toBeInTheDocument()
+    expect(
+      within(card).getByText(/Where the river is first mentioned/)
+    ).toBeInTheDocument()
+    expect(within(card).getAllByText(/1:02–1:41 \(39 seconds\)/)).toHaveLength(1)
+    expect(within(card).getByText(/5:00–5:01 \(1 second\)/)).toBeInTheDocument()
+    expect(within(card).getAllByRole('link', { name: 'Interview' })).toHaveLength(2)
+
+    await userEvent.click(
+      within(card).getByRole('checkbox', { name: /include clip of interview/i })
+    )
+    await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 2/i }))
+    expect(apply).toHaveBeenCalledWith('t1', { assetIds: [], clipIds: ['k1'] })
+  })
+
+  it('applies everything with no selection when nothing is unticked', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([])
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(turn())
+    await show(READY, [
+      turn({
+        outcome: 'pending',
+        proposal: {
+          items: [item('a1', 'IMG_001', { name: 'New' })],
+          clips: [
+            {
+              clip_id: 'k1',
+              kind: 'clip',
+              asset_id: 'v1',
+              asset_name: 'Interview',
+              in_point: 1,
+              out_point: 2,
+              name: 'One',
+              reason: null,
+            },
+          ],
+        },
+      }),
+    ])
+    await userEvent.click(await screen.findByRole('button', { name: /apply all/i }))
+    expect(apply).toHaveBeenCalledWith('t1', undefined)
+  })
+
+  it('says what became of each clip once applied, and links to the clip it made', async () => {
+    vi.spyOn(assistantApi, 'apply').mockResolvedValue([
+      {
+        asset_id: 'v1',
+        asset_name: 'Interview',
+        applied: ['clip made'],
+        skipped: [],
+        clip_id: 'k1',
+        created_asset_id: 'c9',
+      },
+      {
+        asset_id: 'v1',
+        asset_name: 'Interview',
+        applied: ['cut queued'],
+        skipped: [],
+        clip_id: 'k2',
+        created_asset_id: null,
+      },
+    ])
+    const proposal = {
+      items: [],
+      clips: [
+        {
+          clip_id: 'k1',
+          kind: 'clip' as const,
+          asset_id: 'v1',
+          asset_name: 'Interview',
+          in_point: 1,
+          out_point: 2,
+          name: 'One',
+          reason: null,
+        },
+        {
+          clip_id: 'k2',
+          kind: 'cut' as const,
+          asset_id: 'v1',
+          asset_name: 'Interview',
+          in_point: 3,
+          out_point: 4,
+          name: 'Two',
+          reason: null,
+        },
+      ],
+    }
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(
+      turn({ outcome: 'applied', proposal })
+    )
+    await show(READY, [turn({ outcome: 'pending', proposal })])
+    await userEvent.click(await screen.findByRole('button', { name: /apply all/i }))
+
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(await within(card).findByText(/Clip made\./)).toBeInTheDocument()
+    expect(within(card).getByRole('link', { name: 'Open it' })).toHaveAttribute(
+      'href',
+      '/a/c9'
+    )
+    expect(within(card).getByText(/Cut queued\./)).toBeInTheDocument()
   })
 
   it('discards without applying', async () => {

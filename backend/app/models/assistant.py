@@ -57,7 +57,10 @@ class AssistantTurn(SQLModel, table=True):
     steps: str = "[]"
     reply: str = ""
     # JSON: {"items": [{"asset_id", "asset_name", "name", "description", "summary",
-    # "add_tags", "remove_tags", "enrich"}]}; None when the turn proposed nothing.
+    # "add_tags", "remove_tags", "enrich"}], "clips": [{"clip_id", "kind": "clip"|"cut",
+    # "asset_id", "asset_name", "in_point", "out_point", "name", "reason"}]}; None when the
+    # turn proposed nothing. `clips` is absent on turns from before clips were proposed.
+    # Needs no migration: it is JSON in a text column.
     proposal: Optional[str] = None
     # pending | applied | discarded, once there is a proposal; "" otherwise.
     outcome: str = ""

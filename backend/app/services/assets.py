@@ -705,6 +705,25 @@ def _check_range(parent: Asset, in_point: float, out_point: float) -> None:
         raise ValueError("The out point is past the end of the asset")
 
 
+def cut_problem(asset: Asset, in_point: float, out_point: float) -> Optional[str]:
+    """Why a range cannot be clipped or cut out of this asset, as a sentence, or None.
+
+    The same rules `create_clip` enforces, asked as a question for callers that want the
+    sentence and not an exception (the assistant checks a proposal with it, then again when
+    the person applies it, since the library can change in between).
+    """
+    if asset.asset_type not in (TYPE_VIDEO, TYPE_AUDIO):
+        return "Only video and audio assets can be clipped."
+    if asset.storage_key is None:
+        return ("This is itself a clip, which cannot be clipped or cut again. "
+                "Use the original asset it came from.")
+    try:
+        _check_range(asset, in_point, out_point)
+    except ValueError as exc:
+        return f"{exc}."
+    return None
+
+
 def create_clip(
     session: Session,
     parent: Asset,

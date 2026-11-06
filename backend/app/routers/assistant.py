@@ -89,8 +89,11 @@ class TurnCreate(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    # Apply only these assets' entries. Absent: all of them.
+    # Apply only these assets' entries, and only these clips and cuts. Both absent: all
+    # of it. Either present: each restricts its own kind, and a kind left out is not
+    # applied (see `apply_service.apply`).
     asset_ids: Optional[List[str]] = None
+    clip_ids: Optional[List[str]] = None
 
 
 class ItemResult(BaseModel):
@@ -98,6 +101,10 @@ class ItemResult(BaseModel):
     asset_name: str
     applied: List[str]
     skipped: List[str]
+    # Set on the result of a clip or a cut (its `asset_id` is then the source's). For a
+    # live clip, `created_asset_id` is the clip; a cut is made by a job and has none yet.
+    clip_id: Optional[str] = None
+    created_asset_id: Optional[str] = None
 
 
 def _turn_read(row: AssistantTurn) -> TurnRead:
@@ -301,7 +308,7 @@ def _pending(turn: AssistantTurn) -> dict:
 @router.post("/turns/{turn_id}/apply", response_model=DataResponse[List[ItemResult]])
 def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
                session: Session = Depends(get_session)) -> DataResponse[List[ItemResult]]:
-    """Make the proposed changes (all of them, or those for `asset_ids`).
+    """Make the proposed changes (all of them, or those for `asset_ids` and `clip_ids`).
 
     Applying twice would repeat a rename over an edit made in between, so the proposal is
     marked applied before anything is written and a second request is refused. A failure
@@ -314,7 +321,7 @@ def apply_turn(turn_id: str, user: CurrentUser, body: ApplyBody = ApplyBody(),
     turn.updated_at = utcnow()
     session.add(turn)
     session.commit()
-    results = apply_service.apply(session, user.id, proposal, body.asset_ids)
+    results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids)
     return DataResponse(data=[ItemResult(**r) for r in results])
 
 

@@ -33,11 +33,17 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
 - **A suite that is down must not stop the library.** `build_embedder` answers `None`,
   and search falls back to keywords; jobs fail with a sentence and retry.
 - **The assistant exists only in `suite` mode, and never writes.** Its tools look
-  (`search_assets`, `get_asset`, `read_transcript`, `list_tags`) or record a proposal
-  (`propose_changes`, `propose_enrichment`); `assistant/apply.py` is the only place a
-  proposal reaches the library, and only when a person presses Apply. A new tool that
-  writes would break that, so make it a proposal kind instead. Every tool re-checks that
-  the asset is the caller's: the model chooses the ids.
+  (`search_assets`, `get_asset`, `read_transcript`, `list_clips`, `list_tags`) or record a
+  proposal (`propose_changes`, `propose_enrichment`, `propose_clip`, `propose_cut`);
+  `assistant/apply.py` is the only place a proposal reaches the library, and only when a
+  person presses Apply. A new tool that writes would break that, so make it a proposal
+  kind instead. Every tool re-checks that the asset is the caller's: the model chooses
+  the ids. A proposal is `{"items": [...], "clips": [...]}`: `items` are edits to one
+  asset, `clips` are clips and cuts, each with its own `clip_id` since one asset can have
+  several. A `clip` applies through `create_clip` (a live window, no file); a `cut`
+  queues the same `extract_subvideo` job as the button, and is not held to its one-per-asset
+  guard, because several moments of one video is the ordinary request. Both are checked
+  when proposed (`services/assets.cut_problem`) and again when applied.
   `web_search` is one of the looking tools: the suite runs the search (its own backend, else
   DuckDuckGo) and credits it to the conversation, and what comes back is for the model to
   read and cite, never a write. A **persona** is the suite's, chosen per turn and kept on the
