@@ -49,7 +49,13 @@ export default function AppShell({ children }: Props) {
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-900">
-      <header className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+      {/* relative z-40: a glass theme blurs the header (assets/glass.css), and a blurred
+          element is its own stacking layer, so the activity and theme popups' z-50 only
+          orders them inside the header. Without a z-index of its own the whole header
+          paints in document order, under the glass chips and cards of the page below it.
+          40 keeps it under the full-screen detail view (50) and level with the assistant
+          panel, which covers the page on a phone. */}
+      <header className="relative z-40 shrink-0 border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
         <div className="flex items-center gap-3">
           <Link to="/library" className="flex items-center gap-3">
             <img src={favicon} alt="" aria-hidden="true" className="h-7 w-7" />
