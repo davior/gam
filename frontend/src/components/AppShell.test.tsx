@@ -44,6 +44,14 @@ function renderShell() {
 }
 
 describe('AppShell', () => {
+  it('keeps the header above the page, so its popups are not drawn under it', () => {
+    // jsdom does not paint, so this pins the cause rather than the picture: a glass theme
+    // blurs the header, which makes it its own stacking layer, and without a z-index it
+    // paints in document order under the page's glass cards. See the comment in AppShell.
+    renderShell()
+    expect(screen.getByRole('banner')).toHaveClass('relative', 'z-40')
+  })
+
   it('offers no sign-out to a visitor who is not signed in', () => {
     renderShell()
     expect(screen.queryByRole('button', { name: /sign out/i })).not.toBeInTheDocument()
