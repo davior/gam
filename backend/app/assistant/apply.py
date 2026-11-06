@@ -17,6 +17,10 @@ a live window onto the original (`create_clip`: a row, no file, instant). A cut 
 job the "extract sub-video" button queues, so it is made by the worker, appears in the
 activity feed, and the new video shows up in the library when it finishes.
 
+Notes (`proposal["notes"]`) are written into Gecko Notes with the person's own token,
+which only this request has (a turn runs in the background as GAM, with none). Their
+`/a/<id>` links become absolute here, where GAM's address is known.
+
 Playlists (`proposal["playlists"]`) go through services/playlists, the same as a person
 building one. Each item is checked again; one whose asset has gone or whose range no
 longer fits is left out and reported, and the rest of the playlist is still made.
@@ -38,6 +42,7 @@ from app.models.asset import Asset
 from app.models.job import KIND_AUTOTAG, KIND_DESCRIBE, KIND_EXTRACT_SUBVIDEO, KIND_SUMMARIZE, EnrichmentJob
 from app.providers import build_provider
 from app.providers.base import ProviderError
+from app import notes_client
 from app.services import assets as asset_service
 from app.services import playlists as playlist_service
 from app.services import tags as tag_service
@@ -51,14 +56,21 @@ KINDS = {"summarize": KIND_SUMMARIZE, "describe": KIND_DESCRIBE, "autotag": KIND
 def apply(session: Session, user_id: str, proposal: dict,
           only: Optional[Iterable[str]] = None,
           only_clips: Optional[Iterable[str]] = None,
-          only_playlists: Optional[Iterable[str]] = None) -> list[dict]:
-    """Apply the proposal's items, clips and playlists, one result per entry.
+          only_playlists: Optional[Iterable[str]] = None,
+          only_notes: Optional[Iterable[str]] = None, *,
+          token: Optional[str] = None, origin: str = "") -> list[dict]:
+    """Apply the proposal's items, clips, playlists and notes, one result per entry.
+
+    `token` is the caller's own, forwarded to Gecko Notes for a note; `origin` is GAM's
+    address as the caller reached it, for the links in one.
 
     No list given: everything. Any given: each restricts its own kind, and a kind left
     out is not applied (a client that names the assets it wants has never heard of clips
     or playlists, and must not get them as a side effect).
     """
-    everything = only is None and only_clips is None and only_playlists is None
+    everything = (only is None and only_clips is None and only_playlists is None
+                  and only_notes is None)
+    wanted_notes = set(only_notes) if only_notes is not None else set()
     wanted = set(only) if only is not None else set()
     wanted_clips = set(only_clips) if only_clips is not None else set()
     wanted_playlists = set(only_playlists) if only_playlists is not None else set()
@@ -72,7 +84,30 @@ def apply(session: Session, user_id: str, proposal: dict,
     for entry in proposal.get("playlists", []):
         if everything or entry["playlist_ref"] in wanted_playlists:
             results.append(_apply_playlist(session, user_id, entry))
+    for entry in proposal.get("notes", []):
+        if everything or entry["note_ref"] in wanted_notes:
+            results.append(_apply_note(entry, token, origin))
     return results
+
+
+def _apply_note(entry: dict, token: Optional[str], origin: str) -> dict:
+    result = {"asset_id": None, "asset_name": entry.get("title") or "", "applied": [],
+              "skipped": [], "note_ref": entry["note_ref"], "note_url": None}
+    markdown = entry.get("markdown") or ""
+    if origin:
+        # The model wrote GAM's own page for an asset, `/a/<id>`; in Notes that is a link
+        # to Notes. Linked ids were checked when proposed, and an asset deleted since is
+        # left as a link that GAM answers with "not found", which is the truth.
+        markdown = markdown.replace("](/a/", f"]({origin.rstrip('/')}/a/")
+    try:
+        note = notes_client.create_note(token, title=entry.get("title") or "",
+                                        markdown=markdown, folder_name=entry.get("folder"))
+    except notes_client.NotesError as exc:
+        result["skipped"].append(str(exc))
+        return result
+    result["applied"].append("note created")
+    result["note_url"] = note.url
+    return result
 
 
 def _apply_playlist(session: Session, user_id: str, entry: dict) -> dict:

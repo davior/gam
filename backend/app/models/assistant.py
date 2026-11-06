@@ -61,8 +61,9 @@ class AssistantTurn(SQLModel, table=True):
     # "asset_id", "asset_name", "in_point", "out_point", "name", "reason"}],
     # "playlists": [{"playlist_ref", "playlist_id" (None: a new one), "name", "description",
     # "items": [{"asset_id", "asset_name", "asset_type", "in_point", "out_point", "label",
-    # "reason"}]}]}; None when the turn proposed nothing. `clips` and `playlists` are absent
-    # on turns from before they could be proposed. Needs no migration: it is JSON in a
+    # "reason"}]}], "notes": [{"note_ref", "title", "markdown", "folder", "asset_ids"}]};
+    # None when the turn proposed nothing. `clips`, `playlists` and `notes` are
+    # absent on turns from before they could be proposed. Needs no migration: it is JSON in a
     # text column.
     proposal: Optional[str] = None
     # pending | applied | discarded, once there is a proposal; "" otherwise.

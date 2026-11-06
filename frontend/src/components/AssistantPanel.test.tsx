@@ -153,6 +153,7 @@ describe('AssistantPanel', () => {
       assetIds: ['a1'],
       clipIds: [],
       playlistRefs: [],
+      noteRefs: [],
     })
   })
 
@@ -209,6 +210,7 @@ describe('AssistantPanel', () => {
       assetIds: [],
       clipIds: ['k1'],
       playlistRefs: [],
+      noteRefs: [],
     })
   })
 
@@ -282,6 +284,7 @@ describe('AssistantPanel', () => {
       assetIds: [],
       clipIds: [],
       playlistRefs: ['p1'],
+      noteRefs: [],
     })
   })
 
@@ -329,6 +332,51 @@ describe('AssistantPanel', () => {
       '/playlists/made-1'
     )
     expect(within(card).getByText(/Gone: No such asset\./)).toBeInTheDocument()
+  })
+
+  it('shows a proposed note, its text on request, and links to it once made', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([
+      {
+        asset_id: null,
+        asset_name: 'Dogs in the library',
+        applied: ['note created'],
+        skipped: [],
+        note_ref: 'n1',
+        note_url: 'https://notes.test/notes/abc',
+      },
+    ])
+    const proposal = {
+      items: [],
+      notes: [
+        {
+          note_ref: 'n1',
+          title: 'Dogs in the library',
+          markdown: '# Dogs\n\nThree videos about **dogs**.',
+          folder: null,
+          asset_ids: ['a1', 'a2'],
+        },
+      ],
+    }
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(
+      turn({ outcome: 'applied', proposal })
+    )
+    await show(READY, [turn({ outcome: 'pending', proposal })])
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(within(card).getByText('New note')).toBeInTheDocument()
+    expect(
+      within(card).getByText(/folder “From GAM”, linking 2 assets/)
+    ).toBeInTheDocument()
+    await userEvent.click(within(card).getByRole('button', { name: 'Read it' }))
+    expect(within(card).getByLabelText(/text of dogs in the library/i)).toHaveTextContent(
+      'Three videos about dogs.'
+    )
+
+    await userEvent.click(within(card).getByRole('button', { name: /apply all/i }))
+    expect(apply).toHaveBeenCalledWith('t1', undefined)
+    const after = await screen.findByLabelText(/proposed changes/i)
+    expect(
+      await within(after).findByRole('link', { name: 'Open in Gecko Notes' })
+    ).toHaveAttribute('href', 'https://notes.test/notes/abc')
   })
 
   it('applies everything with no selection when nothing is unticked', async () => {
