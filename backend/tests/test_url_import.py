@@ -13,6 +13,7 @@ import copy
 import json
 import shutil
 import socket
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -691,7 +692,10 @@ def test_a_403_that_impersonation_does_not_cure_says_what_to_do(library, session
 
     assert job["status"] == "error"
     assert "HTTP 403" in job["error_message"]
-    assert "URL_IMPORT_COOKIES_FILE" in job["error_message"]
+    # The last line is a command to run at home, for this link.
+    command = job["error_message"].splitlines()[-1]
+    assert command.startswith("yt-dlp --embed-metadata ")
+    assert command.endswith(f'"{VIDEO_URL}"')
     assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True]
 
 
@@ -702,7 +706,7 @@ def test_without_curl_cffi_the_403_is_reported_not_crashed_on(library, session, 
 
     assert job["status"] == "error"
     assert "HTTP 403" in job["error_message"]
-    assert "curl-cffi" in job["error_message"]
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False]
 
 
 def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypatch):
@@ -710,6 +714,31 @@ def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypat
     _import(library, session, monkeypatch)
 
     assert not any(p.get("impersonate") for p in FakeYoutubeDL.made)
+
+
+def test_the_local_command_fetches_what_an_import_would(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "url_import_max_height", 720)
+    command = ytdlp.local_download_command("https://rumble.com/v13047p-a-speech.html")
+
+    assert command == (
+        'yt-dlp --embed-metadata -f "bv*[height<=720]+ba/b" --merge-output-format mp4 '
+        '-o "%(title)s.%(ext)s" "https://rumble.com/v13047p-a-speech.html"'
+    )
+
+
+def test_the_local_command_leaves_a_shell_nothing_to_expand():
+    """The link is whatever was pasted. Inside the command's double quotes, a `"`, `$`,
+    backtick, `!` or `\\` would end the quoting or run something; encoded, each is still
+    the same link to the site."""
+    hostile = 'https://rumble.com/v1-x.html?a="b"&c=$(touch pwned)&d=`id`&e=!!&f=\\'
+    command = ytdlp.local_download_command(hostile)
+    quoted = command.rsplit(" ", 1)[-1]
+
+    assert quoted.startswith('"') and quoted.endswith('"')
+    assert not any(ch in quoted[1:-1] for ch in '"$`!\\ ')
+    assert urllib.parse.unquote(quoted[1:-1]) == hostile
 
 
 def test_cancelling_mid_download_stops_the_job(library, session, monkeypatch):

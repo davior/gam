@@ -116,4 +116,36 @@ describe('ActivityIndicator', () => {
 
     expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument()
   })
+
+  it('sets a command in an error apart, to be copied', async () => {
+    // Spied rather than replaced: userEvent.setup() installs its own clipboard stub.
+    const user = userEvent.setup()
+    const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue()
+    const command =
+      'yt-dlp --embed-metadata -f "bv*[height<=1080]+ba/b" --merge-output-format mp4 ' +
+      '-o "%(title)s.%(ext)s" "https://rumble.com/v1-x.html"'
+    renderWith([
+      job({
+        action: 'import_url',
+        status: 'error',
+        error_message: `The site refused this server (HTTP 403). Upload the file:\n${command}`,
+      }),
+    ])
+
+    await user.click(screen.getByRole('button', { name: 'Background activity' }))
+    expect(screen.getByText(command).tagName).toBe('CODE')
+    expect(screen.getByText(/refused this server/)).not.toHaveTextContent('yt-dlp')
+
+    await user.click(screen.getByRole('button', { name: 'Copy this command' }))
+    expect(writeText).toHaveBeenCalledWith(command)
+  })
+
+  it('shows an error with no command as it is', async () => {
+    const user = userEvent.setup()
+    renderWith([job({ status: 'error', error_message: 'No Deepgram key' })])
+
+    await user.click(screen.getByRole('button', { name: 'Background activity' }))
+    expect(screen.getByText('No Deepgram key')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Copy this command' })).toBeNull()
+  })
 })

@@ -136,7 +136,7 @@ def probe_url(url: str, workdir: Path) -> dict:
     try:
         info = _extract(options, url, download=False)
     except DownloadError as exc:
-        raise UrlImportError(readable_error(exc)) from exc
+        raise UrlImportError(readable_error(exc, url)) from exc
     if not info:
         raise UrlImportError("Nothing importable was found at that link")
     return info
@@ -270,7 +270,7 @@ def download(
     except DownloadCancelled as exc:
         raise JobCancelled(str(exc)) from exc
     except DownloadError as exc:
-        raise UrlImportError(readable_error(exc)) from exc
+        raise UrlImportError(readable_error(exc, url)) from exc
 
     media = _media_path(result, workdir)
     return Downloaded(
@@ -503,7 +503,7 @@ _NEEDS_UPDATE = (
 )
 
 
-def readable_error(exc: Exception) -> str:
+def readable_error(exc: Exception, url: str = "") -> str:
     """A yt-dlp failure as something a person can act on.
 
     yt-dlp's messages are written for a terminal user — `ERROR: [youtube] abc123: …` —
@@ -526,11 +526,11 @@ def readable_error(exc: Exception) -> str:
 
     if "403" in lowered and "forbidden" in lowered:
         return (
-            "The site refused this server (HTTP 403). If the backend image predates "
-            "curl-cffi in backend/requirements.txt, rebuild it so the import can retry "
-            "as a browser. Otherwise the site blocks this server's IP or wants a "
-            "signed-in session: export your browser's cookies for it to a file and set "
-            "URL_IMPORT_COOKIES_FILE — see docs/url-import.md."
+            "The site refused this server (HTTP 403). "
+            "Usually that is Cloudflare blocking this server's IP address, which no "
+            "importer can get past from here. Download it on your own computer and "
+            "upload the file:"
+            + (f"\n{local_download_command(url)}" if url else "")
         )
 
     first_line = message.splitlines()[0] if message else ""
@@ -541,6 +541,31 @@ def readable_error(exc: Exception) -> str:
             "version in backend/requirements.txt and rebuild."
         )
     return cleaned
+
+
+# Characters left as they are when a URL goes into a pasted command. Everything else —
+# quotes, `$`, backticks, `!`, `\`, spaces — is percent-encoded, which leaves the link
+# meaning the same thing and leaves nothing for a shell to expand inside double quotes.
+# Double rather than single quotes because cmd.exe has no single-quoting at all; bash,
+# zsh and PowerShell take either.
+_COMMAND_SAFE = ":/?#[]@&=+,;%-._~*()'"
+
+
+def local_download_command(url: str) -> str:
+    """The yt-dlp command that fetches `url` the way an import would, to run elsewhere.
+
+    For a site that blocks this server but not a home connection. `--embed-metadata`
+    writes the channel, date and link into the file, which the upload path reads back
+    (`embedded_metadata.py`); the output name is the title, which an upload takes as the
+    asset's name. Same height cap and container as an import. Needs ffmpeg, as any
+    yt-dlp merge does.
+    """
+    quoted = urllib.parse.quote(url, safe=_COMMAND_SAFE)
+    height = max(144, settings.url_import_max_height)
+    return (
+        f'yt-dlp --embed-metadata -f "bv*[height<={height}]+ba/b" '
+        f'--merge-output-format mp4 -o "%(title)s.%(ext)s" "{quoted}"'
+    )
 
 
 # ─── mapping what the site said ──────────────────────────────────────────────

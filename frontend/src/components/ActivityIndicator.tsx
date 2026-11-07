@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Activity, X } from 'lucide-react'
+import { Activity, Check, Copy, X } from 'lucide-react'
 import type { ActivityJob } from '@/api/transcripts'
 import { isActive, useActivityStore } from '@/stores/activity'
 
@@ -31,6 +31,60 @@ const LABELS: Record<string, string> = {
 function subject(job: ActivityJob): string {
   // A whole-library job carries no asset name, and "" would render as a blank line.
   return job.asset_name || 'Your whole library'
+}
+
+/**
+ * A job's error, with any command in it set apart to be copied.
+ *
+ * An import from a site that blocks the server ends with the yt-dlp command that fetches
+ * the same video at home (ytdlp.local_download_command). It is only useful whole and
+ * exact, which a line of 12px prose in a narrow card is not, so a line that starts
+ * `yt-dlp ` renders as code with a copy button. Plain text in, so the message stays a
+ * sentence anywhere else it is shown.
+ */
+function JobError({ message }: { message: string }) {
+  const lines = message.split('\n')
+  const command = lines.find((line) => line.startsWith('yt-dlp '))
+  const prose = lines.filter((line) => line !== command).join(' ')
+  const [copied, setCopied] = useState(false)
+
+  const copy = async () => {
+    if (!command) return
+    try {
+      await navigator.clipboard.writeText(command)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard access needs a secure context. Prompting with the text beats a button
+      // that silently does nothing.
+      window.prompt('Copy this command', command)
+    }
+  }
+
+  return (
+    <>
+      <span>{prose}</span>
+      {command && (
+        <span className="mt-1 flex items-start gap-1">
+          <code className="block min-w-0 flex-1 select-all break-all rounded bg-gray-100 p-1.5 font-mono text-[11px] text-gray-800 dark:bg-gray-800 dark:text-gray-200">
+            {command}
+          </code>
+          <button
+            type="button"
+            className="btn btn-ghost shrink-0 p-1"
+            aria-label="Copy this command"
+            onClick={() => void copy()}
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+          </button>
+        </span>
+      )}
+    </>
+  )
 }
 
 export default function ActivityIndicator() {
@@ -125,14 +179,16 @@ export default function ActivityIndicator() {
                 )}
               </div>
 
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                {job.stalled
-                  ? 'Not responding'
-                  : job.status === 'error'
-                    ? (job.error_message ?? 'Failed')
-                    : job.detail || job.stage || job.status}
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {job.stalled ? (
+                  'Not responding'
+                ) : job.status === 'error' ? (
+                  <JobError message={job.error_message ?? 'Failed'} />
+                ) : (
+                  job.detail || job.stage || job.status
+                )}
                 {isActive(job) && job.progress > 0 && ` · ${job.progress}%`}
-              </p>
+              </div>
             </div>
           ))}
         </div>

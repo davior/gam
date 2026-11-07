@@ -94,9 +94,32 @@ Rumble, and other sites behind Cloudflare's bot screen, refuse a plain Python cl
 its TLS handshake (`Unable to download webpage: HTTP Error 403: Forbidden`) before any
 header or cookie is read. The `curl-cffi` extra lets yt-dlp handshake like Chrome, and
 `ytdlp._extract` retries any 403 that way, once. Only on a 403: sites that already work,
-YouTube above all, keep yt-dlp's own client. A 403 that survives the retry is a block on
-the server's IP or a site that wants a signed-in session; the cookies file below is the
-remedy for the second.
+YouTube above all, keep yt-dlp's own client.
+
+A 403 that survives the retry is usually Cloudflare's JavaScript challenge, which it
+sends to IPs it distrusts — hosting providers' especially. Rumble does this to whole
+datacenter ranges, on every path that leads to a video (checked from a blocked server,
+Nov 2026). Nothing but a real browser answers it, and a cookies file exported elsewhere
+does not help: the clearance cookie is bound to the IP and browser that earned it. To
+check what a site answers this server:
+
+```bash
+docker compose exec backend python -c "
+from curl_cffi import requests
+r = requests.get('<the page URL>', impersonate='chrome')
+print(r.status_code, r.headers.get('cf-mitigated'))"
+```
+
+`403 challenge` is that. The import's error then ends with a yt-dlp command for the
+link (`ytdlp.local_download_command`), shown in the activity panel with a copy button: run
+it on a computer whose connection the site accepts (it needs yt-dlp and ffmpeg) and
+upload the file. `--embed-metadata` writes the channel, date and link into the file,
+which the upload reads back; the filename is the title, which becomes the asset's name.
+The description, tags and chapters do not come along.
+
+Routing imports through another network instead (a proxy, or an SSH tunnel home) was
+written and set aside in davior/gam#75 (see its history): a tunnel exposes the home network to
+anything on the server, and a residential proxy is a subscription for an occasional video.
 
 ### Deno
 
