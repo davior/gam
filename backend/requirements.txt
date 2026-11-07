@@ -44,7 +44,14 @@ openpyxl==3.1.5
 # Pinned like everything else here, with one difference worth knowing: YouTube changes
 # under yt-dlp every few weeks, so this pin *will* start failing on its own schedule. The
 # fix is always the same — bump it to the latest release and `docker compose up --build`.
-yt-dlp[default,deno]==2026.8.19
+#
+# `curl-cffi` lets yt-dlp handshake like Chrome. Rumble (and other sites behind
+# Cloudflare's bot screen) answer a plain Python client with 403 before reading a header;
+# ytdlp._extract retries those as a browser. Pinned to what this yt-dlp's own extra
+# accepts (<0.18): yt-dlp refuses a curl_cffi it was not built against. abi3 manylinux
+# wheels for x86_64 and aarch64, so nothing compiles.
+yt-dlp[default,deno,curl-cffi]==2026.10.26
+curl-cffi==0.17.0
 # How enrichment and search reach Gecko Suite (AI_BACKEND=suite), and the agent loop the
 # assistant shares with the other apps. A commit, not a branch: the client and the
 # suite's API change together, and a deployment must not pick up one without the other.

@@ -83,9 +83,20 @@ YouTube changes under yt-dlp every few weeks, and a pinned yt-dlp eventually sto
 working on its own schedule. The error message says so ("…yt-dlp needs updating"). The
 fix is always the same:
 
-1. Set `yt-dlp[default,deno]==<latest>` in `backend/requirements.txt`
-   ([releases](https://pypi.org/project/yt-dlp/#history)).
+1. Set `yt-dlp[default,deno,curl-cffi]==<latest>` in `backend/requirements.txt`
+   ([releases](https://pypi.org/project/yt-dlp/#history)), and keep the `curl-cffi` pin
+   beside it inside the range that release's extra accepts.
 2. `docker compose up --build -d`.
+
+### HTTP 403 and browser impersonation
+
+Rumble, and other sites behind Cloudflare's bot screen, refuse a plain Python client on
+its TLS handshake (`Unable to download webpage: HTTP Error 403: Forbidden`) before any
+header or cookie is read. The `curl-cffi` extra lets yt-dlp handshake like Chrome, and
+`ytdlp._extract` retries any 403 that way, once. Only on a 403: sites that already work,
+YouTube above all, keep yt-dlp's own client. A 403 that survives the retry is a block on
+the server's IP or a site that wants a signed-in session; the cookies file below is the
+remedy for the second.
 
 ### Deno
 
