@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from sqlmodel import col, select
-from yt_dlp.utils import DownloadError
+from yt_dlp.utils import DownloadError, YoutubeDLError
 
 from app.ingest import ytdlp
 from app.jobs import enrichment as enrichment_jobs
@@ -84,8 +84,15 @@ class FakeYoutubeDL:
     made: list = []
     # When set, raised from `extract_info` for the matching URL.
     errors: dict = {}
+    # URLs that answer 403 unless the client impersonates a browser (Cloudflare).
+    browser_only: set = set()
+    # Whether curl_cffi is "installed": without it yt-dlp refuses `impersonate` at
+    # construction, which is the real library's behaviour.
+    can_impersonate: bool = True
 
     def __init__(self, params):
+        if params.get("impersonate") and not FakeYoutubeDL.can_impersonate:
+            raise YoutubeDLError('Impersonate target "" is not available.')
         self.params = params
         FakeYoutubeDL.made.append(params)
 
@@ -98,6 +105,11 @@ class FakeYoutubeDL:
     def extract_info(self, url, download=False):
         if url in FakeYoutubeDL.errors:
             raise FakeYoutubeDL.errors[url]
+        if url in FakeYoutubeDL.browser_only and not self.params.get("impersonate"):
+            raise DownloadError(
+                f"ERROR: [Rumble] {url}: Unable to download webpage: HTTP Error 403: "
+                "Forbidden (caused by <HTTPError 403: Forbidden>)"
+            )
         info = copy.deepcopy(FakeYoutubeDL.infos[url])
         if not download:
             return info
@@ -134,6 +146,8 @@ def fake_ytdlp(monkeypatch):
     FakeYoutubeDL.infos = {VIDEO_URL: video_info()}
     FakeYoutubeDL.made = []
     FakeYoutubeDL.errors = {}
+    FakeYoutubeDL.browser_only = set()
+    FakeYoutubeDL.can_impersonate = True
     monkeypatch.setattr(ytdlp.yt_dlp, "YoutubeDL", FakeYoutubeDL)
     # Every name resolves somewhere public, so the SSRF guard never touches real DNS.
     monkeypatch.setattr(
@@ -657,6 +671,45 @@ def test_yt_dlp_failures_become_readable_messages(library, session, monkeypatch,
     assert job["status"] == "error"
     assert expected in job["error_message"]
     assert not job["error_message"].startswith("ERROR")
+
+
+def test_a_site_that_refuses_python_is_retried_as_a_browser(library, session, monkeypatch):
+    """Rumble behind Cloudflare: 403 to yt-dlp's own client, fine to Chrome's."""
+    FakeYoutubeDL.browser_only.add(VIDEO_URL)
+    job = _activity(library, _import(library, session, monkeypatch))
+
+    assert job["status"] == "done", job["error_message"]
+    # Probe and download each tried plainly first, then as a browser.
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True, False, True]
+
+
+def test_a_403_that_impersonation_does_not_cure_says_what_to_do(library, session, monkeypatch):
+    FakeYoutubeDL.errors[VIDEO_URL] = DownloadError(
+        "ERROR: [Rumble] v1: Unable to download webpage: HTTP Error 403: Forbidden"
+    )
+    job = _activity(library, _import(library, session, monkeypatch))
+
+    assert job["status"] == "error"
+    assert "HTTP 403" in job["error_message"]
+    assert "URL_IMPORT_COOKIES_FILE" in job["error_message"]
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True]
+
+
+def test_without_curl_cffi_the_403_is_reported_not_crashed_on(library, session, monkeypatch):
+    FakeYoutubeDL.browser_only.add(VIDEO_URL)
+    FakeYoutubeDL.can_impersonate = False
+    job = _activity(library, _import(library, session, monkeypatch))
+
+    assert job["status"] == "error"
+    assert "HTTP 403" in job["error_message"]
+    assert "curl-cffi" in job["error_message"]
+
+
+def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypatch):
+    FakeYoutubeDL.errors[VIDEO_URL] = DownloadError("ERROR: [youtube] abc123: Private video")
+    _import(library, session, monkeypatch)
+
+    assert not any(p.get("impersonate") for p in FakeYoutubeDL.made)
 
 
 def test_cancelling_mid_download_stops_the_job(library, session, monkeypatch):

@@ -32,7 +32,8 @@ from typing import Any, Callable, Optional
 
 import yt_dlp
 from fastapi import HTTPException, status
-from yt_dlp.utils import DownloadCancelled, DownloadError
+from yt_dlp.networking.impersonate import ImpersonateTarget
+from yt_dlp.utils import DownloadCancelled, DownloadError, YoutubeDLError
 
 from app import music
 from app.config import settings
@@ -132,11 +133,10 @@ def probe_url(url: str, workdir: Path) -> dict:
         "extract_flat": "in_playlist",
         "playlist_items": f"1:{max(1, settings.url_import_max_playlist_items)}",
     }
-    with yt_dlp.YoutubeDL(options) as ydl:
-        try:
-            info = ydl.extract_info(url, download=False)
-        except DownloadError as exc:
-            raise UrlImportError(readable_error(exc)) from exc
+    try:
+        info = _extract(options, url, download=False)
+    except DownloadError as exc:
+        raise UrlImportError(readable_error(exc)) from exc
     if not info:
         raise UrlImportError("Nothing importable was found at that link")
     return info
@@ -265,13 +265,12 @@ def download(
             {"key": "FFmpegSubtitlesConvertor", "format": "vtt", "when": "before_dl"}
         )
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        try:
-            result = ydl.extract_info(url, download=True)
-        except DownloadCancelled as exc:
-            raise JobCancelled(str(exc)) from exc
-        except DownloadError as exc:
-            raise UrlImportError(readable_error(exc)) from exc
+    try:
+        result = _extract(options, url, download=True)
+    except DownloadCancelled as exc:
+        raise JobCancelled(str(exc)) from exc
+    except DownloadError as exc:
+        raise UrlImportError(readable_error(exc)) from exc
 
     media = _media_path(result, workdir)
     return Downloaded(
@@ -451,6 +450,44 @@ def _base_options(workdir: Path) -> dict[str, Any]:
     return options
 
 
+def _extract(options: dict[str, Any], url: str, *, download: bool) -> Optional[dict]:
+    """`extract_info`, retried once as a browser when the site answers 403.
+
+    Sites behind Cloudflare's bot screen (Rumble, and others that come and go) refuse a
+    request on its TLS fingerprint before reading a single header, so no user agent or
+    cookie gets past it; only a request that handshakes like Chrome does. yt-dlp can
+    send one through curl_cffi (the `curl-cffi` extra in requirements.txt).
+
+    Only on a 403, and not for every request, because impersonation swaps the HTTP
+    stack under every site that already works — YouTube's extractor in particular is
+    tuned against yt-dlp's own client, and a change there would fail on YouTube's
+    schedule rather than ours. A 403 that impersonation does not cure (a geo-block, a
+    private video) costs one extra page load and reports the same error.
+    """
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            return ydl.extract_info(url, download=download)
+    except DownloadError as exc:
+        if "impersonate" in options or not _is_forbidden(exc):
+            raise
+        first = exc
+
+    logger.info("url import: %s answered 403, retrying as a browser", url)
+    try:
+        ydl = yt_dlp.YoutubeDL({**options, "impersonate": ImpersonateTarget()})
+    except YoutubeDLError:
+        # curl_cffi is not installed (or is a version yt-dlp does not support). The
+        # original 403 is the truthful answer; readable_error says what to install.
+        raise first
+    with ydl:
+        return ydl.extract_info(url, download=download)
+
+
+def _is_forbidden(exc: Exception) -> bool:
+    message = str(getattr(exc, "msg", None) or exc).lower()
+    return "403" in message and "forbidden" in message
+
+
 _ERROR_PREFIX = re.compile(r"^(?:ERROR:\s*)?(?:\[[^\]]+\]\s*)?(?:[\w-]+:\s+)?")
 
 # Messages worth replacing with what to actually do about them.
@@ -485,6 +522,15 @@ def readable_error(exc: Exception) -> str:
             "datacenter IPs, and for age-restricted videos). Export your browser's "
             "cookies for the site to a file and set URL_IMPORT_COOKIES_FILE — see "
             "docs/url-import.md."
+        )
+
+    if "403" in lowered and "forbidden" in lowered:
+        return (
+            "The site refused this server (HTTP 403). If the backend image predates "
+            "curl-cffi in backend/requirements.txt, rebuild it so the import can retry "
+            "as a browser. Otherwise the site blocks this server's IP or wants a "
+            "signed-in session: export your browser's cookies for it to a file and set "
+            "URL_IMPORT_COOKIES_FILE — see docs/url-import.md."
         )
 
     first_line = message.splitlines()[0] if message else ""
