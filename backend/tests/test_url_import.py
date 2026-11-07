@@ -10,11 +10,9 @@ test gets.
 """
 
 import copy
-import io
 import json
 import shutil
 import socket
-import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -84,16 +82,10 @@ class FakeYoutubeDL:
 
     infos: dict = {}
     made: list = []
-    # (url, impersonating) for every `extract_info` call, in order.
-    extracted: list = []
     # When set, raised from `extract_info` for the matching URL.
     errors: dict = {}
     # URLs that answer 403 unless the client impersonates a browser (Cloudflare).
     browser_only: set = set()
-    # URLs that answer 403 even to a browser (Cloudflare's JavaScript challenge).
-    challenged: set = set()
-    # What `urlopen` answers, by URL; anything else is a 404.
-    pages: dict = {}
     # Whether curl_cffi is "installed": without it yt-dlp refuses `impersonate` at
     # construction, which is the real library's behaviour.
     can_impersonate: bool = True
@@ -110,21 +102,10 @@ class FakeYoutubeDL:
     def __exit__(self, *exc):
         return False
 
-    def close(self):
-        pass
-
-    def urlopen(self, url):
-        if url not in FakeYoutubeDL.pages:
-            raise YoutubeDLError(f"HTTP Error 404: Not Found ({url})")
-        return io.BytesIO(json.dumps(FakeYoutubeDL.pages[url]).encode())
-
     def extract_info(self, url, download=False):
-        FakeYoutubeDL.extracted.append((url, bool(self.params.get("impersonate"))))
         if url in FakeYoutubeDL.errors:
             raise FakeYoutubeDL.errors[url]
-        if url in FakeYoutubeDL.challenged or (
-            url in FakeYoutubeDL.browser_only and not self.params.get("impersonate")
-        ):
+        if url in FakeYoutubeDL.browser_only and not self.params.get("impersonate"):
             raise DownloadError(
                 f"ERROR: [Rumble] {url}: Unable to download webpage: HTTP Error 403: "
                 "Forbidden (caused by <HTTPError 403: Forbidden>)"
@@ -164,11 +145,8 @@ class FakeYoutubeDL:
 def fake_ytdlp(monkeypatch):
     FakeYoutubeDL.infos = {VIDEO_URL: video_info()}
     FakeYoutubeDL.made = []
-    FakeYoutubeDL.extracted = []
     FakeYoutubeDL.errors = {}
     FakeYoutubeDL.browser_only = set()
-    FakeYoutubeDL.challenged = set()
-    FakeYoutubeDL.pages = {}
     FakeYoutubeDL.can_impersonate = True
     monkeypatch.setattr(ytdlp.yt_dlp, "YoutubeDL", FakeYoutubeDL)
     # Every name resolves somewhere public, so the SSRF guard never touches real DNS.
@@ -702,7 +680,7 @@ def test_a_site_that_refuses_python_is_retried_as_a_browser(library, session, mo
 
     assert job["status"] == "done", job["error_message"]
     # Probe and download each tried plainly first, then as a browser.
-    assert [browser for _, browser in FakeYoutubeDL.extracted] == [False, True, False, True]
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True, False, True]
 
 
 def test_a_403_that_impersonation_does_not_cure_says_what_to_do(library, session, monkeypatch):
@@ -713,8 +691,8 @@ def test_a_403_that_impersonation_does_not_cure_says_what_to_do(library, session
 
     assert job["status"] == "error"
     assert "HTTP 403" in job["error_message"]
-    assert "Cloudflare" in job["error_message"]
-    assert [browser for _, browser in FakeYoutubeDL.extracted] == [False, True]
+    assert "URL_IMPORT_PROXY" in job["error_message"]
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True]
 
 
 def test_without_curl_cffi_the_403_is_reported_not_crashed_on(library, session, monkeypatch):
@@ -724,7 +702,7 @@ def test_without_curl_cffi_the_403_is_reported_not_crashed_on(library, session, 
 
     assert job["status"] == "error"
     assert "HTTP 403" in job["error_message"]
-    assert "curl-cffi" in job["error_message"]
+    assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False]
 
 
 def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypatch):
@@ -734,46 +712,51 @@ def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypat
     assert not any(p.get("impersonate") for p in FakeYoutubeDL.made)
 
 
-RUMBLE_PAGE = "https://rumble.com/v13047p-a-speech.html"
-RUMBLE_OEMBED = "https://rumble.com/api/Media/oembed.json?url=" + urllib.parse.quote(RUMBLE_PAGE, safe="")
-RUMBLE_EMBED = "https://rumble.com/embed/v10abcd/"
+RUMBLE_URL = "https://rumble.com/v13047p-a-speech.html"
 
 
-def test_a_challenged_rumble_page_is_imported_through_its_embed(library, session, monkeypatch):
-    """Cloudflare challenges the watch page from some server IPs; the oEmbed API and
-    the embed player stay open, so the video arrives anyway, filed under its page."""
-    FakeYoutubeDL.challenged.add(RUMBLE_PAGE)
-    FakeYoutubeDL.pages[RUMBLE_OEMBED] = {
-        "type": "video",
-        "html": f'<iframe src="{RUMBLE_EMBED}" width="640"></iframe>',
-    }
-    FakeYoutubeDL.infos[RUMBLE_EMBED] = video_info(webpage_url=RUMBLE_EMBED, extractor_key="RumbleEmbed")
-    job = _activity(library, _import(library, session, monkeypatch, url=RUMBLE_PAGE))
+@pytest.mark.parametrize(
+    "hosts, url, proxied",
+    [
+        ("", VIDEO_URL, True),  # no list: every import
+        ("rumble.com", RUMBLE_URL, True),
+        ("rumble.com", "https://www.rumble.com/v1-x.html", True),  # subdomains too
+        ("rumble.com", VIDEO_URL, False),
+        ("rumble.com", "https://notrumble.com/v1.html", False),  # not a suffix match
+        (" Rumble.com , odysee.com ", RUMBLE_URL, True),
+    ],
+)
+def test_the_import_proxy_applies_to_the_sites_it_names(
+    library, session, monkeypatch, hosts, url, proxied
+):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "url_import_proxy", "socks5h://172.17.0.1:1080")
+    monkeypatch.setattr(settings, "url_import_proxy_hosts", hosts)
+    FakeYoutubeDL.infos[url] = video_info(webpage_url=url)
+    job = _activity(library, _import(library, session, monkeypatch, url=url))
 
     assert job["status"] == "done", job["error_message"]
-    originals = [a for a in session.exec(select(Asset)).all() if a.source_url]
-    assert [a.source_url for a in originals] == [RUMBLE_PAGE]
-    # Page plainly, page as a browser, then the embed: for the probe and the download.
-    assert FakeYoutubeDL.extracted == [
-        (RUMBLE_PAGE, False), (RUMBLE_PAGE, True), (RUMBLE_EMBED, True),
-    ] * 2
+    expected = "socks5h://172.17.0.1:1080" if proxied else None
+    # Probe and download alike: a site that blocks the IP blocks its CDN too.
+    assert [p.get("proxy") for p in FakeYoutubeDL.made] == [expected, expected]
 
 
-def test_a_challenged_rumble_page_without_an_embed_reports_the_challenge(library, session, monkeypatch):
-    FakeYoutubeDL.challenged.add(RUMBLE_PAGE)
-    FakeYoutubeDL.pages[RUMBLE_OEMBED] = {"type": "video", "html": ""}
-    job = _activity(library, _import(library, session, monkeypatch, url=RUMBLE_PAGE))
+def test_no_proxy_is_used_when_none_is_set(library, session, monkeypatch):
+    _import(library, session, monkeypatch)
 
-    assert job["status"] == "error"
-    assert "Cloudflare" in job["error_message"]
+    assert not any("proxy" in p for p in FakeYoutubeDL.made)
 
 
-def test_only_rumble_falls_back_to_an_embed(library, session, monkeypatch):
-    FakeYoutubeDL.challenged.add(VIDEO_URL)
-    job = _activity(library, _import(library, session, monkeypatch))
+@pytest.mark.parametrize("value", ["172.17.0.1:1080", "ftp://proxy:21", "socks://x"])
+def test_a_proxy_that_is_not_a_proxy_url_stops_startup(monkeypatch, value):
+    from pydantic import ValidationError
 
-    assert job["status"] == "error"
-    assert "HTTP 403" in job["error_message"]
+    from app.config import Settings
+
+    monkeypatch.setenv("URL_IMPORT_PROXY", value)
+    with pytest.raises(ValidationError, match="URL_IMPORT_PROXY"):
+        Settings()
 
 
 def test_cancelling_mid_download_stops_the_job(library, session, monkeypatch):

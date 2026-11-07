@@ -21,7 +21,6 @@ Why these particular options is recorded beside each one. The two that matter mo
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import shutil
@@ -130,7 +129,7 @@ def probe_url(url: str, workdir: Path) -> dict:
     their own jobs, which resolve them anyway.
     """
     options = {
-        **_base_options(workdir),
+        **_base_options(workdir, url),
         "extract_flat": "in_playlist",
         "playlist_items": f"1:{max(1, settings.url_import_max_playlist_items)}",
     }
@@ -220,7 +219,7 @@ def download(
     captions = choose_captions(info) if want_captions else None
 
     options: dict[str, Any] = {
-        **_base_options(workdir),
+        **_base_options(workdir, url),
         "paths": {"home": str(workdir), "temp": str(workdir)},
         # Fixed names: the title is recorded as metadata, and a filename built from it
         # is a filename built from text the site controls.
@@ -418,7 +417,7 @@ class _Logger:
         logger.info("yt-dlp: %s", msg)
 
 
-def _base_options(workdir: Path) -> dict[str, Any]:
+def _base_options(workdir: Path, url: str) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -448,25 +447,45 @@ def _base_options(workdir: Path) -> dict[str, Any]:
         shutil.copyfile(source, copy)
         options["cookiefile"] = str(copy)
 
+    proxy = proxy_for(url)
+    if proxy:
+        options["proxy"] = proxy
+
     return options
 
 
-def _extract(options: dict[str, Any], url: str, *, download: bool) -> Optional[dict]:
-    """`extract_info`, with two fallbacks for a site that answers 403.
+def proxy_for(url: str) -> str:
+    """URL_IMPORT_PROXY when it applies to `url`, else "".
 
-    First, the same request as a browser. Sites behind Cloudflare's bot screen refuse a
+    By the pasted link's host, and for the whole import: yt-dlp's `proxy` covers every
+    request of the run, so the video files on a site's CDN go the same way as its pages
+    — which is what a site blocking this server's IP needs, since the CDN usually blocks
+    it too.
+    """
+    proxy = settings.url_import_proxy.strip()
+    if not proxy:
+        return ""
+    hosts = [h.strip().lower().lstrip(".") for h in settings.url_import_proxy_hosts.split(",")]
+    hosts = [h for h in hosts if h]
+    if not hosts:
+        return proxy
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return proxy if any(host == h or host.endswith(f".{h}") for h in hosts) else ""
+
+
+def _extract(options: dict[str, Any], url: str, *, download: bool) -> Optional[dict]:
+    """`extract_info`, retried once as a browser when the site answers 403.
+
+    Sites behind Cloudflare's bot screen (Rumble, and others that come and go) refuse a
     request on its TLS fingerprint before reading a single header, so no user agent or
     cookie gets past it; only a request that handshakes like Chrome does. yt-dlp can
-    send one through curl_cffi (the `curl-cffi` extra in requirements.txt). Only on a
-    403, and not for every request, because impersonation swaps the HTTP stack under
-    every site that already works — YouTube's extractor in particular is tuned against
-    yt-dlp's own client, and a change there would fail on YouTube's schedule.
+    send one through curl_cffi (the `curl-cffi` extra in requirements.txt).
 
-    Second, for Rumble only, the video's embed instead of its watch page. Cloudflare
-    sends some server IPs a JavaScript challenge on the watch page that no importer can
-    answer, while the oEmbed API and the embed player behind it stay open (checked from
-    a blocked server, Nov 2026). The embed carries less — no description or tags — but
-    a video with its title beats an error.
+    Only on a 403, and not for every request, because impersonation swaps the HTTP
+    stack under every site that already works — YouTube's extractor in particular is
+    tuned against yt-dlp's own client, and a change there would fail on YouTube's
+    schedule rather than ours. A 403 that impersonation does not cure (a geo-block, a
+    private video) costs one extra page load and reports the same error.
     """
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
@@ -474,67 +493,17 @@ def _extract(options: dict[str, Any], url: str, *, download: bool) -> Optional[d
     except DownloadError as exc:
         if "impersonate" in options or not _is_forbidden(exc):
             raise
-        failure = exc
+        first = exc
 
-    browser = _as_browser(options)
-    if browser is not None:
-        logger.info("url import: %s answered 403, retrying as a browser", url)
-        try:
-            with yt_dlp.YoutubeDL(browser) as ydl:
-                return ydl.extract_info(url, download=download)
-        except DownloadError as exc:
-            if not _is_forbidden(exc):
-                raise
-            failure = exc
-
-    embed = _rumble_embed_url(url, browser or options)
-    if embed is None:
-        raise failure
-    logger.info("url import: %s is challenged, importing its embed %s", url, embed)
-    with yt_dlp.YoutubeDL(browser or options) as ydl:
-        info = ydl.extract_info(embed, download=download)
-    if info:
-        # The page people know the video by, so the asset's source link and the
-        # already-imported check both name it rather than the player.
-        info["webpage_url"] = url
-    return info
-
-
-def _as_browser(options: dict[str, Any]) -> Optional[dict[str, Any]]:
-    """`options` impersonating a browser, or None when curl_cffi is missing (or is a
-    version yt-dlp does not support): yt-dlp refuses the option at construction."""
-    browser = {**options, "impersonate": ImpersonateTarget()}
+    logger.info("url import: %s answered 403, retrying as a browser", url)
     try:
-        yt_dlp.YoutubeDL(browser).close()
+        ydl = yt_dlp.YoutubeDL({**options, "impersonate": ImpersonateTarget()})
     except YoutubeDLError:
-        return None
-    return browser
-
-
-_RUMBLE_HOSTS = ("rumble.com", "www.rumble.com")
-_RUMBLE_EMBED = re.compile(r"https://rumble\.com/embed/(?:[0-9a-z]+\.)?([0-9a-z]+)")
-
-
-def _rumble_embed_url(url: str, options: dict[str, Any]) -> Optional[str]:
-    """The embed player URL for a Rumble watch page, from Rumble's oEmbed API.
-
-    The embed id is not the watch page's id, and the page that would map one to the
-    other is the one being challenged. Fetched
-    through yt-dlp so the cookies, timeout and impersonation of the import apply.
-    """
-    parts = urllib.parse.urlsplit(url)
-    if (parts.hostname or "").lower() not in _RUMBLE_HOSTS or parts.path.startswith("/embed/"):
-        return None
-    api = "https://rumble.com/api/Media/oembed.json?" + urllib.parse.urlencode({"url": url})
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            with ydl.urlopen(api) as response:
-                data = json.loads(response.read())
-    except (YoutubeDLError, OSError, ValueError) as exc:
-        logger.info("url import: Rumble oEmbed for %s failed: %s", url, exc)
-        return None
-    match = _RUMBLE_EMBED.search(str(data.get("html") or "") if isinstance(data, dict) else "")
-    return f"https://rumble.com/embed/{match.group(1)}/" if match else None
+        # curl_cffi is not installed (or is a version yt-dlp does not support). The
+        # original 403 is the truthful answer; readable_error says what to install.
+        raise first
+    with ydl:
+        return ydl.extract_info(url, download=download)
 
 
 def _is_forbidden(exc: Exception) -> bool:
@@ -580,13 +549,11 @@ def readable_error(exc: Exception) -> str:
 
     if "403" in lowered and "forbidden" in lowered:
         return (
-            "The site refused this server (HTTP 403). "
-            "Usually that is Cloudflare challenging this server's IP address — a "
-            "JavaScript check no importer can answer, and one a cookies file from "
-            "another computer does not pass either, since the clearance is tied to the "
-            "IP that earned it. Download the video on your own computer and upload it. "
-            "If the backend image predates curl-cffi in backend/requirements.txt, "
-            "rebuild it first."
+            "The site refused this server (HTTP 403). Usually that is Cloudflare "
+            "challenging this server's IP address, which no importer can answer and a "
+            "cookies file from another computer does not clear. Send imports from that "
+            "site through another network with URL_IMPORT_PROXY, or download the video "
+            "on your own computer and upload it — see docs/url-import.md."
         )
 
     first_line = message.splitlines()[0] if message else ""

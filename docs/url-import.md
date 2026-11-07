@@ -96,17 +96,12 @@ header or cookie is read. The `curl-cffi` extra lets yt-dlp handshake like Chrom
 `ytdlp._extract` retries any 403 that way, once. Only on a 403: sites that already work,
 YouTube above all, keep yt-dlp's own client.
 
-A 403 that survives that retry is usually Cloudflare's JavaScript challenge
-(`cf-mitigated: challenge`, a "Just a moment…" page), which it sends to IPs it distrusts
-— hosting providers' especially. Nothing that is not a real browser answers it, and a
-cookies file exported elsewhere does not help: the clearance cookie is bound to the IP
-and browser that earned it. For **Rumble** there is a way round: the challenge covers its
-watch pages but not its oEmbed API or embed player, so the import asks oEmbed for the
-video's embed id and imports `rumble.com/embed/<id>/` instead, filed under the watch
-page's URL. The embed has the title, channel, date, duration and thumbnail, but no
-description or tags. For any other site, download it elsewhere and upload the file.
+A 403 that survives the retry is usually Cloudflare's JavaScript challenge, which it
+sends to IPs it distrusts, hosting providers' especially. See the next section.
 
-To see which case a server is in:
+### When a site blocks this server's IP
+
+Check from the server what the site answers:
 
 ```bash
 docker compose exec backend python -c "
@@ -114,6 +109,65 @@ from curl_cffi import requests
 r = requests.get('<the page URL>', impersonate='chrome')
 print(r.status_code, r.headers.get('cf-mitigated'))"
 ```
+
+`403 challenge` is Cloudflare's JavaScript check ("Just a moment…"). Nothing but a real
+browser answers it, and a cookies file does not carry the clearance across: the cookie is
+bound to the IP and browser that earned it. Rumble does this to whole datacenter ranges,
+and on every path of rumble.com that leads to a video — the watch page, the embed
+player's data endpoint — leaving only oEmbed open, which carries no video (checked from a
+blocked server, Nov 2026).
+
+What gets through is a request from another IP. `URL_IMPORT_PROXY` sends imports through
+a proxy, and `URL_IMPORT_PROXY_HOSTS` limits it to the sites that need it. The whole
+import goes through it, the video files on the site's CDN included.
+
+**A free proxy: an SSH tunnel to a computer at home.** OpenSSH (7.6 or newer) can turn
+an SSH connection into a SOCKS proxy on the far end, so the server's requests leave
+through your home connection, whose IP Cloudflare trusts. It works while that computer is
+on and the tunnel is up; for always-on, use a residential proxy service or a VPN
+container on the server instead, and set the same two variables.
+
+1. On the server, let a tunnel bind to Docker's bridge address rather than only to
+   loopback, which containers cannot reach. In `/etc/ssh/sshd_config`:
+
+   ```
+   GatewayPorts clientspecified
+   ```
+
+   then `systemctl reload ssh`. `ip -4 addr show docker0` shows the bridge address —
+   `172.17.0.1` unless Docker was configured otherwise. Nothing outside the machine can
+   reach that address.
+
+2. On the home computer, open the tunnel (`-N`: no shell; a `-R` with no destination is a
+   SOCKS proxy):
+
+   ```bash
+   ssh -N -R 172.17.0.1:1080 root@<server>
+   ```
+
+   To keep it up across drops and reboots, run it under `autossh` or a systemd user unit.
+
+3. In the server's `.env`:
+
+   ```
+   URL_IMPORT_PROXY=socks5h://172.17.0.1:1080
+   URL_IMPORT_PROXY_HOSTS=rumble.com
+   ```
+
+   then `docker compose up -d` (a restart, not a rebuild). `socks5h` resolves names at the
+   far end too.
+
+4. Check it from inside the container:
+
+   ```bash
+   docker compose exec backend curl -s -o /dev/null -w '%{http_code}\n' \
+     -x socks5h://172.17.0.1:1080 https://rumble.com/
+   ```
+
+   `200` is the tunnel working. A timeout is usually the host firewall dropping traffic
+   from containers to the host (with ufw: `ufw allow in on docker0 to any port 1080`,
+   and the same for the compose network's `br-…` interface if that is where it comes
+   from).
 
 ### Deno
 
@@ -269,6 +323,8 @@ size free while that happens.
 | `URL_IMPORT_MAX_HEIGHT` | `1080` | Tallest video fetched. |
 | `URL_IMPORT_MAX_PLAYLIST_ITEMS` | `200` | Most videos one playlist or channel link may queue. |
 | `URL_IMPORT_COOKIES_FILE` | empty | Set for you by `docker-compose.cookies.yml` — see [YouTube cookies](#youtube-cookies). |
+| `URL_IMPORT_PROXY` | empty | Proxy for imports (`socks5h://…`, `http://…`) — see [When a site blocks this server's IP](#when-a-site-blocks-this-servers-ip). |
+| `URL_IMPORT_PROXY_HOSTS` | empty | Sites the proxy is for, comma-separated; empty means every import. |
 
 ---
 
