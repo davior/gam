@@ -97,11 +97,11 @@ header or cookie is read. The `curl-cffi` extra lets yt-dlp handshake like Chrom
 YouTube above all, keep yt-dlp's own client.
 
 A 403 that survives the retry is usually Cloudflare's JavaScript challenge, which it
-sends to IPs it distrusts, hosting providers' especially. See the next section.
-
-### When a site blocks this server's IP
-
-Check from the server what the site answers:
+sends to IPs it distrusts — hosting providers' especially. Rumble does this to whole
+datacenter ranges, on every path that leads to a video (checked from a blocked server,
+Nov 2026). Nothing but a real browser answers it, and a cookies file exported elsewhere
+does not help: the clearance cookie is bound to the IP and browser that earned it. To
+check what a site answers this server:
 
 ```bash
 docker compose exec backend python -c "
@@ -110,64 +110,16 @@ r = requests.get('<the page URL>', impersonate='chrome')
 print(r.status_code, r.headers.get('cf-mitigated'))"
 ```
 
-`403 challenge` is Cloudflare's JavaScript check ("Just a moment…"). Nothing but a real
-browser answers it, and a cookies file does not carry the clearance across: the cookie is
-bound to the IP and browser that earned it. Rumble does this to whole datacenter ranges,
-and on every path of rumble.com that leads to a video — the watch page, the embed
-player's data endpoint — leaving only oEmbed open, which carries no video (checked from a
-blocked server, Nov 2026).
+`403 challenge` is that. The import's error then ends with a yt-dlp command for the
+link (`ytdlp.local_download_command`), shown in the activity panel with a copy button: run
+it on a computer whose connection the site accepts (it needs yt-dlp and ffmpeg) and
+upload the file. `--embed-metadata` writes the channel, date and link into the file,
+which the upload reads back; the filename is the title, which becomes the asset's name.
+The description, tags and chapters do not come along.
 
-What gets through is a request from another IP. `URL_IMPORT_PROXY` sends imports through
-a proxy, and `URL_IMPORT_PROXY_HOSTS` limits it to the sites that need it. The whole
-import goes through it, the video files on the site's CDN included.
-
-**A free proxy: an SSH tunnel to a computer at home.** OpenSSH (7.6 or newer) can turn
-an SSH connection into a SOCKS proxy on the far end, so the server's requests leave
-through your home connection, whose IP Cloudflare trusts. It works while that computer is
-on and the tunnel is up; for always-on, use a residential proxy service or a VPN
-container on the server instead, and set the same two variables.
-
-1. On the server, let a tunnel bind to Docker's bridge address rather than only to
-   loopback, which containers cannot reach. In `/etc/ssh/sshd_config`:
-
-   ```
-   GatewayPorts clientspecified
-   ```
-
-   then `systemctl reload ssh`. `ip -4 addr show docker0` shows the bridge address —
-   `172.17.0.1` unless Docker was configured otherwise. Nothing outside the machine can
-   reach that address.
-
-2. On the home computer, open the tunnel (`-N`: no shell; a `-R` with no destination is a
-   SOCKS proxy):
-
-   ```bash
-   ssh -N -R 172.17.0.1:1080 root@<server>
-   ```
-
-   To keep it up across drops and reboots, run it under `autossh` or a systemd user unit.
-
-3. In the server's `.env`:
-
-   ```
-   URL_IMPORT_PROXY=socks5h://172.17.0.1:1080
-   URL_IMPORT_PROXY_HOSTS=rumble.com
-   ```
-
-   then `docker compose up -d` (a restart, not a rebuild). `socks5h` resolves names at the
-   far end too.
-
-4. Check it from inside the container:
-
-   ```bash
-   docker compose exec backend curl -s -o /dev/null -w '%{http_code}\n' \
-     -x socks5h://172.17.0.1:1080 https://rumble.com/
-   ```
-
-   `200` is the tunnel working. A timeout is usually the host firewall dropping traffic
-   from containers to the host (with ufw: `ufw allow in on docker0 to any port 1080`,
-   and the same for the compose network's `br-…` interface if that is where it comes
-   from).
+Routing imports through another network instead (a proxy, or an SSH tunnel home) was
+written and set aside in davior/gam#75 (see its history): a tunnel exposes the home network to
+anything on the server, and a residential proxy is a subscription for an occasional video.
 
 ### Deno
 
@@ -323,8 +275,6 @@ size free while that happens.
 | `URL_IMPORT_MAX_HEIGHT` | `1080` | Tallest video fetched. |
 | `URL_IMPORT_MAX_PLAYLIST_ITEMS` | `200` | Most videos one playlist or channel link may queue. |
 | `URL_IMPORT_COOKIES_FILE` | empty | Set for you by `docker-compose.cookies.yml` — see [YouTube cookies](#youtube-cookies). |
-| `URL_IMPORT_PROXY` | empty | Proxy for imports (`socks5h://…`, `http://…`) — see [When a site blocks this server's IP](#when-a-site-blocks-this-servers-ip). |
-| `URL_IMPORT_PROXY_HOSTS` | empty | Sites the proxy is for, comma-separated; empty means every import. |
 
 ---
 

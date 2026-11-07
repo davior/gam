@@ -115,15 +115,6 @@ class Settings(BaseSettings):
     # For YouTube's "confirm you're not a bot" wall on datacenter IPs, and for
     # age-restricted or members-only videos; mount the file read-only and point here.
     url_import_cookies_file: str = ""
-    # A proxy for imports, e.g. socks5h://172.17.0.1:1080 — for sites that refuse this
-    # server's IP outright. Cloudflare answers some hosting providers' IPs with a
-    # JavaScript challenge that no importer can pass and no cookie from another machine
-    # clears (Rumble, Nov 2026); only a request from another IP gets through.
-    url_import_proxy: str = ""
-    # Comma-separated sites the proxy is for, e.g. "rumble.com"; a name covers its
-    # subdomains. Empty sends every import through it. Matched on the link that was
-    # pasted, and the whole import follows it, video files on a CDN included.
-    url_import_proxy_hosts: str = ""
 
     # ─── administration ──────────────────────────────────────────────────────
     # Comma-separated user ids or usernames. The Notes token carries no admin claim and
@@ -207,19 +198,6 @@ class Settings(BaseSettings):
                 "JWT_SECRET_KEY must be set to a strong secret before starting. "
                 "It must match the value gecko-notes uses, since GAM verifies the "
                 "tokens Notes issues. Generate one with: openssl rand -hex 32"
-            )
-        return value
-
-    @field_validator("url_import_proxy")
-    @classmethod
-    def _known_proxy_scheme(cls, value: str) -> str:
-        value = value.strip()
-        scheme = value.split("://", 1)[0].lower() if "://" in value else ""
-        if value and scheme not in {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}:
-            # yt-dlp would otherwise fail every import with its own, less obvious error.
-            raise ValueError(
-                "URL_IMPORT_PROXY must be a URL such as socks5h://host:1080 or "
-                "http://host:8080"
             )
         return value
 

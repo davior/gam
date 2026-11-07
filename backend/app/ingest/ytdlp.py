@@ -129,14 +129,14 @@ def probe_url(url: str, workdir: Path) -> dict:
     their own jobs, which resolve them anyway.
     """
     options = {
-        **_base_options(workdir, url),
+        **_base_options(workdir),
         "extract_flat": "in_playlist",
         "playlist_items": f"1:{max(1, settings.url_import_max_playlist_items)}",
     }
     try:
         info = _extract(options, url, download=False)
     except DownloadError as exc:
-        raise UrlImportError(readable_error(exc)) from exc
+        raise UrlImportError(readable_error(exc, url)) from exc
     if not info:
         raise UrlImportError("Nothing importable was found at that link")
     return info
@@ -219,7 +219,7 @@ def download(
     captions = choose_captions(info) if want_captions else None
 
     options: dict[str, Any] = {
-        **_base_options(workdir, url),
+        **_base_options(workdir),
         "paths": {"home": str(workdir), "temp": str(workdir)},
         # Fixed names: the title is recorded as metadata, and a filename built from it
         # is a filename built from text the site controls.
@@ -270,7 +270,7 @@ def download(
     except DownloadCancelled as exc:
         raise JobCancelled(str(exc)) from exc
     except DownloadError as exc:
-        raise UrlImportError(readable_error(exc)) from exc
+        raise UrlImportError(readable_error(exc, url)) from exc
 
     media = _media_path(result, workdir)
     return Downloaded(
@@ -417,7 +417,7 @@ class _Logger:
         logger.info("yt-dlp: %s", msg)
 
 
-def _base_options(workdir: Path, url: str) -> dict[str, Any]:
+def _base_options(workdir: Path) -> dict[str, Any]:
     options: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -447,30 +447,7 @@ def _base_options(workdir: Path, url: str) -> dict[str, Any]:
         shutil.copyfile(source, copy)
         options["cookiefile"] = str(copy)
 
-    proxy = proxy_for(url)
-    if proxy:
-        options["proxy"] = proxy
-
     return options
-
-
-def proxy_for(url: str) -> str:
-    """URL_IMPORT_PROXY when it applies to `url`, else "".
-
-    By the pasted link's host, and for the whole import: yt-dlp's `proxy` covers every
-    request of the run, so the video files on a site's CDN go the same way as its pages
-    — which is what a site blocking this server's IP needs, since the CDN usually blocks
-    it too.
-    """
-    proxy = settings.url_import_proxy.strip()
-    if not proxy:
-        return ""
-    hosts = [h.strip().lower().lstrip(".") for h in settings.url_import_proxy_hosts.split(",")]
-    hosts = [h for h in hosts if h]
-    if not hosts:
-        return proxy
-    host = (urllib.parse.urlsplit(url).hostname or "").lower()
-    return proxy if any(host == h or host.endswith(f".{h}") for h in hosts) else ""
 
 
 def _extract(options: dict[str, Any], url: str, *, download: bool) -> Optional[dict]:
@@ -526,7 +503,7 @@ _NEEDS_UPDATE = (
 )
 
 
-def readable_error(exc: Exception) -> str:
+def readable_error(exc: Exception, url: str = "") -> str:
     """A yt-dlp failure as something a person can act on.
 
     yt-dlp's messages are written for a terminal user — `ERROR: [youtube] abc123: …` —
@@ -549,11 +526,11 @@ def readable_error(exc: Exception) -> str:
 
     if "403" in lowered and "forbidden" in lowered:
         return (
-            "The site refused this server (HTTP 403). Usually that is Cloudflare "
-            "challenging this server's IP address, which no importer can answer and a "
-            "cookies file from another computer does not clear. Send imports from that "
-            "site through another network with URL_IMPORT_PROXY, or download the video "
-            "on your own computer and upload it — see docs/url-import.md."
+            "The site refused this server (HTTP 403). "
+            "Usually that is Cloudflare blocking this server's IP address, which no "
+            "importer can get past from here. Download it on your own computer and "
+            "upload the file:"
+            + (f"\n{local_download_command(url)}" if url else "")
         )
 
     first_line = message.splitlines()[0] if message else ""
@@ -564,6 +541,31 @@ def readable_error(exc: Exception) -> str:
             "version in backend/requirements.txt and rebuild."
         )
     return cleaned
+
+
+# Characters left as they are when a URL goes into a pasted command. Everything else —
+# quotes, `$`, backticks, `!`, `\`, spaces — is percent-encoded, which leaves the link
+# meaning the same thing and leaves nothing for a shell to expand inside double quotes.
+# Double rather than single quotes because cmd.exe has no single-quoting at all; bash,
+# zsh and PowerShell take either.
+_COMMAND_SAFE = ":/?#[]@&=+,;%-._~*()'"
+
+
+def local_download_command(url: str) -> str:
+    """The yt-dlp command that fetches `url` the way an import would, to run elsewhere.
+
+    For a site that blocks this server but not a home connection. `--embed-metadata`
+    writes the channel, date and link into the file, which the upload path reads back
+    (`embedded_metadata.py`); the output name is the title, which an upload takes as the
+    asset's name. Same height cap and container as an import. Needs ffmpeg, as any
+    yt-dlp merge does.
+    """
+    quoted = urllib.parse.quote(url, safe=_COMMAND_SAFE)
+    height = max(144, settings.url_import_max_height)
+    return (
+        f'yt-dlp --embed-metadata -f "bv*[height<={height}]+ba/b" '
+        f'--merge-output-format mp4 -o "%(title)s.%(ext)s" "{quoted}"'
+    )
 
 
 # ─── mapping what the site said ──────────────────────────────────────────────

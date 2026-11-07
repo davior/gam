@@ -13,6 +13,7 @@ import copy
 import json
 import shutil
 import socket
+import urllib.parse
 from pathlib import Path
 
 import pytest
@@ -691,7 +692,10 @@ def test_a_403_that_impersonation_does_not_cure_says_what_to_do(library, session
 
     assert job["status"] == "error"
     assert "HTTP 403" in job["error_message"]
-    assert "URL_IMPORT_PROXY" in job["error_message"]
+    # The last line is a command to run at home, for this link.
+    command = job["error_message"].splitlines()[-1]
+    assert command.startswith("yt-dlp --embed-metadata ")
+    assert command.endswith(f'"{VIDEO_URL}"')
     assert [bool(p.get("impersonate")) for p in FakeYoutubeDL.made] == [False, True]
 
 
@@ -712,51 +716,29 @@ def test_other_failures_are_not_retried_as_a_browser(library, session, monkeypat
     assert not any(p.get("impersonate") for p in FakeYoutubeDL.made)
 
 
-RUMBLE_URL = "https://rumble.com/v13047p-a-speech.html"
-
-
-@pytest.mark.parametrize(
-    "hosts, url, proxied",
-    [
-        ("", VIDEO_URL, True),  # no list: every import
-        ("rumble.com", RUMBLE_URL, True),
-        ("rumble.com", "https://www.rumble.com/v1-x.html", True),  # subdomains too
-        ("rumble.com", VIDEO_URL, False),
-        ("rumble.com", "https://notrumble.com/v1.html", False),  # not a suffix match
-        (" Rumble.com , odysee.com ", RUMBLE_URL, True),
-    ],
-)
-def test_the_import_proxy_applies_to_the_sites_it_names(
-    library, session, monkeypatch, hosts, url, proxied
-):
+def test_the_local_command_fetches_what_an_import_would(monkeypatch):
     from app.config import settings
 
-    monkeypatch.setattr(settings, "url_import_proxy", "socks5h://172.17.0.1:1080")
-    monkeypatch.setattr(settings, "url_import_proxy_hosts", hosts)
-    FakeYoutubeDL.infos[url] = video_info(webpage_url=url)
-    job = _activity(library, _import(library, session, monkeypatch, url=url))
+    monkeypatch.setattr(settings, "url_import_max_height", 720)
+    command = ytdlp.local_download_command("https://rumble.com/v13047p-a-speech.html")
 
-    assert job["status"] == "done", job["error_message"]
-    expected = "socks5h://172.17.0.1:1080" if proxied else None
-    # Probe and download alike: a site that blocks the IP blocks its CDN too.
-    assert [p.get("proxy") for p in FakeYoutubeDL.made] == [expected, expected]
+    assert command == (
+        'yt-dlp --embed-metadata -f "bv*[height<=720]+ba/b" --merge-output-format mp4 '
+        '-o "%(title)s.%(ext)s" "https://rumble.com/v13047p-a-speech.html"'
+    )
 
 
-def test_no_proxy_is_used_when_none_is_set(library, session, monkeypatch):
-    _import(library, session, monkeypatch)
+def test_the_local_command_leaves_a_shell_nothing_to_expand():
+    """The link is whatever was pasted. Inside the command's double quotes, a `"`, `$`,
+    backtick, `!` or `\\` would end the quoting or run something; encoded, each is still
+    the same link to the site."""
+    hostile = 'https://rumble.com/v1-x.html?a="b"&c=$(touch pwned)&d=`id`&e=!!&f=\\'
+    command = ytdlp.local_download_command(hostile)
+    quoted = command.rsplit(" ", 1)[-1]
 
-    assert not any("proxy" in p for p in FakeYoutubeDL.made)
-
-
-@pytest.mark.parametrize("value", ["172.17.0.1:1080", "ftp://proxy:21", "socks://x"])
-def test_a_proxy_that_is_not_a_proxy_url_stops_startup(monkeypatch, value):
-    from pydantic import ValidationError
-
-    from app.config import Settings
-
-    monkeypatch.setenv("URL_IMPORT_PROXY", value)
-    with pytest.raises(ValidationError, match="URL_IMPORT_PROXY"):
-        Settings()
+    assert quoted.startswith('"') and quoted.endswith('"')
+    assert not any(ch in quoted[1:-1] for ch in '"$`!\\ ')
+    assert urllib.parse.unquote(quoted[1:-1]) == hostile
 
 
 def test_cancelling_mid_download_stops_the_job(library, session, monkeypatch):
