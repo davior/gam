@@ -94,9 +94,26 @@ Rumble, and other sites behind Cloudflare's bot screen, refuse a plain Python cl
 its TLS handshake (`Unable to download webpage: HTTP Error 403: Forbidden`) before any
 header or cookie is read. The `curl-cffi` extra lets yt-dlp handshake like Chrome, and
 `ytdlp._extract` retries any 403 that way, once. Only on a 403: sites that already work,
-YouTube above all, keep yt-dlp's own client. A 403 that survives the retry is a block on
-the server's IP or a site that wants a signed-in session; the cookies file below is the
-remedy for the second.
+YouTube above all, keep yt-dlp's own client.
+
+A 403 that survives that retry is usually Cloudflare's JavaScript challenge
+(`cf-mitigated: challenge`, a "Just a moment…" page), which it sends to IPs it distrusts
+— hosting providers' especially. Nothing that is not a real browser answers it, and a
+cookies file exported elsewhere does not help: the clearance cookie is bound to the IP
+and browser that earned it. For **Rumble** there is a way round: the challenge covers its
+watch pages but not its oEmbed API or embed player, so the import asks oEmbed for the
+video's embed id and imports `rumble.com/embed/<id>/` instead, filed under the watch
+page's URL. The embed has the title, channel, date, duration and thumbnail, but no
+description or tags. For any other site, download it elsewhere and upload the file.
+
+To see which case a server is in:
+
+```bash
+docker compose exec backend python -c "
+from curl_cffi import requests
+r = requests.get('<the page URL>', impersonate='chrome')
+print(r.status_code, r.headers.get('cf-mitigated'))"
+```
 
 ### Deno
 
