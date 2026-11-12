@@ -57,4 +57,4 @@ curl-cffi==0.17.0
 # suite's API change together, and a deployment must not pick up one without the other.
 # Installed from an archive URL rather than git+https because python:3.13-slim has no
 # git. Bump it when the suite's client does.
-gecko-suite-client @ https://github.com/davior/gecko-suite/archive/428c1a110edb0b14af549079e191881ee3b5ddff.tar.gz#subdirectory=client
+gecko-suite-client @ https://github.com/davior/gecko-suite/archive/a9b024f9e146a89e320581084d02c3a81215bcf1.tar.gz#subdirectory=client
