@@ -33,19 +33,25 @@ RRF_K = 60
 
 @dataclass
 class Candidate:
-    """One retrievable thing: an asset, or a moment inside one."""
+    """One retrievable thing: an asset, a moment inside one, or a page inside one."""
 
     asset_id: str
     segment_id: Optional[str] = None
     start_time: Optional[float] = None
     snippet: str = ""
+    # A document page (`DocumentPage.id`). Never set alongside `segment_id`: a page has
+    # no time and a segment has no page, and one hit is one or the other.
+    page_id: Optional[str] = None
     # Which retrievers found it, for explaining a result rather than only ranking it.
     sources: set[str] = field(default_factory=set)
     score: float = 0.0
 
     @property
     def key(self) -> tuple[str, Optional[str]]:
-        return (self.asset_id, self.segment_id)
+        # Both ids are uuids, so one slot tells them apart: the keyword and semantic
+        # retrievers finding the same page must merge into one candidate, as they do
+        # for a segment.
+        return (self.asset_id, self.segment_id or self.page_id)
 
 
 @dataclass
@@ -66,6 +72,11 @@ class FusedAsset:
     # it to hand (the keyword index stores only the start), so it is looked up once for
     # the final page — see `services/search.py::_attach_end_times`.
     end_time: Optional[float] = None
+    # The matched page, for a hit inside a document; its number and label are looked up
+    # for the final page as end times are (`services/search.py::_attach_pages`).
+    page_id: Optional[str] = None
+    page_number: Optional[int] = None
+    page_label: Optional[str] = None
 
 
 def fuse(ranked_lists: dict[str, Sequence[Candidate]], *, k: int = RRF_K) -> list[Candidate]:
@@ -85,6 +96,7 @@ def fuse(ranked_lists: dict[str, Sequence[Candidate]], *, k: int = RRF_K) -> lis
                     segment_id=candidate.segment_id,
                     start_time=candidate.start_time,
                     snippet=candidate.snippet,
+                    page_id=candidate.page_id,
                 )
                 merged[candidate.key] = existing
 
@@ -120,6 +132,7 @@ def collapse_to_assets(candidates: Sequence[Candidate]) -> list[FusedAsset]:
                 start_time=candidate.start_time,
                 segment_id=candidate.segment_id,
                 sources=set(candidate.sources),
+                page_id=candidate.page_id,
             )
             continue
 
@@ -132,5 +145,6 @@ def collapse_to_assets(candidates: Sequence[Candidate]) -> list[FusedAsset]:
             existing.snippet = candidate.snippet
             existing.start_time = candidate.start_time
             existing.segment_id = candidate.segment_id
+            existing.page_id = candidate.page_id
 
     return sorted(best.values(), key=lambda a: (-a.score, a.asset_id))

@@ -191,6 +191,7 @@ def _catalogue(
     _describe(session, storage, asset)
     _chain_transcription(session, asset)
     _chain_music_analysis(session, asset)
+    _chain_text_extraction(session, asset)
     return asset
 
 
@@ -379,6 +380,35 @@ def _chain_music_analysis(session: Session, asset: Asset) -> None:
         enrichment_jobs.submit(session, asset, KIND_ANALYZE_MUSIC)
     except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
         logger.warning("Could not queue music analysis for asset %s", asset.id, exc_info=True)
+
+
+def _chain_text_extraction(session: Session, asset: Asset) -> None:
+    """Read a document's text the moment it lands.
+
+    Unconditional, like music analysis and unlike transcription: it calls no provider,
+    costs nothing and needs nothing configured. Without it a document's words were in
+    the library only after someone pressed "Extract text", so search could not find a
+    phrase in it and nothing outside GAM (Video Creator's assistant reading a document
+    it was asked to use) had any text to read.
+
+    Only the formats `extract_text` reads. A legacy `.doc` or an `.odt` would queue a job
+    certain to fail, and a red row after every such upload trains people to ignore the
+    feed; its own refusal still says what to do when someone asks by hand.
+
+    Imports lazily, for the cycle `_chain_transcription` describes.
+    """
+    from app.enrichment.extract_text import extractable
+    from app.jobs import enrichment as enrichment_jobs
+    from app.models.job import KIND_EXTRACT_TEXT
+
+    if not extractable(asset):
+        return
+    try:
+        if enrichment_jobs.active_job(session, asset.id, KIND_EXTRACT_TEXT) is not None:
+            return
+        enrichment_jobs.submit(session, asset, KIND_EXTRACT_TEXT)
+    except Exception:  # noqa: BLE001 - an upload that succeeded must stay succeeded
+        logger.warning("Could not queue text extraction for asset %s", asset.id, exc_info=True)
 
 
 def _reindex(session: Session, asset: Asset) -> None:

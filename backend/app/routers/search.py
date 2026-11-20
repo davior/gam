@@ -33,6 +33,13 @@ class SearchHit(BaseModel):
     # is, and for a moment whose transcript segment no longer exists.
     end_time: Optional[float] = None
     segment_id: Optional[str] = None
+    # Where in a document the words were found: the `DocumentPage` row, its real page
+    # number where the format has pages (a PDF's, a slide's, a sheet's position), and
+    # its label ("Page 3", "Slide 7", "Part 2"). Null for a hit that is not inside a
+    # document's text. `GET /api/assets/{id}/text` returns the same rows in full.
+    page_id: Optional[str] = None
+    page_number: Optional[int] = None
+    page_label: Optional[str] = None
     # Which retrievers found it — "keyword", "semantic", or both.
     sources: List[str] = Field(default_factory=list)
     other_matches: int = 0
@@ -85,6 +92,9 @@ def search(
             start_time=fused.start_time,
             end_time=fused.end_time,
             segment_id=fused.segment_id,
+            page_id=fused.page_id,
+            page_number=fused.page_number,
+            page_label=fused.page_label,
             sources=sorted(fused.sources),
             other_matches=fused.other_matches,
         )

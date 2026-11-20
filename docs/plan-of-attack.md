@@ -418,14 +418,20 @@ from a decision, which is the distinction PR bodies do not preserve.
   every PDF has a first-page thumbnail, so a document branch any lower would leave a PDF
   summarised from a picture of its cover.
 
-  Two parts of it remain, and neither is a decision:
-  - **Document text is not searchable.** The rows exist and are in neither `segment_fts`
-    nor the vector index, so a phrase on page 74 cannot be found. A document *is*
-    findable by the summary enrichment writes, because `apply_ai_metadata` reindexes —
-    which is easy to mistake for the body being indexed. Closing this means indexing page
-    bodies, embedding them, and teaching `search/hybrid.py` to resolve a hit id to either
-    a transcript segment or a page. `jobs/enrichment.py` carries the one-line
-    `_chain_embedding` change that goes with it, commented.
+  Text is read the moment a document lands: the upload queues `extract_text` for the
+  formats it reads (`services/assets._chain_text_extraction`), unconditionally, since it
+  calls nothing and costs nothing. Before that it ran only when someone pressed the
+  button, so most documents had no text for anything to read.
+
+  - **~~Document text is not searchable.~~** Built. Pages are in their own FTS5 table,
+    `page_fts` (not in `segment_fts`, whose every reader takes a hit's id for a
+    transcript segment and its start for a second), written by `extract_text._store` and
+    backfilled by its migration from pages already read. They are embedded too (owner
+    kind `page`, cut to `MAX_PAGE_EMBED_CHARS` so one long sheet cannot fail a batch),
+    and a finished extraction chains the embed job. `search/hybrid.py` carries a
+    `page_id` beside `segment_id`, and a search hit names its page (`page_id`,
+    `page_number`, `page_label`) as a spoken hit names its second. Video Creator's
+    assistant finds a document this way and reads it with `GET /api/assets/{id}/text`.
   - **Legacy and OpenDocument formats refuse by name.** `.doc`, `.xls`, `.ppt`, `.rtf`,
     `.odt`, `.ods`, `.odp` are in `DOCUMENT_EXTENSIONS` and nothing reads them. The
     refusal says which format and what to do about it, rather than failing vaguely.

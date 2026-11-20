@@ -8,6 +8,9 @@ from sqlmodel import Column, Field, SQLModel
 # a photo with no speech in it is still findable by meaning.
 OWNER_SEGMENT = "segment"
 OWNER_ASSET = "asset"
+# A document's page, slide, sheet or part (`DocumentPage`): the written counterpart of a
+# segment, so a hit on a document says where in it the meaning was found.
+OWNER_PAGE = "page"
 
 
 class Embedding(SQLModel, table=True):
@@ -30,7 +33,7 @@ class Embedding(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     user_id: str = Field(index=True)
 
-    owner_kind: str = Field(index=True)  # segment | asset
+    owner_kind: str = Field(index=True)  # segment | asset | page
     owner_id: str = Field(index=True)
     # Denormalised so a hit resolves to its asset without a join back through segments.
     asset_id: str = Field(index=True)

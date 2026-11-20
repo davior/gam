@@ -17,11 +17,12 @@ import logging
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
-from sqlmodel import Session, col, delete
+from sqlmodel import Session, col, delete, select
 
 from app.ingest.filetypes import TYPE_DOCUMENT, extension_of
 from app.models.asset import Asset
 from app.models.document import DocumentPage
+from app.search import fts
 from app.storage import build_storage
 
 logger = logging.getLogger(__name__)
@@ -330,6 +331,20 @@ def _store(session: Session, asset: Asset, chunks: list[_Chunk]) -> int:
         )
 
     session.commit()
+
+    # Indexed here, the one writer of pages, so a document is findable by what it says
+    # the moment the job finishes. Never fails the job: text that was read and stored
+    # is still readable by everything that asks for it, and a re-run reindexes.
+    try:
+        rows = session.exec(
+            select(DocumentPage)
+            .where(DocumentPage.asset_id == asset.id)
+            .order_by(col(DocumentPage.idx))
+        ).all()
+        fts.index_pages(session, asset.id, rows)
+    except Exception:  # noqa: BLE001 - stored text beats indexed text
+        logger.warning("Could not index the pages of %s", asset.id, exc_info=True)
+
     return len(chunks)
 
 

@@ -94,7 +94,7 @@ def test_the_migration_and_the_test_ddl_agree(alembic_config):
     """
     import sqlite3
 
-    from app.search.fts import ASSET_FTS_COLUMNS, SEGMENT_FTS_COLUMNS
+    from app.search.fts import ASSET_FTS_COLUMNS, PAGE_FTS_COLUMNS, SEGMENT_FTS_COLUMNS
 
     config, db_path = alembic_config
     command.upgrade(config, "head")
@@ -103,6 +103,7 @@ def test_the_migration_and_the_test_ddl_agree(alembic_config):
         for table, expected in (
             ("asset_fts", ASSET_FTS_COLUMNS),
             ("segment_fts", SEGMENT_FTS_COLUMNS),
+            ("page_fts", PAGE_FTS_COLUMNS),
         ):
             actual = tuple(row[1] for row in conn.execute(f"PRAGMA table_info({table})"))
             assert actual == expected, f"{table}: migration has {actual}, constants say {expected}"
@@ -538,3 +539,34 @@ def test_asset_fts_rebuild_keeps_the_index_and_adds_music(alembic_config):
     with sqlite3.connect(db_path) as conn:
         hit = conn.execute("SELECT asset_id FROM asset_fts WHERE asset_fts MATCH 'Caravan'").fetchone()
         assert hit is not None and hit[0] == "a1"
+
+
+def test_pages_extracted_before_the_page_index_are_searchable_after_it(alembic_config):
+    """An index that started empty would leave every document read before the upgrade
+    unsearchable until someone thought to extract it again, and nothing would say so."""
+    config, db_path = alembic_config
+    command.upgrade(config, "5f2b8c1d9e73")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO documentpage (id, asset_id, user_id, idx, page_number, label, text)"
+            " VALUES ('p1', 'a1', 'u', 0, 74, 'Page 74', 'the aerosol dispersion protocol')"
+        )
+        conn.execute(
+            "INSERT INTO documentpage (id, asset_id, user_id, idx, page_number, label, text)"
+            " VALUES ('p2', 'a1', 'u', 1, 75, 'Page 75', '   ')"
+        )
+        conn.commit()
+
+    from app import database
+
+    database.engine.dispose()
+    command.upgrade(config, "head")
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT page_id, asset_id, user_id FROM page_fts WHERE page_fts MATCH 'dispersion'"
+        ).fetchall()
+        assert rows == [("p1", "a1", "u")]
+        # A blank page is nothing to find, and is left out as index_pages leaves it out.
+        assert conn.execute("SELECT count(*) FROM page_fts").fetchone() == (1,)
