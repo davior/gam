@@ -39,7 +39,9 @@ user row. The changes that makes possible are specified in
 - **Import from a link** — paste a YouTube (or Rumble, Odysee, Vimeo…) URL and it arrives
   titled, attributed, tagged and split into its chapters, with the site's captions as a
   transcript when there is no Deepgram key. Playlists too. See
-  [`docs/url-import.md`](docs/url-import.md).
+  [`docs/url-import.md`](docs/url-import.md). A single picture can be imported by its
+  address too, which is how Video Creator files the pictures its image search finds
+  ([`docs/image-import.md`](docs/image-import.md)).
 - **Find the moment** — full-text search over names, descriptions, summaries, tags and
   transcripts, fused with semantic search so half-remembered wording still lands. Hits
   in audio and video come back with a timestamp you can jump straight to.
