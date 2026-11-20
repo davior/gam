@@ -13,6 +13,13 @@ export interface SearchHit {
   /** Where that moment ends, for cutting it out as a clip. Null with `start_time`. */
   end_time: number | null
   segment_id: string | null
+  /**
+   * Where in a document the words were found ("Page 74", "Slide 7", "Part 2"), and its
+   * real page number where the format has pages. Null for a hit outside a document's text.
+   */
+  page_id?: string | null
+  page_number?: number | null
+  page_label?: string | null
   /** Which retrievers found it: 'keyword', 'semantic', or both. */
   sources: string[]
   /** Other moments in the same asset that also matched. */

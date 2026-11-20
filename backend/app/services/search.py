@@ -10,7 +10,8 @@ from sqlmodel import Session, col, select
 
 from app.embeddings import EmbeddingError, build_embedder
 from app.models.asset import Asset
-from app.models.embedding import OWNER_SEGMENT
+from app.models.document import DocumentPage
+from app.models.embedding import OWNER_PAGE, OWNER_SEGMENT
 from app.models.transcript import TranscriptSegment
 from app.search import fts, vectors
 from app.search.hybrid import Candidate, FusedAsset, collapse_to_assets, fuse
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 # fusion can promote something that placed tenth in one list and second in the other —
 # and it cannot promote what it was never handed.
 RETRIEVER_DEPTH = 50
+
+# How much of a page a semantic hit shows. The keyword retriever's snippet is FTS5's
+# excerpt around the matched words; a vector match has no matched words, so it shows the
+# page's opening, cut to about the length of that excerpt.
+SEMANTIC_PAGE_SNIPPET_CHARS = 200
 
 SOURCE_KEYWORD = "keyword"
 SOURCE_SEMANTIC = "semantic"
@@ -70,6 +76,7 @@ def search(
 
     page = fused[:limit]
     _attach_end_times(session, page)
+    _attach_pages(session, page)
     return SearchOutcome(assets=page, semantic_ran=semantic_ran, semantic_error=semantic_error)
 
 
@@ -98,14 +105,36 @@ def _attach_end_times(session: Session, hits: list[FusedAsset]) -> None:
             hit.end_time = ends.get(hit.segment_id)
 
 
-def _keyword_candidates(session: Session, user_id: str, query: str) -> list[Candidate]:
-    """Metadata hits and spoken hits, interleaved by their own rank.
+def _attach_pages(session: Session, hits: list[FusedAsset]) -> None:
+    """Give each document hit the page it is on, as the reader would name it.
 
-    Two FTS queries rather than one because they are separate indexes; their results are
-    concatenated with segment hits first, since a hit that carries a timestamp is more
-    useful than one that only names a file.
+    Looked up after `limit`, for the reason `_attach_end_times` gives. A page removed
+    since it was indexed (a re-extraction) leaves the hit with its snippet and no page,
+    rather than a number that now means a different page.
+    """
+    page_ids = [h.page_id for h in hits if h.page_id]
+    if not page_ids:
+        return
+    rows = session.exec(
+        select(DocumentPage.id, DocumentPage.page_number, DocumentPage.label).where(
+            col(DocumentPage.id).in_(page_ids)
+        )
+    ).all()
+    found = {row[0]: (row[1], row[2]) for row in rows}
+    for hit in hits:
+        if hit.page_id and hit.page_id in found:
+            hit.page_number, hit.page_label = found[hit.page_id]
+
+
+def _keyword_candidates(session: Session, user_id: str, query: str) -> list[Candidate]:
+    """Metadata hits, spoken hits and written hits, each list in its own rank.
+
+    Three FTS queries rather than one because they are separate indexes; their results
+    are concatenated with segment and page hits first, since a hit that says where in
+    the file it is is more useful than one that only names the file.
     """
     segment_hits = fts.search_segments(session, user_id, query, limit=RETRIEVER_DEPTH)
+    page_hits = fts.search_pages(session, user_id, query, limit=RETRIEVER_DEPTH)
     asset_hits = fts.search_assets(session, user_id, query, limit=RETRIEVER_DEPTH)
 
     candidates = [
@@ -117,6 +146,10 @@ def _keyword_candidates(session: Session, user_id: str, query: str) -> list[Cand
         )
         for hit in segment_hits
     ]
+    candidates.extend(
+        Candidate(asset_id=hit.asset_id, page_id=hit.page_id, snippet=hit.snippet)
+        for hit in page_hits
+    )
     candidates.extend(
         Candidate(asset_id=hit.asset_id, snippet=hit.snippet) for hit in asset_hits
     )
@@ -150,6 +183,12 @@ def _semantic_candidates(session: Session, user_id: str, query: str) -> Optional
         ).all()
         segments = {row.id: row for row in rows}
 
+    page_ids = [h.owner_id for h in hits if h.owner_kind == OWNER_PAGE]
+    pages: dict[str, DocumentPage] = {}
+    if page_ids:
+        rows = session.exec(select(DocumentPage).where(col(DocumentPage.id).in_(page_ids))).all()
+        pages = {row.id: row for row in rows}
+
     candidates: list[Candidate] = []
     for hit in hits:
         if hit.owner_kind == OWNER_SEGMENT:
@@ -165,6 +204,15 @@ def _semantic_candidates(session: Session, user_id: str, query: str) -> Optional
                     snippet=segment.text,
                 )
             )
+        elif hit.owner_kind == OWNER_PAGE:
+            found = pages.get(hit.owner_id)
+            if found is None:
+                # Re-extracted since it was embedded; the new pages' vectors replace it.
+                continue
+            text = " ".join((found.text or "").split())
+            if len(text) > SEMANTIC_PAGE_SNIPPET_CHARS:
+                text = text[:SEMANTIC_PAGE_SNIPPET_CHARS].rsplit(" ", 1)[0] + "…"
+            candidates.append(Candidate(asset_id=hit.asset_id, page_id=found.id, snippet=text))
         else:
             candidates.append(Candidate(asset_id=hit.asset_id))
 

@@ -1,9 +1,10 @@
 """Keyword search, on SQLite's FTS5.
 
-Two indexes, because the two things being searched answer different questions. An
-asset index matches what the *file* is called and how it was described; a segment index
+Three indexes, because the things being searched answer different questions. An asset
+index matches what the *file* is called and how it was described; a segment index
 matches what somebody *said* inside it, and carries the timestamp that makes the hit
-useful.
+useful; a page index matches what is *written* inside a document, and carries the page
+that makes that hit useful the same way.
 
 The tables store their own copy of the text rather than using FTS5's external-content
 mode. External content saves that duplication, but it needs an integer rowid to point
@@ -27,12 +28,14 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.models.asset import Asset
+from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
 
 logger = logging.getLogger(__name__)
 
 ASSET_FTS = "asset_fts"
 SEGMENT_FTS = "segment_fts"
+PAGE_FTS = "page_fts"
 
 # The virtual tables, as DDL.
 #
@@ -77,6 +80,20 @@ CREATE VIRTUAL TABLE segment_fts USING fts5(
 )
 """
 
+# A table of its own rather than pages in `segment_fts` with no start time. Everything
+# that reads a segment hit treats its id as a `TranscriptSegment` and its start as the
+# second it was said at, and a page riding in there would be cut to "0.0 s" of a PDF by
+# the first caller that trusted that. Separate tables keep each hit's meaning in its type.
+PAGE_FTS_DDL = """
+CREATE VIRTUAL TABLE page_fts USING fts5(
+    page_id UNINDEXED,
+    asset_id UNINDEXED,
+    user_id UNINDEXED,
+    body,
+    tokenize='porter unicode61'
+)
+"""
+
 ASSET_FTS_COLUMNS = (
     "asset_id",
     "user_id",
@@ -88,10 +105,11 @@ ASSET_FTS_COLUMNS = (
     "music_text",
 )
 SEGMENT_FTS_COLUMNS = ("segment_id", "asset_id", "user_id", "body", "start_time")
+PAGE_FTS_COLUMNS = ("page_id", "asset_id", "user_id", "body")
 
 # The virtual tables, plus the shadow tables SQLite creates behind each one
 # (_data, _idx, _content, _docsize, _config).
-FTS_TABLE_PREFIXES = (ASSET_FTS, SEGMENT_FTS)
+FTS_TABLE_PREFIXES = (ASSET_FTS, SEGMENT_FTS, PAGE_FTS)
 
 
 def is_fts_table(name: str) -> bool:
@@ -122,6 +140,7 @@ def create_search_tables(connection) -> None:
     """
     connection.execute(text(ASSET_FTS_DDL))
     connection.execute(text(SEGMENT_FTS_DDL))
+    connection.execute(text(PAGE_FTS_DDL))
 
 
 @dataclass
@@ -131,6 +150,7 @@ class FtsHit:
     snippet: str
     segment_id: Optional[str] = None
     start_time: Optional[float] = None
+    page_id: Optional[str] = None
 
 
 # ─── writing ─────────────────────────────────────────────────────────────────
@@ -174,13 +194,11 @@ def index_asset(
 
 
 def remove_asset(session: Session, asset_id: str) -> None:
-    """Drop an asset and everything said inside it from the index."""
-    session.execute(
-        text(f"DELETE FROM {ASSET_FTS} WHERE asset_id = :asset_id"), {"asset_id": asset_id}
-    )
-    session.execute(
-        text(f"DELETE FROM {SEGMENT_FTS} WHERE asset_id = :asset_id"), {"asset_id": asset_id}
-    )
+    """Drop an asset and everything said or written inside it from the index."""
+    for table in (ASSET_FTS, SEGMENT_FTS, PAGE_FTS):
+        session.execute(
+            text(f"DELETE FROM {table} WHERE asset_id = :asset_id"), {"asset_id": asset_id}
+        )
     session.commit()
 
 
@@ -210,6 +228,35 @@ def index_segments(session: Session, asset_id: str, segments: Iterable[Transcrip
             text(
                 f"INSERT INTO {SEGMENT_FTS} (segment_id, asset_id, user_id, body, start_time)"
                 " VALUES (:segment_id, :asset_id, :user_id, :body, :start_time)"
+            ),
+            rows,
+        )
+    session.commit()
+    return len(rows)
+
+
+def index_pages(session: Session, asset_id: str, pages: Iterable[DocumentPage]) -> int:
+    """Replace this document's page index wholesale, as `index_segments` does a
+    transcript's: a re-extraction writes a new set of rows, never an edit of the old."""
+    session.execute(
+        text(f"DELETE FROM {PAGE_FTS} WHERE asset_id = :asset_id"), {"asset_id": asset_id}
+    )
+
+    rows = [
+        {
+            "page_id": page.id,
+            "asset_id": asset_id,
+            "user_id": page.user_id,
+            "body": page.text or "",
+        }
+        for page in pages
+        if (page.text or "").strip()
+    ]
+    if rows:
+        session.execute(
+            text(
+                f"INSERT INTO {PAGE_FTS} (page_id, asset_id, user_id, body)"
+                " VALUES (:page_id, :asset_id, :user_id, :body)"
             ),
             rows,
         )
@@ -290,4 +337,30 @@ def search_segments(session: Session, user_id: str, query: str, limit: int = 50)
             snippet=r[4] or "",
         )
         for r in rows
+    ]
+
+
+def search_pages(session: Session, user_id: str, query: str, limit: int = 50) -> list[FtsHit]:
+    """Written-word hits inside documents, each carrying the page it is on.
+
+    The page is to a document what the timestamp is to a recording: without it a hit on
+    a 200-page PDF says "somewhere in here", which is the question the search was asked.
+    """
+    match = build_match_query(query)
+    if not match:
+        return []
+
+    rows = session.execute(
+        text(
+            f"SELECT page_id, asset_id, bm25({PAGE_FTS}) AS score,"
+            f"       snippet({PAGE_FTS}, 3, '«', '»', '…', 16) AS excerpt"
+            f"  FROM {PAGE_FTS}"
+            f" WHERE {PAGE_FTS} MATCH :match AND user_id = :user_id"
+            "  ORDER BY score LIMIT :limit"
+        ),
+        {"match": match, "user_id": user_id, "limit": limit},
+    ).all()
+
+    return [
+        FtsHit(page_id=r[0], asset_id=r[1], score=r[2], snippet=r[3] or "") for r in rows
     ]

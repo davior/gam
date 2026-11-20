@@ -73,6 +73,27 @@ def upstream_fixture(monkeypatch):
     return state
 
 
+def queued_extraction(session, asset_id):
+    """The extraction an upload queued on its own, or None."""
+    return session.exec(
+        select(EnrichmentJob).where(
+            EnrichmentJob.asset_id == asset_id,
+            EnrichmentJob.kind == KIND_EXTRACT_TEXT,
+            col(EnrichmentJob.status).in_(("queued", "processing")),
+        )
+    ).first()
+
+
+def settle(session, asset_id):
+    """Finish the upload's own extraction job, as the worker would have by the time a
+    person presses the button, so the button is not refused as already running."""
+    job = queued_extraction(session, asset_id)
+    if job is not None:
+        job.status = "done"
+        session.add(job)
+        session.commit()
+
+
 def pages_of(session, asset_id):
     return session.exec(
         select(DocumentPage)
@@ -223,10 +244,27 @@ def test_deleting_the_asset_takes_its_pages_with_it(library, session):
 # --- the API ----------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("extension", [".pdf", ".docx", ".pptx", ".xlsx", ".txt"])
+def test_an_upload_queues_its_own_extraction(library, session, extension):
+    """Nobody has to press anything for a document's words to reach search, or the
+    other apps reading the library: the upload asks, with no provider configured."""
+    created = upload_document(library, extension)
+
+    assert queued_extraction(session, created["id"]) is not None
+
+
+def test_an_upload_nothing_can_read_queues_nothing(library, session):
+    """A job certain to fail would leave a red row after every such upload."""
+    created = upload_document(library, ".txt", name="notes.rtf")
+
+    assert queued_extraction(session, created["id"]) is None
+
+
 def test_the_endpoint_queues_a_job_without_a_provider(library, session):
     """The one enrichment action that must not require an LLM: it is the step that runs
     before one is any use."""
     created = upload_document(library, ".pdf")
+    settle(session, created["id"])
 
     response = library.post(f"/api/assets/{created['id']}/extract-text")
 
@@ -256,6 +294,7 @@ def test_a_video_cannot_have_its_text_extracted(library, session):
 
 def test_two_runs_at_once_are_refused(library, session):
     created = upload_document(library, ".pdf")
+    settle(session, created["id"])
 
     first = library.post(f"/api/assets/{created['id']}/extract-text")
     second = library.post(f"/api/assets/{created['id']}/extract-text")
@@ -291,7 +330,7 @@ def test_the_text_endpoint_is_empty_before_extraction_runs(library, session):
 
 def test_the_worker_runs_it_end_to_end(library, session, monkeypatch):
     created = upload_document(library, ".pptx")
-    job = library.post(f"/api/assets/{created['id']}/extract-text").json()["data"]
+    job = {"id": queued_extraction(session, created["id"]).id}
 
     queue = enrichment_jobs.queue()
     monkeypatch.setattr(queue, "engine", session.get_bind())
@@ -308,7 +347,7 @@ def test_a_worker_failure_is_reported_in_the_users_words(library, session, monke
     """Not "crashed": TextExtractionError has to be in the dispatcher's exception ladder
     or the ladder's bare Exception branch swallows the sentence."""
     created = upload_document(library, ".pdf")
-    job = library.post(f"/api/assets/{created['id']}/extract-text").json()["data"]
+    job = {"id": queued_extraction(session, created["id"]).id}
 
     def explode(*args, **kwargs):
         raise extract_text.TextExtractionError("The file could not be read.")

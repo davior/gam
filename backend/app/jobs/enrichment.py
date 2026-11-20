@@ -404,12 +404,9 @@ def _run(job_id: str, q: JobQueue) -> None:
                 error_message=None,
             )
 
-            if job.kind == KIND_TRANSCRIBE:
-                # Not KIND_EXTRACT_TEXT: `embed` vectorises an asset's name, description
-                # and summary plus its transcript segments, and document pages are in
-                # none of those. Chaining it here would queue a job that does no new
-                # work and put a row in the activity feed saying so. It belongs here the
-                # day page bodies are embedded — see the search gap in plan-of-attack.
+            if job.kind in (KIND_TRANSCRIBE, KIND_EXTRACT_TEXT):
+                # A document's pages are embedded like a transcript's segments, so the
+                # text just read is findable by meaning as soon as it is by its words.
                 _chain_embedding(session, asset)
             elif captioned is not None:
                 _chain_embedding(session, captioned)
@@ -497,7 +494,7 @@ def _run(job_id: str, q: JobQueue) -> None:
 
 
 def _chain_embedding(session: Session, asset: Asset) -> None:
-    """Embed an asset as soon as it has a transcript, without being asked.
+    """Embed an asset as soon as it has a transcript or a document's text, unasked.
 
     A transcript that is not embedded is invisible to half of search, and nothing else
     in the app would ever ask for the embed job — asking the user to press a second

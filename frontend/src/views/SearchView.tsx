@@ -235,7 +235,9 @@ function nextParams(
 
 function ResultRow({ hit, onOpen }: { hit: SearchHit; onOpen: () => void }) {
   const parts = splitHighlights(hit.snippet)
-  const timestamp = hit.start_time !== null ? formatDuration(hit.start_time) : ''
+  // A moment in a recording, or the page of a document: each says where to look.
+  const timestamp =
+    hit.start_time !== null ? formatDuration(hit.start_time) : (hit.page_label ?? '')
 
   return (
     <li>
@@ -285,8 +287,8 @@ function ResultRow({ hit, onOpen }: { hit: SearchHit; onOpen: () => void }) {
 
           {hit.other_matches > 0 && (
             <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-500">
-              and {hit.other_matches} more moment{hit.other_matches === 1 ? '' : 's'} in
-              this asset
+              and {hit.other_matches} more {hit.page_id ? 'place' : 'moment'}
+              {hit.other_matches === 1 ? '' : 's'} in this asset
             </p>
           )}
         </div>
