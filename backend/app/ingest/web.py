@@ -1,6 +1,7 @@
-"""Fetching a web page, or one audio file named on it, on the user's behalf.
+"""Fetching a web page, or one audio file or picture named on it, on the user's behalf.
 
-For importing tracks from a page (`ingest/page_tracks.py`). The same rules as
+For importing tracks from a page (`ingest/page_tracks.py`) and pictures found by an
+image search (`services/image_import.py`). The same rules as
 `generation/download.py`, which is fal-specific (its errors, its retry policy, image and
 video only), restated here for a page and a track rather than shared through a flag:
 
@@ -41,6 +42,8 @@ MAX_PAGE_BYTES = 8 * 1024 * 1024
 # A long, high-bitrate track. Anything bigger is not a soundtrack.
 MAX_TRACK_BYTES = 200 * 1024 * 1024
 MAX_TRACK_SECONDS = 15 * 60
+# A large photograph. A picture for a video frame needs no more than a few megapixels.
+MAX_IMAGE_BYTES = 40 * 1024 * 1024
 
 # Says what is asking, so a site that wants to can tell this apart from a browser and
 # from a crawler. It is one person's library fetching the tracks they picked.
@@ -65,6 +68,24 @@ _AUDIO_TYPES = {
     "audio/mp4": ".m4a",
     "audio/x-m4a": ".m4a",
 }
+
+
+_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/pjpeg": ".jpg",
+    "image/png": ".png",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/avif": ".avif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+}
+# What a picture from the web may be stored as. Narrower than an upload's list: no SVG,
+# which is a document that can carry script and is served back from this origin, and
+# none of the camera formats (HEIC) or icons a person might upload but a site sends a
+# browser as something else anyway.
+WEB_IMAGE_EXTENSIONS = frozenset(_IMAGE_TYPES.values()) | {".jpeg", ".tif"}
 
 
 class WebFetchError(Exception):
@@ -161,30 +182,57 @@ def download_audio(
     with an HTML page (a login wall, a "download starting" interstitial) must not land in
     the library as a broken track.
     """
+    return _download(url, workdir, stem, what="track", extension=_audio_extension,
+                     refused="That link is not an audio file", max_bytes=max_bytes,
+                     on_progress=on_progress)
+
+
+def download_image(url: str, workdir: Path, stem: str, *, max_bytes: int = MAX_IMAGE_BYTES) -> Path:
+    """Fetch one picture into `workdir/<stem><ext>` and return the path.
+
+    The same refusal as a track's: a URL that answers with a page is not a picture. An
+    image search's "image URL" is often a page that shows one, or a hotlink guard's
+    placeholder, and that must not become an asset.
+    """
+    return _download(url, workdir, stem, what="picture", extension=_image_extension,
+                     refused="That link is not a picture GAM can store", max_bytes=max_bytes)
+
+
+def _download(
+    url: str,
+    workdir: Path,
+    stem: str,
+    *,
+    what: str,
+    extension: Callable[[str, Optional[str]], Optional[str]],
+    refused: str,
+    max_bytes: int,
+    on_progress: Optional[Progress] = None,
+) -> Path:
     report = on_progress or (lambda _received, _total: None)
     try:
         with _client("identity") as client, _get(client, url) as (final, response):
             if response.status_code >= 400:
-                raise _status_error("track", response)
+                raise _status_error(what, response)
             encoding = response.headers.get("content-encoding", "").strip().lower()
             if encoding not in ("", "identity"):
-                raise WebFetchError("The site sent the track compressed, which is refused")
+                raise WebFetchError(f"The site sent the {what} compressed, which is refused")
 
-            extension = _audio_extension(final, response.headers.get("content-type"))
-            if extension is None:
-                raise WebFetchError("That link is not an audio file")
+            suffix = extension(final, response.headers.get("content-type"))
+            if suffix is None:
+                raise WebFetchError(refused)
 
             total = _content_length(response)
             if total is not None and total > max_bytes:
-                raise _too_large(max_bytes)
+                raise _too_large(what, max_bytes)
 
-            destination = workdir / f"{stem}{extension}"
-            _stream_to(response, destination, max_bytes=max_bytes, total=total, report=report)
+            destination = workdir / f"{stem}{suffix}"
+            _stream_to(response, destination, what=what, max_bytes=max_bytes, total=total, report=report)
             return destination
     except httpx.TimeoutException as exc:
-        raise WebFetchError("The track did not download in time") from exc
+        raise WebFetchError(f"The {what} did not download in time") from exc
     except httpx.RequestError as exc:
-        raise WebFetchError(f"Could not download the track ({type(exc).__name__})") from exc
+        raise WebFetchError(f"Could not download the {what} ({type(exc).__name__})") from exc
 
 
 def _audio_extension(url: str, content_type: Optional[str]) -> Optional[str]:
@@ -195,8 +243,24 @@ def _audio_extension(url: str, content_type: Optional[str]) -> Optional[str]:
     return _AUDIO_TYPES.get(media_type)
 
 
+def _image_extension(url: str, content_type: Optional[str]) -> Optional[str]:
+    # The server's type first, unlike a track: picture URLs are full of `.php?id=` and of
+    # CDNs that send WebP from a `.jpg` path to browsers that accept it, and the file must
+    # be stored under what it is. The path is the fallback for servers that send
+    # `application/octet-stream`.
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if media_type in _IMAGE_TYPES:
+        return _IMAGE_TYPES[media_type]
+    if media_type.startswith("image/") or media_type in ("", "application/octet-stream", "binary/octet-stream"):
+        from_path = extension_of(urlsplit(url).path)
+        if from_path in WEB_IMAGE_EXTENSIONS:
+            return from_path
+    return None
+
+
 def _stream_to(
-    response: httpx.Response, destination: Path, *, max_bytes: int, total: Optional[int], report: Progress
+    response: httpx.Response, destination: Path, *, what: str, max_bytes: int, total: Optional[int],
+    report: Progress,
 ) -> None:
     received = 0
     started = monotonic()
@@ -205,9 +269,9 @@ def _stream_to(
             for chunk in response.iter_bytes():
                 received += len(chunk)
                 if received > max_bytes:
-                    raise _too_large(max_bytes)
+                    raise _too_large(what, max_bytes)
                 if monotonic() - started > MAX_TRACK_SECONDS:
-                    raise WebFetchError("The track did not download in time")
+                    raise WebFetchError(f"The {what} did not download in time")
                 handle.write(chunk)
                 report(received, total)
     except BaseException:
@@ -216,5 +280,5 @@ def _stream_to(
         raise
 
 
-def _too_large(max_bytes: int) -> WebFetchError:
-    return WebFetchError(f"The track is larger than the {max_bytes // (1024 * 1024)} MB limit")
+def _too_large(what: str, max_bytes: int) -> WebFetchError:
+    return WebFetchError(f"The {what} is larger than the {max_bytes // (1024 * 1024)} MB limit")

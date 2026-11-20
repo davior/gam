@@ -161,7 +161,7 @@ def similar_in_library(session: Session, user_id: str, tracks: list[PageTrack]) 
     return found
 
 
-def _same_file(session: Session, user_id: str, path: Path) -> Optional[Asset]:
+def same_file(session: Session, user_id: str, path: Path) -> Optional[Asset]:
     """An asset in this library with exactly these bytes, if there is one.
 
     The checksum every stored file already carries is what catches a duplicate the URL
@@ -334,7 +334,7 @@ def run_track(session: Session, job: EnrichmentJob, progress: Progress) -> Track
             raise PageImportError(str(exc)) from exc
 
         progress("Checking for a copy already here", 86, "")
-        duplicate = _same_file(session, job.user_id, path)
+        duplicate = same_file(session, job.user_id, path)
         if duplicate is not None:
             # The download is thrown away with the temp directory. What the page said
             # still fills the copy's blanks, so a track uploaded bare gains its credits
@@ -490,7 +490,7 @@ def import_saved(
                 continue
 
             track = matches.get(name)
-            duplicate = _same_file(session, user_id, path)
+            duplicate = same_file(session, user_id, path)
             if duplicate is not None:
                 if track is not None:
                     apply_track_metadata(session, duplicate, track, fill_blanks_only=True)

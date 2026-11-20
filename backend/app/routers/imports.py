@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -26,8 +26,12 @@ from app.jobs.registry import KINDS
 from app.models.job import KIND_IMPORT_TRACK, KIND_IMPORT_URL
 from app.schemas import DataResponse
 from app.safe_url import require_safe_external_url
+from app.schemas_assets import AssetRead
 from app.schemas_jobs import ActivityJobRead
-from app.storage import capacity
+from app.services import assets as asset_service
+from app.services import image_import
+from app.services import tags as tag_service
+from app.storage import build_storage, capacity
 
 router = APIRouter()
 
@@ -76,6 +80,60 @@ def start_url_import(
         session, user.id, KIND_IMPORT_URL, payload=request.encode(), asset_name=url[:255]
     )
     return DataResponse(data=KINDS["enrichment"].to_activity(job))
+
+
+# ─── one picture, by its address ─────────────────────────────────────────────
+
+
+class ImageImportCreate(BaseModel):
+    """A picture an image search found, as the person chose it."""
+
+    image_url: str = Field(min_length=1, max_length=MAX_URL)
+    page_url: Optional[str] = Field(default=None, max_length=MAX_URL)
+    title: Optional[str] = Field(default=None, max_length=500)
+    description: Optional[str] = Field(default=None, max_length=20_000)
+    tags: List[str] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/import-image", response_model=DataResponse[AssetRead], status_code=status.HTTP_201_CREATED)
+def import_image(
+    payload: ImageImportCreate,
+    response: Response,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[AssetRead]:
+    """Download one picture and catalogue it. 201 with the new asset, or 200 with the
+    one already here (the same address, or the same bytes).
+
+    Inline rather than queued: see `services/image_import.py`. The address is checked
+    against private address space on every redirect hop, by `ingest/web.py`.
+    """
+    capacity.require_room()
+    request = image_import.ImageImport(
+        image_url=payload.image_url.strip(),
+        page_url=(payload.page_url or "").strip() or None,
+        title=payload.title,
+        description=payload.description,
+        tags=[t for t in payload.tags if t.strip()],
+    )
+    try:
+        result = image_import.import_image(session, user.id, request)
+    except image_import.ImageImportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "image_unavailable", "message": str(exc)},
+        )
+    except web.WebFetchError as exc:  # the address check, before anything is fetched
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "unsafe_url", "message": str(exc)},
+        )
+    if result.existing:
+        response.status_code = status.HTTP_200_OK
+    asset = result.asset
+    return DataResponse(
+        data=asset_service.to_read_model(asset, build_storage(), tag_service.tags_for(session, asset.id))
+    )
 
 
 # ─── tracks from a music library's page ──────────────────────────────────────
