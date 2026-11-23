@@ -116,6 +116,62 @@ export interface ProposalNote {
   asset_ids: string[]
 }
 
+/** The assistant's preview of who a tag change touches, taken when it was proposed. */
+interface TagOpPreview {
+  op_ref: string
+  /** Distinct assets carrying the tags concerned. */
+  asset_count?: number
+  /** The first few of their names, for the card. */
+  sample_assets?: string[]
+}
+
+export interface TagRef {
+  id: string
+  name: string
+}
+
+/**
+ * A change to the tag vocabulary rather than to one asset. Categories are the groups tags
+ * are filed under, and nest. A `*_ref` names a category proposed in the same turn; on Apply
+ * the server runs them in dependency order and skips, with a sentence, one that no longer
+ * makes sense.
+ */
+export type ProposalTagOp =
+  | (TagOpPreview & {
+      kind: 'create_category'
+      name: string
+      parent_category_id: string | null
+      parent_ref: string | null
+      parent_label: string | null
+    })
+  | (TagOpPreview & {
+      kind: 'move_category'
+      category_id: string
+      name: string
+      from_path: string
+      /** False when only renamed. */
+      move: boolean
+      parent_label: string | null
+      new_name: string | null
+    })
+  | (TagOpPreview & {
+      kind: 'file_tags'
+      tags: TagRef[]
+      category_id: string | null
+      category_ref: string | null
+      /** Null: taken out of every category. */
+      category_label: string | null
+    })
+  | (TagOpPreview & { kind: 'rename_tag'; tag_id: string; from: string; to: string })
+  | (TagOpPreview & {
+      kind: 'merge_tags'
+      sources: TagRef[]
+      /** Null when merging into a name no tag has yet. */
+      target_id: string | null
+      target_name: string
+    })
+  | (TagOpPreview & { kind: 'delete_tag'; tag_id: string; name: string })
+
 export interface Proposal {
   items: ProposalItem[]
   /** Absent on a turn from before clips could be proposed. */
@@ -124,6 +180,8 @@ export interface Proposal {
   playlists?: ProposalPlaylist[]
   /** Absent on a turn from before notes could be proposed. */
   notes?: ProposalNote[]
+  /** Absent on a turn from before the tag vocabulary could be changed. */
+  tag_ops?: ProposalTagOp[]
 }
 
 export type TurnStatus = 'queued' | 'processing' | 'done' | 'error' | 'cancelled'
@@ -170,6 +228,8 @@ export interface ApplyResult {
   /** Set on the result of a note: which proposed one, and its page in Gecko Notes. */
   note_ref?: string | null
   note_url?: string | null
+  /** Set on the result of a tag change: which proposed one. */
+  op_ref?: string | null
 }
 
 /**
@@ -181,6 +241,7 @@ export interface ApplySelection {
   clipIds?: string[]
   playlistRefs?: string[]
   noteRefs?: string[]
+  tagOpRefs?: string[]
 }
 
 export function isActiveTurn(turn: Pick<AssistantTurn, 'status'>): boolean {
@@ -259,6 +320,7 @@ export const assistantApi = {
         clip_ids: selection?.clipIds ?? null,
         playlist_refs: selection?.playlistRefs ?? null,
         note_refs: selection?.noteRefs ?? null,
+        tag_op_refs: selection?.tagOpRefs ?? null,
       })
       .then((r) => r.data.data)
   },

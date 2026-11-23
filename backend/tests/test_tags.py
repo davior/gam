@@ -89,6 +89,77 @@ def test_renaming_a_tag_moves_the_searchable_word(library, session):
     assert [row["asset"]["id"] for row in found["data"]] == [asset.id]
 
 
+def test_renaming_onto_another_tags_name_is_refused(library, session):
+    asset = make_asset(session)
+    add_tags(library, asset.id, "nato", "psyop")
+    tag = session.exec(select(Tag).where(Tag.name == "psyop")).one()
+
+    res = library.patch(f"/api/tags/{tag.id}", json={"name": "NATO"})
+    assert res.status_code == 400
+    assert res.json()["detail"]["message"] == "You already have a tag called nato"
+    # A change of case alone is a rename, not a clash with itself.
+    res = library.patch(f"/api/tags/{tag.id}", json={"name": "PSYOP"})
+    assert res.status_code == 200 and res.json()["data"]["name"] == "PSYOP"
+
+
+def test_merging_tags_keeps_one_attachment_per_asset(library, session):
+    """An asset carrying both the source and the target ends with the target once: the
+    join's composite key would refuse a second row and fail the whole merge."""
+    only_source, both = make_asset(session, name="One"), make_asset(session, name="Both")
+    add_tags(library, only_source.id, "nato")
+    add_tags(library, both.id, "nato", "NATO alliance")
+    source = session.exec(select(Tag).where(Tag.name == "nato")).one()
+    target = session.exec(select(Tag).where(Tag.name == "NATO alliance")).one()
+
+    affected = service.merge_tags(session, [source], target)
+
+    assert sorted(affected) == sorted([only_source.id, both.id])
+    assert session.exec(select(Tag).where(Tag.name == "nato")).first() is None
+    rows = session.exec(select(AssetTag).where(AssetTag.tag_id == target.id)).all()
+    assert sorted(r.asset_id for r in rows) == sorted([only_source.id, both.id])
+
+
+def test_merging_through_the_api_moves_every_asset_and_the_searchable_word(library, session):
+    a, b = make_asset(session, name="One"), make_asset(session, name="Two")
+    add_tags(library, a.id, "nato")
+    add_tags(library, b.id, "nato", "NATO alliance")
+    source = session.exec(select(Tag).where(Tag.name == "nato")).one()
+    target = session.exec(select(Tag).where(Tag.name == "NATO alliance")).one()
+
+    res = library.post(f"/api/tags/{source.id}/merge", json={"target_id": target.id})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["data"] == {"id": target.id, "name": "NATO alliance",
+                                  "category_id": None, "asset_count": 2}
+    assert [t["name"] for t in library.get("/api/tags").json()["data"]] == ["NATO alliance"]
+    found = library.get("/api/search", params={"q": "alliance"}).json()["data"]
+    assert sorted(row["asset"]["id"] for row in found) == sorted([a.id, b.id])
+
+
+def test_a_tag_cannot_be_merged_into_itself_or_someone_elses(library, session):
+    asset = make_asset(session)
+    add_tags(library, asset.id, "nato")
+    mine = session.exec(select(Tag).where(Tag.name == "nato")).one()
+    theirs = Tag(user_id="someone-else", name="NATO")
+    session.add(theirs)
+    session.commit()
+
+    itself = library.post(f"/api/tags/{mine.id}/merge", json={"target_id": mine.id})
+    assert itself.status_code == 400
+    assert itself.json()["detail"]["code"] == "bad_request"
+    stranger = library.post(f"/api/tags/{mine.id}/merge", json={"target_id": theirs.id})
+    assert stranger.status_code == 404
+    assert session.get(Tag, mine.id) is not None
+
+
+def test_look_alike_tags_are_grouped_and_different_words_are_not():
+    tags = [Tag(id=name, user_id=TEST_USER, name=name) for name in (
+        "interview", "Interviews", "intervew", "Café", "cafe", "cat", "car", "Studies", "study")]
+    groups = sorted(sorted(t.name for t in g) for g in service.similar_groups(tags))
+    assert groups == [["Café", "cafe"], ["Interviews", "intervew", "interview"],
+                      ["Studies", "study"]]
+
+
 # ─── case ────────────────────────────────────────────────────────────────────
 
 

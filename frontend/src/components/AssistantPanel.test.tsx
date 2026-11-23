@@ -10,6 +10,7 @@ import {
   type AssistantTurn,
   type ProposalItem,
 } from '@/api/assistant'
+import { tagsApi } from '@/api/tags'
 import AssistantPanel from '@/components/AssistantPanel'
 import { useAssistantStore } from '@/stores/assistant'
 
@@ -154,6 +155,7 @@ describe('AssistantPanel', () => {
       clipIds: [],
       playlistRefs: [],
       noteRefs: [],
+      tagOpRefs: [],
     })
   })
 
@@ -211,6 +213,7 @@ describe('AssistantPanel', () => {
       clipIds: ['k1'],
       playlistRefs: [],
       noteRefs: [],
+      tagOpRefs: [],
     })
   })
 
@@ -285,6 +288,7 @@ describe('AssistantPanel', () => {
       clipIds: [],
       playlistRefs: ['p1'],
       noteRefs: [],
+      tagOpRefs: [],
     })
   })
 
@@ -377,6 +381,88 @@ describe('AssistantPanel', () => {
     expect(
       await within(after).findByRole('link', { name: 'Open in Gecko Notes' })
     ).toHaveAttribute('href', 'https://notes.test/notes/abc')
+  })
+
+  it('shows tag changes with who they touch, and applies only the ones ticked', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([
+      {
+        asset_id: null,
+        asset_name: 'NATO',
+        applied: ['1 tag(s) merged into NATO'],
+        skipped: [],
+        op_ref: 'o2',
+      },
+    ])
+    const tagList = vi.spyOn(tagsApi, 'list').mockResolvedValue([])
+    vi.spyOn(tagsApi, 'listCategories').mockResolvedValue([])
+    const proposal = {
+      items: [],
+      tag_ops: [
+        {
+          op_ref: 'o1',
+          kind: 'file_tags' as const,
+          tags: [
+            { id: 't1', name: 'Giordano' },
+            { id: 't2', name: 'Schwab' },
+          ],
+          category_id: 'c1',
+          category_ref: null,
+          category_label: 'People > Scientists',
+          asset_count: 3,
+          sample_assets: ['One', 'Two', 'Three'],
+        },
+        {
+          op_ref: 'o2',
+          kind: 'merge_tags' as const,
+          sources: [{ id: 't3', name: 'nato' }],
+          target_id: 't4',
+          target_name: 'NATO',
+          asset_count: 7,
+          sample_assets: ['Briefing', 'Summit'],
+        },
+        {
+          op_ref: 'o3',
+          kind: 'delete_tag' as const,
+          tag_id: 't5',
+          name: 'tmp',
+          asset_count: 0,
+          sample_assets: [],
+        },
+      ],
+    }
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(
+      turn({ outcome: 'applied', proposal })
+    )
+    await show(READY, [turn({ outcome: 'pending', proposal })])
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(within(card).getByText('People > Scientists')).toBeInTheDocument()
+    expect(within(card).getByText(/2 tags filed here · on 3 assets/)).toBeInTheDocument()
+    await userEvent.click(within(card).getByRole('button', { name: 'Show the tags' }))
+    expect(within(card).getByLabelText(/tags filed in people/i)).toHaveTextContent(
+      'GiordanoSchwab'
+    )
+    expect(within(card).getByText('nato → NATO')).toBeInTheDocument()
+    expect(within(card).getByText(/Briefing, Summit \+5 more/)).toBeInTheDocument()
+    expect(within(card).getByText('unused')).toBeInTheDocument()
+
+    await userEvent.click(
+      within(card).getByRole('checkbox', { name: /include file tags/i })
+    )
+    await userEvent.click(
+      within(card).getByRole('checkbox', { name: /include delete tag/i })
+    )
+    await userEvent.click(within(card).getByRole('button', { name: /apply 1 of 3/i }))
+    expect(apply).toHaveBeenCalledWith('t1', {
+      assetIds: [],
+      clipIds: [],
+      playlistRefs: [],
+      noteRefs: [],
+      tagOpRefs: ['o2'],
+    })
+    const after = await screen.findByLabelText(/proposed changes/i)
+    expect(await within(after).findByText(/merged into NATO/)).toBeInTheDocument()
+    // The vocabulary changed, so the catalogue the Tags panel shows is fetched again.
+    expect(tagList).toHaveBeenCalled()
   })
 
   it('applies everything with no selection when nothing is unticked', async () => {

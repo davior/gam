@@ -36,6 +36,8 @@ interface TagState {
   /** Move a tag into a category, or out of every category with null. */
   recategorise: (id: string, categoryId: string | null) => Promise<void>
   remove: (id: string) => Promise<void>
+  /** Fold one tag into another: the source goes, the target gains its assets. */
+  merge: (id: string, targetId: string) => Promise<void>
   createCategory: (name: string, parentId?: string | null) => Promise<void>
   updateCategory: (
     id: string,
@@ -157,6 +159,27 @@ export const useTagStore = create<TagState>((set, get) => ({
     } catch (error) {
       if (token !== requestToken) return
       set({ tags: previous, error: apiErrorMessage(error, 'Could not delete that tag') })
+      throw error
+    }
+  },
+
+  async merge(id, targetId) {
+    // Not optimistic, unlike rename and delete: the target's new count is the server's to
+    // say (assets carrying both are counted once), and a merge cannot be put back, so the
+    // list changes only once it has happened.
+    const token = requestToken
+    try {
+      const saved = await tagsApi.merge(id, targetId)
+      if (token !== requestToken) return
+      set((state) => ({
+        tags: state.tags
+          .filter((t) => t.id !== id)
+          .map((t) => (t.id === saved.id ? { ...t, ...saved } : t)),
+        error: null,
+      }))
+    } catch (error) {
+      if (token !== requestToken) return
+      set({ error: apiErrorMessage(error, 'Could not merge those tags') })
       throw error
     }
   },

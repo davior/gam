@@ -24,6 +24,12 @@ which only this request has (a turn runs in the background as GAM, with none). T
 Playlists (`proposal["playlists"]`) go through services/playlists, the same as a person
 building one. Each item is checked again; one whose asset has gone or whose range no
 longer fits is left out and reported, and the rest of the playlist is still made.
+
+Tag changes (`proposal["tag_ops"]`) are to the vocabulary rather than to one asset: new
+categories, categories moved, tags filed, renamed, merged and deleted. They run in the
+order one depends on another (a category is made before tags are filed into it, and tags
+are filed before they are merged away), each checked against the library as it is now, and
+one that no longer makes sense is skipped with a sentence while the rest still apply.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from app.jobs import enrichment as enrichment_jobs
 from app.jobs.runner import ACTIVE_STATUSES
 from app.models.asset import Asset
 from app.models.job import KIND_AUTOTAG, KIND_DESCRIBE, KIND_EXTRACT_SUBVIDEO, KIND_SUMMARIZE, EnrichmentJob
+from app.models.tag import Tag, TagCategory
 from app.providers import build_provider
 from app.providers.base import ProviderError
 from app import notes_client
@@ -57,7 +64,8 @@ def apply(session: Session, user_id: str, proposal: dict,
           only: Optional[Iterable[str]] = None,
           only_clips: Optional[Iterable[str]] = None,
           only_playlists: Optional[Iterable[str]] = None,
-          only_notes: Optional[Iterable[str]] = None, *,
+          only_notes: Optional[Iterable[str]] = None,
+          only_tag_ops: Optional[Iterable[str]] = None, *,
           token: Optional[str] = None, origin: str = "") -> list[dict]:
     """Apply the proposal's items, clips, playlists and notes, one result per entry.
 
@@ -69,7 +77,8 @@ def apply(session: Session, user_id: str, proposal: dict,
     or playlists, and must not get them as a side effect).
     """
     everything = (only is None and only_clips is None and only_playlists is None
-                  and only_notes is None)
+                  and only_notes is None and only_tag_ops is None)
+    wanted_ops = set(only_tag_ops) if only_tag_ops is not None else set()
     wanted_notes = set(only_notes) if only_notes is not None else set()
     wanted = set(only) if only is not None else set()
     wanted_clips = set(only_clips) if only_clips is not None else set()
@@ -87,7 +96,188 @@ def apply(session: Session, user_id: str, proposal: dict,
     for entry in proposal.get("notes", []):
         if everything or entry["note_ref"] in wanted_notes:
             results.append(_apply_note(entry, token, origin))
+    ops = [op for op in proposal.get("tag_ops", []) if everything or op["op_ref"] in wanted_ops]
+    if ops:
+        results.extend(_apply_tag_ops(session, user_id, ops))
     return results
+
+
+# The order tag changes are applied in, whatever order they were proposed in: a category
+# exists before anything is filed under it, and a tag is filed before a merge carries its
+# category over to the target.
+TAG_OP_ORDER = ("create_category", "move_category", "file_tags", "rename_tag", "merge_tags",
+                "delete_tag")
+
+
+def _apply_tag_ops(session: Session, user_id: str, ops: list[dict]) -> list[dict]:
+    """Apply the chosen tag changes, one result each, in the proposal's order.
+
+    `made` maps a proposed category's op_ref to the category it became, so an op naming a
+    new parent or home finds it; one whose category was not chosen or could not be made is
+    skipped. Every asset whose tag names changed is re-indexed once, at the end, rather than
+    once per op that touched it.
+    """
+    results: dict[str, dict] = {}
+    made: dict[str, str] = {}
+    reindex: set[str] = set()
+    for op in sorted(ops, key=lambda o: TAG_OP_ORDER.index(o["kind"])
+                     if o["kind"] in TAG_OP_ORDER else len(TAG_OP_ORDER)):
+        result = {"asset_id": None, "asset_name": _tag_op_label(op), "applied": [],
+                  "skipped": [], "op_ref": op["op_ref"]}
+        results[op["op_ref"]] = result
+        try:
+            reindex.update(_apply_tag_op(session, user_id, op, made, result))
+        except Exception as exc:  # noqa: BLE001 - one bad op must not sink the others
+            logger.exception("Applying tag change %s failed", op.get("kind"))
+            session.rollback()
+            result["skipped"].append(f"It could not be applied: {exc}")
+    if reindex:
+        asset_service.reindex_ids(session, reindex)
+    return [results[op["op_ref"]] for op in ops]
+
+
+def _tag_op_label(op: dict) -> str:
+    kind = op["kind"]
+    if kind == "create_category":
+        return op["name"]
+    if kind == "move_category":
+        return op["name"]
+    if kind == "file_tags":
+        return op.get("category_label") or "No category"
+    if kind == "rename_tag":
+        return op["from"]
+    if kind == "merge_tags":
+        return op["target_name"]
+    return op.get("name") or ""
+
+
+def _parent_id(session: Session, user_id: str, op: dict, made: dict[str, str],
+               ref_key: str, id_key: str) -> tuple[bool, Optional[str]]:
+    """The category an op points at, as (found, id). None with found means "no category"."""
+    if op.get(ref_key):
+        made_id = made.get(op[ref_key])
+        return (made_id is not None, made_id)
+    if op.get(id_key):
+        row = session.get(TagCategory, op[id_key])
+        if row is None or row.user_id != user_id:
+            return False, None
+        return True, row.id
+    return True, None
+
+
+def _apply_tag_op(session: Session, user_id: str, op: dict, made: dict[str, str],
+                  result: dict) -> list[str]:
+    """Apply one tag change; return the assets to re-index."""
+    kind = op["kind"]
+    if kind == "create_category":
+        found, parent_id = _parent_id(session, user_id, op, made, "parent_ref", "parent_category_id")
+        if not found:
+            result["skipped"].append("Its parent category was not made, or no longer exists.")
+            return []
+        twin = session.exec(select(TagCategory).where(
+            TagCategory.user_id == user_id, TagCategory.parent_category_id == parent_id)).all()
+        match = next((c for c in twin if c.name.lower() == op["name"].lower()), None)
+        if match is not None:
+            made[op["op_ref"]] = match.id
+            result["applied"].append("it existed already")
+            return []
+        category = TagCategory(user_id=user_id, name=op["name"], parent_category_id=parent_id)
+        session.add(category)
+        session.commit()
+        made[op["op_ref"]] = category.id
+        result["applied"].append("category made")
+        return []
+
+    if kind == "move_category":
+        category = session.get(TagCategory, op["category_id"])
+        if category is None or category.user_id != user_id:
+            result["skipped"].append("The category no longer exists.")
+            return []
+        if op.get("move"):
+            found, parent_id = _parent_id(session, user_id, op, made, "parent_ref",
+                                          "parent_category_id")
+            if not found:
+                result["skipped"].append("Its new parent was not made, or no longer exists.")
+                return []
+            if tag_service.would_create_cycle(session, user_id, category.id, parent_id):
+                result["skipped"].append("A category cannot be moved inside itself.")
+                return []
+            category.parent_category_id = parent_id
+            result["applied"].append("moved")
+        if op.get("new_name"):
+            category.name = op["new_name"]
+            result["applied"].append("renamed")
+        session.add(category)
+        session.commit()
+        return []
+
+    if kind == "file_tags":
+        found, category_id = _parent_id(session, user_id, op, made, "category_ref", "category_id")
+        if not found:
+            result["skipped"].append("The category was not made, or no longer exists.")
+            return []
+        filed = gone = 0
+        for entry in op["tags"]:
+            tag = session.get(Tag, entry["id"])
+            if tag is None or tag.user_id != user_id:
+                gone += 1
+                continue
+            tag.category_id = category_id
+            session.add(tag)
+            filed += 1
+        session.commit()
+        if filed:
+            result["applied"].append(f"{filed} tag(s) filed")
+        if gone:
+            result["skipped"].append(f"{gone} tag(s) no longer exist.")
+        return []
+
+    if kind == "rename_tag":
+        tag = session.get(Tag, op["tag_id"])
+        if tag is None or tag.user_id != user_id:
+            result["skipped"].append("The tag no longer exists.")
+            return []
+        try:
+            changed = tag_service.rename_tag(session, tag, op["to"])
+        except ValueError as exc:
+            session.rollback()
+            result["skipped"].append(f"{exc}; merge them instead.")
+            return []
+        session.commit()
+        result["applied"].append("renamed")
+        return tag_service.asset_ids_for_tag(session, tag.id) if changed else []
+
+    if kind == "merge_tags":
+        sources = [t for t in (session.get(Tag, s["id"]) for s in op["sources"])
+                   if t is not None and t.user_id == user_id]
+        if op.get("target_id"):
+            target = session.get(Tag, op["target_id"])
+            if target is None or target.user_id != user_id:
+                result["skipped"].append("The tag to merge into no longer exists.")
+                return []
+        else:
+            target = tag_service.get_or_create(session, user_id, op["target_name"])
+        sources = [t for t in sources if t.id != target.id]
+        if not sources:
+            result["skipped"].append("The tags to merge no longer exist.")
+            return []
+        affected = tag_service.merge_tags(session, sources, target)
+        result["applied"].append(f"{len(sources)} tag(s) merged into {target.name}")
+        if len(sources) < len(op["sources"]):
+            result["skipped"].append(f"{len(op['sources']) - len(sources)} tag(s) no longer exist.")
+        return affected
+
+    if kind == "delete_tag":
+        tag = session.get(Tag, op["tag_id"])
+        if tag is None or tag.user_id != user_id:
+            result["skipped"].append("The tag no longer exists.")
+            return []
+        affected = tag_service.delete_tag(session, tag)
+        result["applied"].append("deleted")
+        return affected
+
+    result["skipped"].append(f"{kind}: not something the library can do.")
+    return []
 
 
 def _apply_note(entry: dict, token: Optional[str], origin: str) -> dict:

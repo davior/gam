@@ -46,6 +46,30 @@ describe('useTagStore', () => {
     expect(useTagStore.getState().error).toBeTruthy()
   })
 
+  it('leaves both tags in place until a merge succeeds, and keeps them if it fails', async () => {
+    const both = [tag(), tag({ id: 't2', name: 'Interviews', asset_count: 4 })]
+    useTagStore.setState({ tags: both })
+    let finish: (value: Tag) => void = () => {}
+    vi.spyOn(tagsApi, 'merge').mockReturnValueOnce(
+      new Promise<Tag>((resolve) => (finish = resolve))
+    )
+
+    const pending = useTagStore.getState().merge('t1', 't2')
+    // Not optimistic: nothing has changed while the server works.
+    expect(useTagStore.getState().tags).toEqual(both)
+    finish(tag({ id: 't2', name: 'Interviews', asset_count: 5 }))
+    await pending
+    expect(useTagStore.getState().tags).toEqual([
+      tag({ id: 't2', name: 'Interviews', asset_count: 5 }),
+    ])
+
+    useTagStore.setState({ tags: both })
+    vi.spyOn(tagsApi, 'merge').mockRejectedValueOnce(new Error('gone'))
+    await expect(useTagStore.getState().merge('t1', 't2')).rejects.toThrow()
+    expect(useTagStore.getState().tags).toEqual(both)
+    expect(useTagStore.getState().error).toBeTruthy()
+  })
+
   it('moves a tag into a category', async () => {
     useTagStore.setState({ tags: [tag()] })
     vi.spyOn(tagsApi, 'recategorise').mockResolvedValue(tag({ category_id: 'c1' }))

@@ -11,6 +11,7 @@ import {
   type ProposalNote,
   type ProposalPlaylist,
   type ProposalItem,
+  type ProposalTagOp,
 } from '@/api/assistant'
 import { currentConfig, loadConfig } from '@/api/config'
 import { suiteSpeechApi, type DictationReadiness } from '@/api/suiteSpeech'
@@ -398,16 +399,23 @@ function ProposalCard({
   const clips = proposal.clips ?? []
   const playlists = proposal.playlists ?? []
   const notes = proposal.notes ?? []
+  const tagOps = proposal.tag_ops ?? []
   // Ticked off by id: an asset's id for its edits, a clip's own id for a clip or a cut,
-  // a playlist's ref for a playlist, a note's for a note.
+  // a playlist's ref for a playlist, a note's for a note, an op's for a tag change.
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const chosen = items.filter((item) => !skipped.has(item.asset_id))
   const chosenClips = clips.filter((clip) => !skipped.has(clip.clip_id))
   const chosenPlaylists = playlists.filter((p) => !skipped.has(p.playlist_ref))
   const chosenNotes = notes.filter((n) => !skipped.has(n.note_ref))
-  const total = items.length + clips.length + playlists.length + notes.length
+  const chosenTagOps = tagOps.filter((op) => !skipped.has(op.op_ref))
+  const total =
+    items.length + clips.length + playlists.length + notes.length + tagOps.length
   const picked =
-    chosen.length + chosenClips.length + chosenPlaylists.length + chosenNotes.length
+    chosen.length +
+    chosenClips.length +
+    chosenPlaylists.length +
+    chosenNotes.length +
+    chosenTagOps.length
   const pending = turn.outcome === 'pending'
 
   function toggle(id: string) {
@@ -500,6 +508,20 @@ function ProposalCard({
             }
           />
         ))}
+        {tagOps.map((op) => (
+          <TagOpRow
+            key={op.op_ref}
+            op={op}
+            pending={pending}
+            included={!skipped.has(op.op_ref)}
+            onToggle={() => toggle(op.op_ref)}
+            result={
+              !pending && turn.outcome === 'applied'
+                ? applied?.find((r) => r.op_ref === op.op_ref)
+                : undefined
+            }
+          />
+        ))}
       </ul>
       {pending && (
         <div className="flex gap-2">
@@ -517,6 +539,7 @@ function ProposalCard({
                       clipIds: chosenClips.map((c) => c.clip_id),
                       playlistRefs: chosenPlaylists.map((p) => p.playlist_ref),
                       noteRefs: chosenNotes.map((n) => n.note_ref),
+                      tagOpRefs: chosenTagOps.map((op) => op.op_ref),
                     }
               )
             }
@@ -769,6 +792,139 @@ function NoteRow({
           {result.skipped.join(' ')}
         </p>
       )}
+    </li>
+  )
+}
+
+const TAG_OP_BADGE: Record<ProposalTagOp['kind'], string> = {
+  create_category: 'New group',
+  move_category: 'Move group',
+  file_tags: 'File tags',
+  rename_tag: 'Rename tag',
+  merge_tags: 'Merge tags',
+  delete_tag: 'Delete tag',
+}
+
+/** What a tag change does, in a line: the thing changed and where it ends up. */
+function tagOpSummary(op: ProposalTagOp): { title: string; detail: string } {
+  switch (op.kind) {
+    case 'create_category':
+      return {
+        title: op.name,
+        detail: op.parent_label ? `Inside ${op.parent_label}` : 'At the top level',
+      }
+    case 'move_category': {
+      const parts = []
+      if (op.move)
+        parts.push(op.parent_label ? `Into ${op.parent_label}` : 'To the top level')
+      if (op.new_name) parts.push(`renamed “${op.new_name}”`)
+      return { title: op.from_path, detail: parts.join(', ') }
+    }
+    case 'file_tags': {
+      const n = op.tags.length
+      return {
+        title: op.category_label ?? 'No group',
+        detail: `${n} ${n === 1 ? 'tag' : 'tags'}${op.category_label ? ' filed here' : ' taken out of their group'}`,
+      }
+    }
+    case 'rename_tag':
+      return { title: `${op.from} → ${op.to}`, detail: '' }
+    case 'merge_tags':
+      return {
+        title: `${op.sources.map((t) => t.name).join(', ')} → ${op.target_name}`,
+        detail: op.target_id ? '' : `“${op.target_name}” is a new tag`,
+      }
+    case 'delete_tag':
+      return { title: op.name, detail: '' }
+  }
+}
+
+/** One change to the tag vocabulary, with who it touches, to read before applying. */
+function TagOpRow({
+  op,
+  pending,
+  included,
+  onToggle,
+  result,
+}: {
+  op: ProposalTagOp
+  pending: boolean
+  included: boolean
+  onToggle: () => void
+  result?: ApplyResult
+}) {
+  const [open, setOpen] = useState(false)
+  const { title, detail } = tagOpSummary(op)
+  const count = op.asset_count
+  const sample = op.sample_assets ?? []
+  // Renames, merges and deletes change what assets carry, so how many is the point. Filing
+  // only moves tags between groups; its count is context, not a warning.
+  const touchesAssets =
+    op.kind === 'rename_tag' || op.kind === 'merge_tags' || op.kind === 'delete_tag'
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        {pending && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${TAG_OP_BADGE[op.kind].toLowerCase()} ${title}`}
+            checked={included}
+            onChange={onToggle}
+          />
+        )}
+        <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-green-800 dark:bg-green-900/40 dark:text-green-200">
+          {TAG_OP_BADGE[op.kind]}
+        </span>
+        <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+          {title}
+        </span>
+      </div>
+      {(detail || count !== undefined) && (
+        <p className="text-xs text-gray-600 dark:text-gray-400">
+          {detail}
+          {detail && count !== undefined && ' · '}
+          {count !== undefined &&
+            (count === 0
+              ? touchesAssets
+                ? 'unused'
+                : 'on no assets yet'
+              : `${touchesAssets ? '' : 'on '}${count} ${count === 1 ? 'asset' : 'assets'}`)}
+          {op.kind === 'file_tags' && (
+            <>
+              {' '}
+              <button
+                type="button"
+                className="text-blue-700 hover:underline dark:text-blue-300"
+                aria-expanded={open}
+                onClick={() => setOpen((o) => !o)}
+              >
+                {open ? 'Hide the tags' : 'Show the tags'}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {op.kind === 'file_tags' && open && (
+        <p aria-label={`Tags filed in ${title}`} className="flex flex-wrap gap-1 text-xs">
+          {op.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-800 dark:bg-gray-800 dark:text-gray-200"
+            >
+              {tag.name}
+            </span>
+          ))}
+        </p>
+      )}
+      {touchesAssets && sample.length > 0 && (
+        <p className="truncate text-xs text-gray-500 dark:text-gray-400">
+          {sample.join(', ')}
+          {count !== undefined &&
+            count > sample.length &&
+            ` +${count - sample.length} more`}
+        </p>
+      )}
+      <Outcome result={result} />
     </li>
   )
 }

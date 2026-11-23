@@ -14,6 +14,7 @@ from app.schemas_tags import (
     TagCategoryRead,
     TagCategoryUpdate,
     TagCreate,
+    TagMerge,
     TagRead,
     TagUpdate,
 )
@@ -128,12 +129,10 @@ def update_tag(
 
     renamed = False
     if "name" in fields and fields["name"]:
-        cleaned = service.normalise(fields["name"])
-        clash = service.find(session, user.id, cleaned)
-        if clash and clash.id != tag.id:
-            raise _bad_request(f"You already have a tag called {clash.name}")
-        renamed = cleaned.lower() != tag.name.lower() or cleaned != tag.name
-        tag.name = cleaned
+        try:
+            renamed = service.rename_tag(session, tag, fields["name"])
+        except ValueError as exc:  # TagNameClash is one, with the sentence to show
+            raise _bad_request(str(exc)) from exc
 
     if "category_id" in fields:
         if fields["category_id"]:
@@ -148,6 +147,31 @@ def update_tag(
         asset_service.reindex_ids(session, service.asset_ids_for_tag(session, tag.id))
 
     return DataResponse[TagRead](data=_to_read(tag))
+
+
+@router.post("/{tag_id}/merge", response_model=DataResponse[TagRead])
+def merge_tag(
+    tag_id: str,
+    payload: TagMerge,
+    user: CurrentUser,
+    session: Session = Depends(get_session),
+) -> DataResponse[TagRead]:
+    """Fold this tag into another: every asset carrying it carries the target instead, and
+    this tag is deleted. Returns the target with its new count.
+
+    What a rename onto an existing name would have to be. A rename refuses that, because
+    two tags becoming one is not undoable and should be asked for by name, not stumbled
+    into by typing.
+    """
+    source = _owned_tag(tag_id, user.id, session)
+    target = _owned_tag(payload.target_id, user.id, session)
+    if source.id == target.id:
+        raise _bad_request("A tag cannot be merged into itself")
+    affected = service.merge_tags(session, [source], target)
+    session.refresh(target)
+    asset_service.reindex_ids(session, affected)
+    counts = service.usage_counts(session, user.id)
+    return DataResponse[TagRead](data=_to_read(target, counts))
 
 
 # response_model=None alongside the `-> None` annotation: FastAPI infers a response

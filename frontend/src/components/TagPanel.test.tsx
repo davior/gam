@@ -113,6 +113,75 @@ describe('TagPanel', () => {
     ).toBeInTheDocument()
   })
 
+  it('merges a tag into another after saying what will happen', async () => {
+    vi.spyOn(tagsApi, 'list').mockResolvedValue([
+      tag(),
+      tag({ id: 't2', name: 'Interviews', asset_count: 10 }),
+    ])
+    const merge = vi
+      .spyOn(tagsApi, 'merge')
+      .mockResolvedValue(tag({ id: 't2', name: 'Interviews', asset_count: 12 }))
+    render(<TagPanel />)
+    await screen.findByText('interview')
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Merge interview into another tag' })
+    )
+    const step = screen.getByRole('group', { name: 'Merge interview' })
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeDisabled()
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Merge interview into' }),
+      't2'
+    )
+    expect(step).toHaveTextContent(
+      '3 assets will carry “Interviews” instead of “interview”. “interview” is then deleted.'
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Merge' }))
+
+    await waitFor(() => expect(merge).toHaveBeenCalledWith('t1', 't2'))
+    await waitFor(() => expect(screen.queryByText('interview')).not.toBeInTheDocument())
+    expect(useTagStore.getState().tags).toEqual([
+      tag({ id: 't2', name: 'Interviews', asset_count: 12 }),
+    ])
+  })
+
+  it('offers a merge, already pointed at the other tag, when a rename collides', async () => {
+    vi.spyOn(tagsApi, 'list').mockResolvedValue([
+      tag(),
+      tag({ id: 't2', name: 'Talk', asset_count: 1 }),
+    ])
+    const rename = vi.spyOn(tagsApi, 'rename')
+    render(<TagPanel />)
+    await screen.findByText('interview')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Rename interview' }))
+    const field = screen.getByRole('textbox', { name: 'Rename interview' })
+    await userEvent.clear(field)
+    await userEvent.type(field, 'talk{Enter}')
+
+    expect(rename).not.toHaveBeenCalled()
+    expect(screen.getByRole('combobox', { name: 'Merge interview into' })).toHaveValue(
+      't2'
+    )
+    expect(screen.getByRole('button', { name: 'Merge' })).toBeEnabled()
+  })
+
+  it('cancelling a merge changes nothing', async () => {
+    const merge = vi.spyOn(tagsApi, 'merge')
+    render(<TagPanel />)
+    await screen.findByText('interview')
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Merge interview into another tag' })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(
+      screen.queryByRole('group', { name: 'Merge interview' })
+    ).not.toBeInTheDocument()
+    expect(merge).not.toHaveBeenCalled()
+  })
+
   it('says a category delete keeps its contents, because it does', async () => {
     render(<TagPanel />)
     await screen.findByText('interview')

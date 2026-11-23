@@ -6,7 +6,10 @@ tree and the guard that stops that descent being infinite. Everything else is a 
 
 from __future__ import annotations
 
+import difflib
 import logging
+import re
+import unicodedata
 from typing import Iterable, Optional
 
 from sqlalchemy import text
@@ -103,6 +106,158 @@ def delete_tag(session: Session, tag: Tag) -> list[str]:
     session.delete(tag)
     session.commit()
     return asset_ids
+
+
+class TagNameClash(ValueError):
+    """A rename onto a name another of the person's tags already has."""
+
+    def __init__(self, existing: Tag):
+        super().__init__(f"You already have a tag called {existing.name}")
+        self.existing = existing
+
+
+def rename_tag(session: Session, tag: Tag, new_name: str) -> bool:
+    """Rename a tag, or refuse with `TagNameClash`. True if the name changed.
+
+    A change of case alone ("nato" to "NATO") is a rename like any other: the unique index
+    is case-insensitive, so the tag finds itself as the clash and that is not one. The
+    caller re-indexes the tag's assets on True, or the old word keeps answering searches.
+    Does not commit, so a caller doing several things commits them together.
+    """
+    cleaned = normalise(new_name)
+    if not cleaned:
+        raise ValueError("A tag name cannot be blank")
+    clash = find(session, tag.user_id, cleaned)
+    if clash is not None and clash.id != tag.id:
+        raise TagNameClash(clash)
+    if cleaned == tag.name:
+        return False
+    tag.name = cleaned
+    session.add(tag)
+    return True
+
+
+def merge_tags(session: Session, sources: list[Tag], target: Tag) -> list[str]:
+    """Fold the source tags into the target: every asset that carried a source carries the
+    target, and the sources are gone. Returns the assets whose tags changed.
+
+    The new rows skip the assets that already carry the target, because the join's
+    composite primary key would refuse the duplicate and fail the whole flush; an asset
+    tagged with both "nato" and "NATO" simply ends with one. A target with no category takes the
+    first source's, so merging into a new spelling does not unfile the tag.
+    """
+    source_ids = [tag.id for tag in sources if tag.id != target.id]
+    if not source_ids:
+        return []
+    affected = list(session.exec(
+        select(AssetTag.asset_id).where(col(AssetTag.tag_id).in_(source_ids)).distinct()
+    ).all())
+
+    held = set(session.exec(select(AssetTag.asset_id).where(AssetTag.tag_id == target.id)).all())
+    session.add_all(AssetTag(asset_id=asset_id, tag_id=target.id)
+                    for asset_id in affected if asset_id not in held)
+    # One transaction with the delete and the commit below, so a merge that fails part way
+    # leaves both tags as they were rather than an asset carrying neither.
+    session.flush()
+    session.exec(delete(AssetTag).where(col(AssetTag.tag_id).in_(source_ids)))
+    if target.category_id is None:
+        filed = next((tag.category_id for tag in sources if tag.category_id), None)
+        if filed:
+            target.category_id = filed
+            session.add(target)
+    for tag in sources:
+        if tag.id != target.id:
+            session.delete(tag)
+    session.commit()
+    return affected
+
+
+def asset_names_for_tags(
+    session: Session, tag_ids: Iterable[str], limit: int = 5
+) -> tuple[int, list[str]]:
+    """How many assets carry any of these tags, and the names of the first few.
+
+    What a proposal shows before it is applied: "14 assets: Interview with ..., ...". The
+    count and the sample are of distinct assets, so an asset carrying two of the tags
+    being merged is one asset, which is what the person will see change.
+    """
+    ids = list(tag_ids)
+    if not ids:
+        return 0, []
+    carrying = select(AssetTag.asset_id).where(col(AssetTag.tag_id).in_(ids))
+    count = session.exec(
+        select(func.count()).select_from(Asset).where(col(Asset.id).in_(carrying))
+    ).one()
+    names = session.exec(
+        select(Asset.name).where(col(Asset.id).in_(carrying)).order_by(col(Asset.name)).limit(limit)
+    ).all()
+    return int(count), list(names)
+
+
+_PUNCTUATION = re.compile(r"[^\w\s]")
+# Below this length a one-letter difference is a different word ("cat"/"car"), not a typo.
+TYPO_MIN_LENGTH = 5
+TYPO_RATIO = 0.88
+
+
+def fold(name: str) -> str:
+    """The form two spellings of one tag share: no case, accents or punctuation, and a
+    naive singular. Naive on purpose: it is for proposing merges a person then reads, so a
+    false pair costs an untick, and a missed one costs nothing."""
+    plain = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode() or name
+    plain = " ".join(_PUNCTUATION.sub("", plain.lower()).split())
+    words = plain.split(" ")
+    last = words[-1]
+    if len(last) > 4 and last.endswith("ies"):
+        last = last[:-3] + "y"
+    elif len(last) > 4 and last.endswith(("ches", "shes", "sses", "xes")):
+        last = last[:-2]
+    elif len(last) > 3 and last.endswith("s") and not last.endswith("ss"):
+        last = last[:-1]
+    words[-1] = last
+    return " ".join(words)
+
+
+def similar_groups(tags: list[Tag]) -> list[list[Tag]]:
+    """Tags that look like spellings of one another, in groups of two or more.
+
+    Two passes: the same folded form ("Interviews", "interview"), then near misses between
+    folded forms long enough for a typo to be one ("intervew"). The second is quadratic,
+    which over a personal vocabulary of hundreds is nothing; joined by union-find so a
+    chain of near misses lands in one group rather than several overlapping ones.
+    """
+    parent: dict[str, str] = {tag.id: tag.id for tag in tags}
+
+    def root(tag_id: str) -> str:
+        while parent[tag_id] != tag_id:
+            parent[tag_id] = parent[parent[tag_id]]
+            tag_id = parent[tag_id]
+        return tag_id
+
+    def join(a: str, b: str) -> None:
+        parent[root(a)] = root(b)
+
+    by_fold: dict[str, str] = {}
+    folded = {tag.id: fold(tag.name) for tag in tags}
+    for tag in tags:
+        key = folded[tag.id]
+        if key in by_fold:
+            join(tag.id, by_fold[key])
+        else:
+            by_fold[key] = tag.id
+
+    keys = [k for k in by_fold if len(k) >= TYPO_MIN_LENGTH]
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            if abs(len(a) - len(b)) > 2:
+                continue
+            if difflib.SequenceMatcher(None, a, b).ratio() >= TYPO_RATIO:
+                join(by_fold[a], by_fold[b])
+
+    groups: dict[str, list[Tag]] = {}
+    for tag in tags:
+        groups.setdefault(root(tag.id), []).append(tag)
+    return [group for group in groups.values() if len(group) > 1]
 
 
 def detach_all_from_asset(session: Session, asset_id: str) -> None:
@@ -230,6 +385,24 @@ def would_create_cycle(
     # refusing a legitimate 32-deep taxonomy is a far better failure than accepting a
     # loop.
     return True
+
+
+def category_paths(categories: Iterable[TagCategory]) -> dict[str, str]:
+    """Every category's full path, "People > Scientists", from the flat rows.
+
+    Bounded by MAX_CATEGORY_DEPTH rather than trusting the tree: a cycle that somehow got
+    in would otherwise make this loop forever on a request that only wanted to list tags.
+    """
+    rows = {c.id: c for c in categories}
+    paths: dict[str, str] = {}
+    for category in rows.values():
+        names, current, steps = [], category, 0
+        while current is not None and steps < MAX_CATEGORY_DEPTH:
+            names.append(current.name)
+            current = rows.get(current.parent_category_id) if current.parent_category_id else None
+            steps += 1
+        paths[category.id] = " > ".join(reversed(names))
+    return paths
 
 
 def descendant_category_ids(session: Session, user_id: str, root_id: str) -> list[str]:

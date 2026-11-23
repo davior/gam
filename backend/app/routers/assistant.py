@@ -89,14 +89,14 @@ class TurnCreate(BaseModel):
 
 
 class ApplyBody(BaseModel):
-    # Apply only these assets' entries, these clips and cuts, these playlists and these
-    # notes. All
-    # absent: all of it. Any present: each restricts its own kind, and a kind left out is
+    # Apply only these assets' entries, these clips and cuts, these playlists, these notes
+    # and these tag changes. All absent: all of it. Any present: each restricts its own kind, and a kind left out is
     # not applied (see `apply_service.apply`).
     asset_ids: Optional[List[str]] = None
     clip_ids: Optional[List[str]] = None
     playlist_refs: Optional[List[str]] = None
     note_refs: Optional[List[str]] = None
+    tag_op_refs: Optional[List[str]] = None
 
 
 class ItemResult(BaseModel):
@@ -116,6 +116,8 @@ class ItemResult(BaseModel):
     # Set on the result of a note: which proposed one, and where it is in Gecko Notes.
     note_ref: Optional[str] = None
     note_url: Optional[str] = None
+    # Set on the result of a change to the tag vocabulary: which proposed one.
+    op_ref: Optional[str] = None
 
 
 def _turn_read(row: AssistantTurn) -> TurnRead:
@@ -338,8 +340,8 @@ def _pending(turn: AssistantTurn) -> dict:
 @router.post("/turns/{turn_id}/apply", response_model=DataResponse[List[ItemResult]])
 def apply_turn(turn_id: str, user: CurrentUser, request: Request, body: ApplyBody = ApplyBody(),
                session: Session = Depends(get_session)) -> DataResponse[List[ItemResult]]:
-    """Make the proposed changes (all of them, or those for `asset_ids`, `clip_ids` and
-    `playlist_refs`).
+    """Make the proposed changes (all of them, or those for `asset_ids`, `clip_ids`,
+    `playlist_refs`, `note_refs` and `tag_op_refs`).
 
     Applying twice would repeat a rename over an edit made in between, so the proposal is
     marked applied before anything is written and a second request is refused. A failure
@@ -353,7 +355,7 @@ def apply_turn(turn_id: str, user: CurrentUser, request: Request, body: ApplyBod
     session.add(turn)
     session.commit()
     results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids,
-                                  body.playlist_refs, body.note_refs,
+                                  body.playlist_refs, body.note_refs, body.tag_op_refs,
                                   token=_caller_token(request), origin=_origin(request))
     return DataResponse(data=[ItemResult(**r) for r in results])
 
