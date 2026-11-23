@@ -1,8 +1,8 @@
 """The assistant's tools: those that look, and those that propose.
 
 None of them writes to the library. `propose_changes`, `propose_enrichment`, `propose_clip`,
-`propose_cut`, `propose_playlist` and `propose_note` add to a `Working` proposal that the turn ends with,
-and that is all they do. The person applies
+`propose_cut`, `propose_playlist`, `propose_note` and the three `propose_tag_*` add to a
+`Working` proposal that the turn ends with, and that is all they do. The person applies
 it (routers/assistant.py) or throws it away, so a model that misreads a request costs a
 discarded card and not a rewritten library.
 
@@ -32,11 +32,12 @@ from app.enrichment.source import document_text
 from app.enrichment.summarize import summarisable
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.models.asset import Asset
-from app.models.tag import Tag
+from app.models.tag import Tag, TagCategory
 from app.models.transcript import TranscriptSegment
 from app.services import assets as asset_service
 from app.services import playlists as playlist_service
 from app.services import search as search_service
+from app.schemas_tags import MAX_CATEGORY_LENGTH, MAX_TAG_LENGTH
 from app.services import tags as tag_service
 
 # What a proposal may ask the enrichment pipeline to do once applied.
@@ -63,6 +64,22 @@ ASSET_LINK = re.compile(r"\]\(\s*/a/([A-Za-z0-9-]+)\s*\)")
 # MAX_CLIPS because a playlist is the request for many moments, and each costs nothing
 # until applied; past this the model is told to stop and say what is left.
 MAX_PLAYLIST_ITEMS = 60
+
+# Tag operations one turn may propose. Counted in operations, not tags: filing 300 tags into
+# one group is one operation, so sorting a whole vocabulary costs about one per group.
+MAX_TAG_OPS = 100
+# Tags one filing, merge or delete may name. A vocabulary is hundreds, not thousands.
+MAX_TAG_IDS = 500
+# Tags list_tags hands over at a time; past this it says where to carry on.
+TAG_PAGE = 200
+# Groups of look-alike tags find_similar_tags reports at once.
+MAX_SIMILAR_GROUPS = 50
+# How far a walk up the proposed category tree goes before calling it a loop.
+TREE_DEPTH = 64
+# Matching the REST API's limits (schemas_tags), so a proposal never makes what a person
+# could not.
+TAG_NAME_MAX = MAX_TAG_LENGTH
+CATEGORY_MAX = MAX_CATEGORY_LENGTH
 
 SPECS: List[ToolSpec] = [
     ToolSpec(
@@ -101,7 +118,23 @@ SPECS: List[ToolSpec] = [
          "required": ["asset_id"]}),
     ToolSpec(
         "list_tags",
-        "The person's existing tags, most used first. Look here before proposing a tag.",
+        "The person's existing tags, most used first, each with its id, how many assets carry "
+        "it and the category (group) it is filed under; the first page also lists the "
+        "categories, nested as Parent > Child, with their ids. Look here before proposing a "
+        "tag, and before organising tags. Comes in pages: pass offset to carry on.",
+        {"type": "object", "properties": {
+            "offset": {"type": "integer", "description": "Where to carry on from. Default 0."},
+            "uncategorised_only": {"type": "boolean",
+                                   "description": "Only tags not filed under any category."},
+            "max_uses": {"type": "integer",
+                         "description": "Only tags on at most this many assets (0: unused)."},
+        }}),
+    ToolSpec(
+        "find_similar_tags",
+        "Groups of the person's tags that look like spellings of one tag: different case, "
+        "plurals, punctuation, small typos (interview / Interviews / intervew). Each with its "
+        "id and how many assets carry it. Use it to find duplicates to merge. Similar is not "
+        "the same: read each group before proposing a merge.",
         {"type": "object", "properties": {}}),
     ToolSpec(
         "web_search",
@@ -206,11 +239,69 @@ SPECS: List[ToolSpec] = [
             "reason": {"type": "string",
                        "description": "One sentence on why this stretch, shown to the person."},
         }, "required": ["asset_id", "start_seconds", "end_seconds"]}),
+    ToolSpec(
+        "propose_tag_groups",
+        "Propose organising tags into groups. Groups are categories, which nest (People > "
+        "Scientists); each tag is filed under at most one. In one call: new categories, "
+        "existing categories moved under another or renamed, and tags filed into a category. "
+        "Name a category by its id from list_tags (or its path, People > Scientists, when that "
+        "names one), or by the ref of one proposed in this turn (a new one's ref is its name "
+        "unless you give one). Nothing changes until the person "
+        "applies the proposal. Call again to add more.",
+        {"type": "object", "properties": {
+            "categories": {"type": "array", "description": "New categories.", "items": {
+                "type": "object", "properties": {
+                    "name": {"type": "string"},
+                    "parent": {"type": "string",
+                               "description": "Category id or ref to nest it under; omit for top level."},
+                    "ref": {"type": "string",
+                            "description": "What to call it in this turn, if not its name."},
+                }, "required": ["name"]}},
+            "moves": {"type": "array", "description": "Existing categories to move or rename.",
+                      "items": {"type": "object", "properties": {
+                          "category_id": {"type": "string"},
+                          "parent": {"type": ["string", "null"],
+                                     "description": "New parent id or ref; null for top level; omit to leave it."},
+                          "new_name": {"type": "string"},
+                      }, "required": ["category_id"]}},
+            "file": {"type": "array", "description": "Tags to file under a category.",
+                     "items": {"type": "object", "properties": {
+                         "tag_ids": {"type": "array", "items": {"type": "string"}},
+                         "category": {"type": ["string", "null"],
+                                      "description": "Category id or ref; null takes them out of any."},
+                     }, "required": ["tag_ids", "category"]}},
+        }}),
+    ToolSpec(
+        "propose_tag_rename",
+        "Propose renaming tags, or merging several into one, across every asset that carries "
+        "them. A rename onto a name another tag already has is a merge. A merge moves every "
+        "asset from the source tags onto the target and deletes the sources; merge into the "
+        "most used spelling. Nothing changes until the person applies the proposal.",
+        {"type": "object", "properties": {
+            "renames": {"type": "array", "items": {"type": "object", "properties": {
+                "tag_id": {"type": "string"},
+                "new_name": {"type": "string"},
+            }, "required": ["tag_id", "new_name"]}},
+            "merges": {"type": "array", "items": {"type": "object", "properties": {
+                "source_tag_ids": {"type": "array", "items": {"type": "string"}},
+                "target_tag_id": {"type": "string", "description": "An existing tag to keep."},
+                "target_name": {"type": "string",
+                                "description": "Or a name to merge into, new or existing."},
+            }, "required": ["source_tag_ids"]}},
+        }}),
+    ToolSpec(
+        "propose_tag_delete",
+        "Propose deleting tags everywhere they are used. Meant for unused tags and junk; a "
+        "tag still on assets is better merged into another, and if asked to delete one, say "
+        "how many assets lose it. Nothing changes until the person applies the proposal.",
+        {"type": "object", "properties": {
+            "tag_ids": {"type": "array", "items": {"type": "string"}},
+        }, "required": ["tag_ids"]}),
 ]
 
 # Tools that only look. The worker reports a step for the rest.
 READS = frozenset({"search_assets", "get_asset", "read_transcript", "list_clips", "list_tags",
-                   "list_playlists", "web_search"})
+                   "find_similar_tags", "list_playlists", "web_search"})
 
 # What a web search may hand back to the model in one call. A page of results, not a crawl.
 MAX_WEB_CHARS = 6_000
@@ -282,6 +373,11 @@ class Working:
         self.playlists: List[dict] = []
         # Notes for Gecko Notes, each with its own `note_ref`.
         self.notes: List[dict] = []
+        # Changes to the tag vocabulary: categories made, moved and filed into, tags renamed,
+        # merged and deleted. In proposal order; apply runs them in dependency order.
+        self.tag_ops: List[dict] = []
+        # A new category's ref, as the model names it (lowercased), -> its op.
+        self._category_refs: Dict[str, dict] = {}
         # Set by the worker once it holds a connection to the suite: `query -> results`.
         # Unset, the tool says so instead of failing.
         self.search: Optional[Callable[[str], list]] = None
@@ -296,6 +392,7 @@ class Working:
             "read_transcript": self.read_transcript,
             "list_clips": self.list_clips,
             "list_tags": self.list_tags,
+            "find_similar_tags": self.find_similar_tags,
             "list_playlists": self.list_playlists,
             "web_search": self.web_search,
             "propose_changes": self.propose_changes,
@@ -304,6 +401,9 @@ class Working:
             "propose_cut": self.propose_cut,
             "propose_playlist": self.propose_playlist,
             "propose_note": self.propose_note,
+            "propose_tag_groups": self.propose_tag_groups,
+            "propose_tag_rename": self.propose_tag_rename,
+            "propose_tag_delete": self.propose_tag_delete,
         }
 
     @contextmanager
@@ -440,13 +540,61 @@ class Working:
             return "\n".join(lines)
 
     def list_tags(self, args: dict) -> object:
+        offset = args.get("offset")
+        offset = offset if isinstance(offset, int) and offset > 0 else 0
+        max_uses = args.get("max_uses")
+        max_uses = max_uses if isinstance(max_uses, int) and not isinstance(max_uses, bool) \
+            and max_uses >= 0 else None
+        unfiled_only = args.get("uncategorised_only") is True
         with self._session() as session:
             counts = tag_service.usage_counts(session, self.user_id)
             rows = session.exec(select(Tag).where(Tag.user_id == self.user_id)).all()
-        if not rows:
+            categories = session.exec(
+                select(TagCategory).where(TagCategory.user_id == self.user_id)).all()
+        if not rows and not categories:
             return "There are no tags yet."
-        rows = sorted(rows, key=lambda t: (-counts.get(t.id, 0), t.name.lower()))[:200]
-        return "\n".join(f"{t.name} ({counts.get(t.id, 0)})" for t in rows)
+        paths = tag_service.category_paths(categories)
+        unfiled = sum(1 for t in rows if t.category_id not in paths)
+        lines = [f"{len(rows)} tag(s), {unfiled} not in any category; "
+                 f"{len(categories)} categor{'y' if len(categories) == 1 else 'ies'}."]
+        if offset == 0 and categories:
+            lines.append("Categories:")
+            lines += [f"- {cid} | {path}" for cid, path in sorted(paths.items(), key=lambda p: p[1].lower())]
+
+        chosen = [t for t in rows
+                  if (not unfiled_only or t.category_id not in paths)
+                  and (max_uses is None or counts.get(t.id, 0) <= max_uses)]
+        chosen.sort(key=lambda t: (-counts.get(t.id, 0), t.name.lower()))
+        page = chosen[offset:offset + TAG_PAGE]
+        if not page:
+            lines.append("No tags match." if offset == 0 else "No more tags.")
+            return "\n".join(lines)
+        lines.append(f"Tags {offset + 1}-{offset + len(page)} of {len(chosen)} "
+                     "(id | name (assets) | category):")
+        for t in page:
+            where = f" | {paths[t.category_id]}" if t.category_id in paths else ""
+            lines.append(f"- {t.id} | {t.name} ({counts.get(t.id, 0)}){where}")
+        if offset + len(page) < len(chosen):
+            lines.append(f"[more: call again with offset={offset + len(page)}]")
+        return "\n".join(lines)
+
+    def find_similar_tags(self, args: dict) -> object:
+        with self._session() as session:
+            counts = tag_service.usage_counts(session, self.user_id)
+            rows = list(session.exec(select(Tag).where(Tag.user_id == self.user_id)).all())
+        self._step("read", "Looking for tags that are spellings of one another")
+        groups = tag_service.similar_groups(rows)
+        if not groups:
+            return "No tags look like spellings of one another."
+        for group in groups:
+            group.sort(key=lambda t: (-counts.get(t.id, 0), t.name.lower()))
+        groups.sort(key=lambda g: -sum(counts.get(t.id, 0) for t in g))
+        lines = [" | ".join(f"{t.name} {t.id} ({counts.get(t.id, 0)})" for t in group)
+                 for group in groups[:MAX_SIMILAR_GROUPS]]
+        more = len(groups) - MAX_SIMILAR_GROUPS
+        return ("Each line is one group, most used first: name id (assets).\n"
+                + "\n".join(f"- {line}" for line in lines)
+                + (f"\n[{more} more groups not shown]" if more > 0 else ""))
 
     def list_playlists(self, args: dict) -> object:
         from app.models.playlist import Playlist
@@ -684,6 +832,401 @@ class Working:
         return (f"Recorded the note {title!r} ({len(markdown)} characters, "
                 f"{len(ids)} linked asset(s)).")
 
+    # ─── the tag vocabulary ──────────────────────────────────────────────────
+
+    def propose_tag_groups(self, args: dict) -> object:
+        """Record new categories, moves of existing ones, and tags filed into them.
+
+        Done in that order within the call, so a category made in it can be the parent of
+        another or the home of tags in the same call. Each entry is checked on its own and
+        the good ones kept, as for playlist items; the model hears which failed and why.
+        """
+        creates = args.get("categories") if isinstance(args.get("categories"), list) else []
+        moves = args.get("moves") if isinstance(args.get("moves"), list) else []
+        files = args.get("file") if isinstance(args.get("file"), list) else []
+        if not (creates or moves or files):
+            return _fail("Give categories to make, moves, or tags to file.")
+        done, problems = [], []
+        with self._session() as session:
+            for index, raw in enumerate(creates, start=1):
+                said = self._create_category(session, raw) if isinstance(raw, dict) else _fail("not an object.")
+                (problems.append(f"category {index}: {said[0]}") if isinstance(said, tuple)
+                 else done.append(said))
+            for index, raw in enumerate(moves, start=1):
+                said = self._move_category(session, raw) if isinstance(raw, dict) else _fail("not an object.")
+                (problems.append(f"move {index}: {said[0]}") if isinstance(said, tuple)
+                 else done.append(said))
+            for index, raw in enumerate(files, start=1):
+                said = self._file_tags(session, raw) if isinstance(raw, dict) else _fail("not an object.")
+                (problems.append(f"filing {index}: {said[0]}") if isinstance(said, tuple)
+                 else done.append(said))
+        return self._tag_reply(done, problems)
+
+    def propose_tag_rename(self, args: dict) -> object:
+        renames = args.get("renames") if isinstance(args.get("renames"), list) else []
+        merges = args.get("merges") if isinstance(args.get("merges"), list) else []
+        if not (renames or merges):
+            return _fail("Give renames or merges.")
+        done, problems = [], []
+        with self._session() as session:
+            for index, raw in enumerate(renames, start=1):
+                said = self._rename(session, raw) if isinstance(raw, dict) else _fail("not an object.")
+                (problems.append(f"rename {index}: {said[0]}") if isinstance(said, tuple)
+                 else done.append(said))
+            for index, raw in enumerate(merges, start=1):
+                said = self._merge(session, raw) if isinstance(raw, dict) else _fail("not an object.")
+                (problems.append(f"merge {index}: {said[0]}") if isinstance(said, tuple)
+                 else done.append(said))
+        return self._tag_reply(done, problems)
+
+    def propose_tag_delete(self, args: dict) -> object:
+        ids = self._ids(args.get("tag_ids"))
+        if not ids:
+            return _fail("Give the ids of the tags to delete, from list_tags.")
+        done, problems = [], []
+        with self._session() as session:
+            for tag_id in ids:
+                tag = self._owned_tag(session, tag_id)
+                if tag is None:
+                    problems.append(f"{tag_id}: no such tag.")
+                    continue
+                if self._claimed(tag.id, "delete_tag"):
+                    problems.append(f"{tag.name}: already being renamed or merged in this proposal.")
+                    continue
+                if any(op["kind"] == "delete_tag" and op["tag_id"] == tag.id for op in self.tag_ops):
+                    continue
+                if self._full():
+                    problems.append(self._full_sentence())
+                    break
+                count, sample = tag_service.asset_names_for_tags(session, [tag.id])
+                self._add_op({"kind": "delete_tag", "tag_id": tag.id, "name": tag.name,
+                              "asset_count": count, "sample_assets": sample})
+                done.append(f"delete {tag.name}" + (f" (on {count} asset(s))" if count else " (unused)"))
+        return self._tag_reply(done, problems)
+
+    def _create_category(self, session: Session, raw: dict):
+        name = _clean(raw.get("name"))
+        if not name:
+            return _fail("give it a name.")
+        name = " ".join(name.split())
+        if len(name) > CATEGORY_MAX:
+            return _fail(f"the name is too long ({len(name)} of {CATEGORY_MAX} characters).")
+        ref = (_clean(raw.get("ref")) or name).lower()
+        parent = None
+        if raw.get("parent") is not None:
+            parent = self._category(session, raw.get("parent"))
+            if parent is None:
+                return _fail("its parent is not a category id from list_tags or a ref from this turn.")
+        if ref in self._category_refs:
+            held = self._category_refs[ref]
+            return f"{held['name']} is already proposed"
+
+        # One that exists already under the same parent is that one, not a twin of it.
+        if parent is None or parent[0] == "id":
+            parent_id = parent[1] if parent else None
+            twin = session.exec(select(TagCategory).where(
+                TagCategory.user_id == self.user_id,
+                TagCategory.parent_category_id == parent_id)).all()
+            match = next((c for c in twin if c.name.lower() == name.lower()), None)
+            if match is not None:
+                self._category_refs[ref] = {"existing_id": match.id, "name": match.name}
+                return f"{match.name} exists already ({match.id}), so that is used"
+        if self._full():
+            return _fail(self._full_sentence())
+        op = self._add_op({
+            "kind": "create_category", "name": name,
+            "parent_category_id": parent[1] if parent and parent[0] == "id" else None,
+            "parent_ref": parent[1] if parent and parent[0] == "ref" else None,
+            "parent_label": self._category_label(session, parent),
+        })
+        self._category_refs[ref] = op
+        return f"new category {self._category_label(session, ('ref', op['op_ref']))}"
+
+    def _move_category(self, session: Session, raw: dict):
+        category = self._owned_category(session, raw.get("category_id"))
+        if category is None:
+            return _fail("no such category. Use an id from list_tags.")
+        new_name = _clean(raw.get("new_name"))
+        new_name = " ".join(new_name.split()) if new_name else None
+        if new_name and len(new_name) > CATEGORY_MAX:
+            return _fail(f"the name is too long ({len(new_name)} of {CATEGORY_MAX} characters).")
+        moving = "parent" in raw
+        parent = None
+        if moving and raw.get("parent") is not None:
+            parent = self._category(session, raw.get("parent"))
+            if parent is None:
+                return _fail("its new parent is not a category id from list_tags or a ref from this turn.")
+            if self._would_loop(session, category.id, parent):
+                return _fail(f"{category.name} cannot go inside itself or one of its own subcategories.")
+        if not moving and not new_name:
+            return _fail("give a new parent or a new name.")
+        if moving and parent is None and category.parent_category_id is None and not new_name:
+            return f"{category.name} is already at the top level"
+        if self._full():
+            return _fail(self._full_sentence())
+        paths = tag_service.category_paths(
+            session.exec(select(TagCategory).where(TagCategory.user_id == self.user_id)).all())
+        self.tag_ops = [op for op in self.tag_ops
+                        if not (op["kind"] == "move_category" and op["category_id"] == category.id)]
+        op = self._add_op({
+            "kind": "move_category", "category_id": category.id, "name": category.name,
+            "from_path": paths.get(category.id, category.name), "move": moving,
+            "parent_category_id": parent[1] if parent and parent[0] == "id" else None,
+            "parent_ref": parent[1] if parent and parent[0] == "ref" else None,
+            "parent_label": self._category_label(session, parent) if moving else None,
+            "new_name": new_name,
+        })
+        where = f" under {op['parent_label']}" if parent else (" to the top level" if moving else "")
+        return f"move {category.name}{where}" + (f", renamed {new_name}" if new_name else "")
+
+    def _file_tags(self, session: Session, raw: dict):
+        ids = self._ids(raw.get("tag_ids"))
+        if not ids:
+            return _fail("give tag_ids from list_tags.")
+        if "category" not in raw:
+            return _fail("give a category, or null to take the tags out of any.")
+        target = None
+        if raw.get("category") is not None:
+            target = self._category(session, raw.get("category"))
+            if target is None:
+                return _fail("not a category id from list_tags or a ref from this turn.")
+        tags = [t for t in (self._owned_tag(session, i) for i in ids) if t is not None]
+        unknown = len(ids) - len(tags)
+        if not tags:
+            return _fail("none of those are tags. Use ids from list_tags.")
+        # Already where they are going: nothing to propose for those.
+        home = target[1] if target and target[0] == "id" else None
+        if target is None or target[0] == "id":
+            settled = [t for t in tags if t.category_id == home]
+            tags = [t for t in tags if t.category_id != home]
+            if not tags:
+                return f"{len(settled)} tag(s) are already filed there"
+        key = (target[0], target[1]) if target else None
+        # A tag filed again moves to the latest home, and is taken out of the earlier one.
+        moving = {t.id for t in tags}
+        for op in [o for o in self.tag_ops if o["kind"] == "file_tags"]:
+            if self._file_key(op) == key:
+                continue
+            op["tags"] = [t for t in op["tags"] if t["id"] not in moving]
+            if not op["tags"]:
+                self.tag_ops.remove(op)
+            else:
+                op["asset_count"], op["sample_assets"] = tag_service.asset_names_for_tags(
+                    session, [t["id"] for t in op["tags"]])
+        op = next((o for o in self.tag_ops if o["kind"] == "file_tags" and self._file_key(o) == key), None)
+        if op is None:
+            if self._full():
+                return _fail(self._full_sentence())
+            op = self._add_op({
+                "kind": "file_tags", "tags": [],
+                "category_id": target[1] if target and target[0] == "id" else None,
+                "category_ref": target[1] if target and target[0] == "ref" else None,
+                "category_label": self._category_label(session, target),
+            })
+        held = {t["id"] for t in op["tags"]}
+        op["tags"] += [{"id": t.id, "name": t.name} for t in tags if t.id not in held]
+        op["tags"] = op["tags"][:MAX_TAG_IDS]
+        op["asset_count"], op["sample_assets"] = tag_service.asset_names_for_tags(
+            session, [t["id"] for t in op["tags"]])
+        where = op["category_label"] or "no category"
+        return (f"file {len(tags)} tag(s) under {where}"
+                + (f" ({unknown} id(s) were not tags)" if unknown else ""))
+
+    def _rename(self, session: Session, raw: dict):
+        tag = self._owned_tag(session, raw.get("tag_id"))
+        if tag is None:
+            return _fail("no such tag. Use an id from list_tags.")
+        new_name = tag_service.normalise(raw.get("new_name") if isinstance(raw.get("new_name"), str) else "")
+        if not new_name:
+            return _fail("give the new name.")
+        if len(new_name) > TAG_NAME_MAX:
+            return _fail(f"the name is too long ({len(new_name)} of {TAG_NAME_MAX} characters).")
+        if new_name == tag.name:
+            return f"{tag.name} is already called that"
+        clash = tag_service.find(session, self.user_id, new_name)
+        if clash is not None and clash.id != tag.id:
+            return self._merge(session, {"source_tag_ids": [tag.id], "target_tag_id": clash.id})
+        if self._claimed(tag.id, "rename_tag"):
+            return _fail(f"{tag.name} is already being merged or deleted in this proposal.")
+        taken = next((op for op in self.tag_ops if op["kind"] == "rename_tag" and op["tag_id"] != tag.id
+                      and op["to"].lower() == new_name.lower()), None)
+        if taken is not None:
+            return _fail(f"{taken['from']} is already being renamed {taken['to']}; merge them instead.")
+        self.tag_ops = [op for op in self.tag_ops
+                        if not (op["kind"] == "rename_tag" and op["tag_id"] == tag.id)]
+        if self._full():
+            return _fail(self._full_sentence())
+        count, sample = tag_service.asset_names_for_tags(session, [tag.id])
+        self._add_op({"kind": "rename_tag", "tag_id": tag.id, "from": tag.name, "to": new_name,
+                      "asset_count": count, "sample_assets": sample})
+        return f"rename {tag.name} to {new_name} on {count} asset(s)"
+
+    def _merge(self, session: Session, raw: dict):
+        ids = self._ids(raw.get("source_tag_ids"))
+        sources = [t for t in (self._owned_tag(session, i) for i in ids) if t is not None]
+        target = None
+        target_name = None
+        if raw.get("target_tag_id"):
+            target = self._owned_tag(session, raw.get("target_tag_id"))
+            if target is None:
+                return _fail("the target is not a tag. Use an id from list_tags, or give target_name.")
+        else:
+            target_name = tag_service.normalise(
+                raw.get("target_name") if isinstance(raw.get("target_name"), str) else "")
+            if not target_name:
+                return _fail("give target_tag_id or target_name.")
+            if len(target_name) > TAG_NAME_MAX:
+                return _fail(f"the name is too long ({len(target_name)} of {TAG_NAME_MAX} characters).")
+            target = tag_service.find(session, self.user_id, target_name)
+        if target is not None:
+            sources = [t for t in sources if t.id != target.id]
+        if not sources:
+            return _fail("give at least one source tag, other than the target, from list_tags.")
+        for tag in sources + ([target] if target else []):
+            if self._claimed(tag.id, "merge_tags"):
+                return _fail(f"{tag.name} is already being renamed, merged or deleted in this proposal.")
+        if self._full():
+            return _fail(self._full_sentence())
+        count, sample = tag_service.asset_names_for_tags(session, [t.id for t in sources])
+        into = target.name if target else target_name
+        self._add_op({
+            "kind": "merge_tags",
+            "sources": [{"id": t.id, "name": t.name} for t in sources],
+            "target_id": target.id if target else None, "target_name": into,
+            "asset_count": count, "sample_assets": sample,
+        })
+        return (f"merge {', '.join(t.name for t in sources)} into "
+                f"{into}{'' if target else ' (a new tag)'} on {count} asset(s)")
+
+    # helpers for the above
+
+    def _owned_tag(self, session: Session, tag_id: object) -> Optional[Tag]:
+        tag = session.get(Tag, tag_id) if isinstance(tag_id, str) and tag_id else None
+        return tag if tag is not None and tag.user_id == self.user_id else None
+
+    def _owned_category(self, session: Session, category_id: object) -> Optional[TagCategory]:
+        row = session.get(TagCategory, category_id) if isinstance(category_id, str) and category_id else None
+        return row if row is not None and row.user_id == self.user_id else None
+
+    def _category(self, session: Session, value: object) -> Optional[tuple]:
+        """A category named by the model: ("ref", op_ref) for one proposed this turn, or
+        ("id", id) for one that exists. A ref is looked up first, since the model is told it
+        may call a new category by its name, and an id is never a name it was given."""
+        if not isinstance(value, str) or not value.strip():
+            return None
+        held = self._category_refs.get(value.strip().lower())
+        if held is not None:
+            return ("id", held["existing_id"]) if "existing_id" in held else ("ref", held["op_ref"])
+        row = self._owned_category(session, value.strip())
+        if row is not None:
+            return ("id", row.id)
+        # Models name a category by what they read ("People", "People > Scientists") as
+        # often as by its id. Taken when it picks out exactly one; two "Other"s under
+        # different parents is a question for the model, not a guess for this tool.
+        wanted = " > ".join(part.strip() for part in value.split(">")).lower()
+        paths = tag_service.category_paths(session.exec(
+            select(TagCategory).where(TagCategory.user_id == self.user_id)).all())
+        hits = [cid for cid, path in paths.items()
+                if path.lower() == wanted or path.lower().split(" > ")[-1] == wanted]
+        exact = [cid for cid in hits if paths[cid].lower() == wanted]
+        chosen = exact if len(exact) == 1 else hits
+        return ("id", chosen[0]) if len(chosen) == 1 else None
+
+    def _category_label(self, session: Session, which: Optional[tuple]) -> Optional[str]:
+        """The path a person reads, "People > Scientists", for an existing or proposed one."""
+        if which is None:
+            return None
+        names, current = [], which
+        for _ in range(TREE_DEPTH):
+            if current is None:
+                break
+            if current[0] == "ref":
+                op = next((o for o in self.tag_ops if o["op_ref"] == current[1]), None)
+                if op is None:
+                    break
+                names.append(op["name"])
+                current = (("ref", op["parent_ref"]) if op["parent_ref"]
+                           else ("id", op["parent_category_id"]) if op["parent_category_id"] else None)
+            else:
+                row = self._owned_category(session, current[1])
+                if row is None:
+                    break
+                names.append(row.name)
+                current = ("id", row.parent_category_id) if row.parent_category_id else None
+        return " > ".join(reversed(names))
+
+    def _would_loop(self, session: Session, category_id: str, parent: tuple) -> bool:
+        """True if putting the category under this parent makes it its own ancestor, taking
+        account of the moves and new categories already proposed this turn."""
+        moved = {op["category_id"]: op for op in self.tag_ops
+                 if op["kind"] == "move_category" and op["move"] and op["category_id"] != category_id}
+        current: Optional[tuple] = parent
+        for _ in range(TREE_DEPTH):
+            if current is None:
+                return False
+            kind, value = current
+            if kind == "id" and value == category_id:
+                return True
+            op = (next((o for o in self.tag_ops if o["op_ref"] == value), None) if kind == "ref"
+                  else moved.get(value))
+            if op is not None:
+                current = (("ref", op["parent_ref"]) if op["parent_ref"]
+                           else ("id", op["parent_category_id"]) if op["parent_category_id"] else None)
+                continue
+            row = self._owned_category(session, value) if kind == "id" else None
+            if row is None:
+                return False
+            current = ("id", row.parent_category_id) if row.parent_category_id else None
+        return True
+
+    @staticmethod
+    def _file_key(op: dict) -> Optional[tuple]:
+        if op["category_ref"]:
+            return ("ref", op["category_ref"])
+        return ("id", op["category_id"]) if op["category_id"] else None
+
+    def _claimed(self, tag_id: str, kind: str) -> bool:
+        """Whether another rename, merge or delete in this proposal already names the tag.
+        One change to a tag's identity per proposal: two would have to apply in an order
+        the person never sees, and the second would find the tag gone."""
+        for op in self.tag_ops:
+            if op["kind"] == "rename_tag" and op["tag_id"] == tag_id and kind != "rename_tag":
+                return True
+            if op["kind"] == "delete_tag" and op["tag_id"] == tag_id and kind != "delete_tag":
+                return True
+            if op["kind"] == "merge_tags" and (op["target_id"] == tag_id
+                                               or any(t["id"] == tag_id for t in op["sources"])):
+                return True
+        return False
+
+    def _full(self) -> bool:
+        return len(self.tag_ops) >= MAX_TAG_OPS
+
+    @staticmethod
+    def _full_sentence() -> str:
+        return (f"that is {MAX_TAG_OPS} tag changes already, the most one request may "
+                "propose. Say what is left and let the person ask for more.")
+
+    def _add_op(self, op: dict) -> dict:
+        op = {"op_ref": str(uuid.uuid4()), **op}
+        self.tag_ops.append(op)
+        return op
+
+    @staticmethod
+    def _ids(value: object) -> List[str]:
+        seen: List[str] = []
+        for raw in value if isinstance(value, list) else []:
+            if isinstance(raw, str) and raw.strip() and raw.strip() not in seen:
+                seen.append(raw.strip())
+        return seen[:MAX_TAG_IDS]
+
+    def _tag_reply(self, done: List[str], problems: List[str]) -> object:
+        if not done:
+            return _fail("Nothing was recorded. " + " ".join(problems))
+        self._step("propose", f"Proposing {len(done)} change(s) to the tags")
+        return ("Recorded: " + "; ".join(done) + "."
+                + (" Not recorded: " + " ".join(problems) if problems else ""))
+
     def _playlist_entry(self, existing, name: Optional[str], description: Optional[str]) -> dict:
         for held in self.playlists:
             if existing is not None and held["playlist_id"] == existing.id:
@@ -752,10 +1295,10 @@ class Working:
         items = [i for i in self.items.values()
                  if any(i.get(f) for f in ("name", "description", "summary", "add_tags",
                                            "remove_tags", "enrich"))]
-        if not (items or self.clips or self.playlists or self.notes):
+        if not (items or self.clips or self.playlists or self.notes or self.tag_ops):
             return None
         return {"items": items, "clips": list(self.clips), "playlists": list(self.playlists),
-                "notes": list(self.notes)}
+                "notes": list(self.notes), "tag_ops": list(self.tag_ops)}
 
     def proposal_json(self) -> Optional[str]:
         proposal = self.proposal()

@@ -263,7 +263,12 @@ export const useAssistantStore = create<AssistantState>((set, get) => {
         putTurn(turn)
         // The library on screen and the tag vocabulary are now behind what was written.
         void useLibraryStore.getState().load()
-        useTagStore.getState().reset()
+        // A reset is enough when only assets' tags changed: the catalogue is fetched again
+        // where it is next needed. Changes to the vocabulary itself are reloaded at once,
+        // because the Tags panel and the filter bar are likely open beside the card, and
+        // they would sit empty after a reset until something else asked.
+        if (results.some((r) => r.op_ref)) void useTagStore.getState().load()
+        else useTagStore.getState().reset()
         // A playlist it made or added to, perhaps the one open on the page beside it.
         const playlists = usePlaylistStore.getState()
         if (playlists.loaded) void playlists.load()

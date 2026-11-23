@@ -89,6 +89,44 @@ def test_renaming_a_tag_moves_the_searchable_word(library, session):
     assert [row["asset"]["id"] for row in found["data"]] == [asset.id]
 
 
+def test_renaming_onto_another_tags_name_is_refused(library, session):
+    asset = make_asset(session)
+    add_tags(library, asset.id, "nato", "psyop")
+    tag = session.exec(select(Tag).where(Tag.name == "psyop")).one()
+
+    res = library.patch(f"/api/tags/{tag.id}", json={"name": "NATO"})
+    assert res.status_code == 400
+    assert res.json()["detail"]["message"] == "You already have a tag called nato"
+    # A change of case alone is a rename, not a clash with itself.
+    res = library.patch(f"/api/tags/{tag.id}", json={"name": "PSYOP"})
+    assert res.status_code == 200 and res.json()["data"]["name"] == "PSYOP"
+
+
+def test_merging_tags_keeps_one_attachment_per_asset(library, session):
+    """An asset carrying both the source and the target ends with the target once: the
+    join's composite key would refuse a second row and fail the whole merge."""
+    only_source, both = make_asset(session, name="One"), make_asset(session, name="Both")
+    add_tags(library, only_source.id, "nato")
+    add_tags(library, both.id, "nato", "NATO alliance")
+    source = session.exec(select(Tag).where(Tag.name == "nato")).one()
+    target = session.exec(select(Tag).where(Tag.name == "NATO alliance")).one()
+
+    affected = service.merge_tags(session, [source], target)
+
+    assert sorted(affected) == sorted([only_source.id, both.id])
+    assert session.exec(select(Tag).where(Tag.name == "nato")).first() is None
+    rows = session.exec(select(AssetTag).where(AssetTag.tag_id == target.id)).all()
+    assert sorted(r.asset_id for r in rows) == sorted([only_source.id, both.id])
+
+
+def test_look_alike_tags_are_grouped_and_different_words_are_not():
+    tags = [Tag(id=name, user_id=TEST_USER, name=name) for name in (
+        "interview", "Interviews", "intervew", "Café", "cafe", "cat", "car", "Studies", "study")]
+    groups = sorted(sorted(t.name for t in g) for g in service.similar_groups(tags))
+    assert groups == [["Café", "cafe"], ["Interviews", "intervew", "interview"],
+                      ["Studies", "study"]]
+
+
 # ─── case ────────────────────────────────────────────────────────────────────
 
 

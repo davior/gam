@@ -128,12 +128,10 @@ def update_tag(
 
     renamed = False
     if "name" in fields and fields["name"]:
-        cleaned = service.normalise(fields["name"])
-        clash = service.find(session, user.id, cleaned)
-        if clash and clash.id != tag.id:
-            raise _bad_request(f"You already have a tag called {clash.name}")
-        renamed = cleaned.lower() != tag.name.lower() or cleaned != tag.name
-        tag.name = cleaned
+        try:
+            renamed = service.rename_tag(session, tag, fields["name"])
+        except ValueError as exc:  # TagNameClash is one, with the sentence to show
+            raise _bad_request(str(exc)) from exc
 
     if "category_id" in fields:
         if fields["category_id"]:

@@ -34,8 +34,9 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   and search falls back to keywords; jobs fail with a sentence and retry.
 - **The assistant exists only in `suite` mode, and never writes.** Its tools look
   (`search_assets`, `get_asset`, `read_transcript`, `list_clips`, `list_tags`,
-  `list_playlists`) or record a proposal (`propose_changes`, `propose_enrichment`,
-  `propose_clip`, `propose_cut`, `propose_playlist`, `propose_note`);
+  `find_similar_tags`, `list_playlists`) or record a proposal (`propose_changes`,
+  `propose_enrichment`, `propose_clip`, `propose_cut`, `propose_playlist`, `propose_note`,
+  `propose_tag_groups`, `propose_tag_rename`, `propose_tag_delete`);
   `assistant/apply.py` is the only place a proposal reaches the library, and only when a
   person presses Apply. A new tool that writes would break that, so make it a proposal
   kind instead. Every tool re-checks that the asset is the caller's: the model chooses
@@ -52,6 +53,11 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   `SUITE_BASE_URL`, and the old `NOTES_BASE_URL` is not read) with the caller's
   own token, which only the Apply request has; their `/a/<id>` links are made absolute
   there. Notes failing is a skipped item with a sentence, never a failed Apply.
+  A proposal's `tag_ops` (each with its own `op_ref`) change the vocabulary, not one asset:
+  groups are `TagCategory` rows (there is no tag-under-tag), and a rename onto a name that
+  exists is recorded as a merge. Apply runs them in dependency order (`TAG_OP_ORDER`) through
+  `services/tags`, resolves categories proposed in the same turn by ref, skips a stale op
+  with a sentence, and re-indexes the touched assets once at the end.
   `web_search` is one of the looking tools: the suite runs the search (its own backend, else
   DuckDuckGo) and credits it to the conversation, and what comes back is for the model to
   read and cite, never a write. A **persona** is the suite's, chosen per turn and kept on the
