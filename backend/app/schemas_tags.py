@@ -59,6 +59,12 @@ class TagUpdate(BaseModel):
         return None if value is None else _not_blank(value, "A tag name")
 
 
+class TagMerge(BaseModel):
+    """Fold the tag in the path into this one."""
+
+    target_id: str = Field(min_length=1)
+
+
 class TagCategoryRead(BaseModel):
     id: str
     name: str

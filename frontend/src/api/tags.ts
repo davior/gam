@@ -64,6 +64,13 @@ export const tagsApi = {
     return client.delete(`/tags/${id}`).then(() => undefined)
   },
 
+  /** Fold one tag into another across every asset. Returns the target, with its new count. */
+  merge(id: string, targetId: string): Promise<Tag> {
+    return client
+      .post<DataResponse<Tag>>(`/tags/${id}/merge`, { target_id: targetId })
+      .then((r) => r.data.data)
+  },
+
   listCategories(): Promise<TagCategory[]> {
     return client
       .get<ListResponse<TagCategory>>('/tags/categories/all')
