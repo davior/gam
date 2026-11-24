@@ -12,7 +12,7 @@ untrustworthy, so it is now itemised:
 | GN-1 parent-domain cookie | Reported landed as `95ed2ca`. Not verified from here — see the caveat below. |
 | GN-2 `GET /api/auth/session` | Reported landed, same commit. **GAM does not call it yet** — see below. |
 | GN-3 CORS/CSP headroom | Reported landed, same commit. |
-| GN-4 asset-reference convention | Not applied. It is an M9 concern. |
+| GN-4 asset-reference convention | **Superseded** by Notes' `gamAsset` block — see the note under GN-4. |
 | GN-5 | Nothing to do — the explicit not-in-this-phase list. |
 | GN-6 unrelated findings | Offered, not required. Unapplied. |
 | **GN-7 python-jose CVEs** | **Not applied.** Security, independent of GAM. |
@@ -305,6 +305,16 @@ requires it, and nothing here changes that.
 ---
 
 ## GN-4 — Asset-reference convention  *(decision, minimal code)*
+
+> **Superseded (gecko-notes, `gamAsset` block).** Notes now embeds GAM assets as a custom
+> `gamAsset` block that stores only the asset id, and asks GAM for fresh signed addresses
+> whenever it is shown, since `/media` URLs expire after `MEDIA_URL_TTL_SECONDS`. Notes
+> calls GAM server-side as the user (forwarding their token; the assistant's worker mints
+> a 5-minute one), through `backend/app/gam_client.py` and `/api/gam/*` there, configured
+> by `GAM_BASE_URL` / `GAM_PUBLIC_URL`. "Copy into note" brings the file across for
+> shared notes and exports. GAM needed no change for this: it uses `GET /api/search`,
+> `GET /api/assets`, `GET /api/assets/{id}` (and `/text`, `/transcript`) and `/media`.
+> The reasoning below is kept as the record of why a plain link came first.
 
 The strategy doc left this open: `[asset:123]` shortcode vs a link to
 `gam.geckopico.com/a/123`.
