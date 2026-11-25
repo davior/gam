@@ -97,15 +97,18 @@ def _detail(session: Session, storage: LocalStorage, playlist: Playlist) -> Play
 
 
 @router.get("", response_model=ListResponse[PlaylistRead])
-def list_playlists(user: CurrentUser, limit: int = 100, offset: int = 0,
+def list_playlists(user: CurrentUser, limit: int = 100, offset: int = 0, q: str = "",
                    session: Session = Depends(get_session)) -> ListResponse[PlaylistRead]:
+    """The caller's playlists, newest edit first. `q` keeps those whose name or
+    description holds it (Video Creator's playlist search); `total` counts the matches."""
     limit, offset = max(1, min(limit, 500)), max(0, offset)
-    rows = session.exec(select(Playlist).where(Playlist.user_id == user.id)
+    term = q.strip()[:200]
+    rows = session.exec(service.filtered(select(Playlist), user.id, term)
                         .order_by(col(Playlist.updated_at).desc())
                         .offset(offset).limit(limit)).all()
     summaries = service.summaries(session, rows)
     return ListResponse(data=[_read(row, summaries[row.id]) for row in rows],
-                        total=service.count_for(session, user.id), limit=limit, offset=offset)
+                        total=service.count_for(session, user.id, term), limit=limit, offset=offset)
 
 
 @router.post("", response_model=DataResponse[PlaylistDetail], status_code=201)

@@ -320,6 +320,16 @@ def summaries(session: Session, playlists: Sequence[Playlist]) -> dict[str, dict
     return out
 
 
-def count_for(session: Session, user_id: str) -> int:
-    return session.exec(select(func.count()).select_from(Playlist)
-                        .where(Playlist.user_id == user_id)).one()
+def filtered(query, user_id: str, term: str = ""):
+    """`query` narrowed to the user's playlists, and to those whose name or description
+    holds `term` when there is one. Shared by the list and its count, so `total` always
+    counts what the list pages through."""
+    query = query.where(Playlist.user_id == user_id)
+    if term:
+        like = f"%{term}%"
+        query = query.where(col(Playlist.name).ilike(like) | col(Playlist.description).ilike(like))
+    return query
+
+
+def count_for(session: Session, user_id: str, term: str = "") -> int:
+    return session.exec(filtered(select(func.count()).select_from(Playlist), user_id, term)).one()

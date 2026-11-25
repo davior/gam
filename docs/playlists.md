@@ -37,7 +37,7 @@ item cannot outlive its asset or its playlist.
 
 | Method | Path | |
 |---|---|---|
-| GET | `/` | List: `item_count`, `total_seconds`, the first item's `thumb_url` |
+| GET | `/` | List: `item_count`, `total_seconds`, the first item's `thumb_url`. `?q=` keeps those whose name or description holds it (case-insensitive); `total` counts the matches |
 | POST | `/` | `{name, description?, items?: [ItemIn]}` |
 | GET | `/{id}` | The playlist and its items, in order |
 | PATCH | `/{id}` | `{name?, description?}` |
