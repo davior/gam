@@ -50,7 +50,7 @@ openpyxl==3.1.5
 # ytdlp._extract retries those as a browser. Pinned to what this yt-dlp's own extra
 # accepts (<0.18): yt-dlp refuses a curl_cffi it was not built against. abi3 manylinux
 # wheels for x86_64 and aarch64, so nothing compiles.
-yt-dlp[default,deno,curl-cffi]==2026.10.26
+yt-dlp[default,deno,curl-cffi]==2026.11.23
 curl-cffi==0.17.0
 # How enrichment and search reach Gecko Suite (AI_BACKEND=suite), and the agent loop the
 # assistant shares with the other apps. A commit, not a branch: the client and the
