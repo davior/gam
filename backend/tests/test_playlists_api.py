@@ -158,3 +158,18 @@ def test_someone_elses_playlist_is_missing(library, session):
     assert library.delete(f"/api/playlists/{theirs.id}").status_code == 404
     assert library.get("/api/playlists").json()["total"] == 0
     assert library.post("/api/playlists", json={"name": ""}).status_code == 422
+
+
+def test_the_list_is_searched_by_name_and_description(library, session):
+    from app.services import playlists
+
+    a_playlist(library, name="Financial crisis")
+    library.post("/api/playlists", json={"name": "Evening", "description": "The 2008 CRISIS, again"})
+    a_playlist(library, name="River")
+    playlists.create(session, "someone-else", "Their crisis")
+
+    found = library.get("/api/playlists", params={"q": "crisis"}).json()
+    assert sorted(p["name"] for p in found["data"]) == ["Evening", "Financial crisis"]
+    assert found["total"] == 2
+    # Blank is everything, as before the search existed.
+    assert library.get("/api/playlists", params={"q": "  "}).json()["total"] == 3
