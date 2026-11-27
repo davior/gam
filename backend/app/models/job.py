@@ -49,6 +49,11 @@ KIND_EXTRACT_SUBVIDEO = "extract_subvideo"
 # Per-asset and outside `ENRICHMENT_KINDS` for the reasons an extraction is: one ffmpeg
 # run, no provider. Which size rides in `payload`.
 KIND_MAKE_VERSION = "make_version"
+# Rewriting a recording's container so it carries a duration and a seek index
+# (`enrichment/remux.py`). For files written as a live stream, which every browser
+# recording is. Per-asset and outside `ENRICHMENT_KINDS` for the reasons a version is:
+# one ffmpeg run, no provider.
+KIND_REMUX = "remux"
 # M10. Proposing where an asset came from. Inside `ENRICHMENT_KINDS` unlike the two
 # above: it calls a provider and costs money, so it belongs in the bulk-enrichment
 # selection UI and its cost estimate.

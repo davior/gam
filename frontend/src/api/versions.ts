@@ -29,6 +29,19 @@ export function versionLabel(shortSide: number): string {
   return shortSide === 2160 ? '4K' : `${shortSide}p`
 }
 
+/** A video or sound that owns a file and has no length stored: what a browser's
+ *  live-stream recording looks like in the library. A clip owns no file of its own (it is
+ *  a window onto its parent's), so there is nothing of its own to rewrite. Goes false once
+ *  the repair has given the file a length. */
+export function needsLengthRepair(asset: Asset): boolean {
+  return (
+    ['video', 'audio'].includes(asset.asset_type) &&
+    asset.source !== 'clip' &&
+    !asset.missing &&
+    !asset.duration_seconds
+  )
+}
+
 interface DataResponse<T> {
   data: T
 }
@@ -52,6 +65,15 @@ export const versionsApi = {
       .post<DataResponse<ActivityJob>>(`/assets/${assetId}/versions`, {
         short_side: shortSide,
       })
+      .then((r) => r.data.data)
+  },
+
+  /** Rewrites a recording's file so it carries a length and can be seeked: what a
+   *  browser's live-stream WebM lacks. Nothing is re-encoded, and the asset keeps its
+   *  id. Queues a job; one at a time per asset. */
+  remux(assetId: string): Promise<ActivityJob> {
+    return client
+      .post<DataResponse<ActivityJob>>(`/assets/${assetId}/remux`)
       .then((r) => r.data.data)
   },
 

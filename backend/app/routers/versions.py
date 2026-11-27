@@ -1,4 +1,7 @@
-"""A video's standard-resolution versions: list, make, delete, and make one the original."""
+"""A video's standard-resolution versions: list, make, delete, and make one the original.
+
+And repairing a recording's container (`remux`), which sits here because it is the other
+thing that replaces a video's file and so shares these guards."""
 
 from __future__ import annotations
 
@@ -10,11 +13,11 @@ from sqlmodel import Session
 from app.auth import CurrentUser
 from app.database import get_session
 from app.enrichment.versions import SIZES, label_for, short_side_of
-from app.ingest.filetypes import TYPE_VIDEO
+from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_MAKE_VERSION
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_MAKE_VERSION, KIND_REMUX
 from app.models.version import AssetVersion
 from app.routers.assets import get_storage
 from app.schemas import DataResponse, ListResponse
@@ -67,6 +70,16 @@ def _require_no_version_job(session: Session, asset_id: str) -> None:
             detail={
                 "code": "already_running",
                 "message": "A version of this video is already being made",
+            },
+        )
+    # A repair replaces the original's file, which a version job reads from, and which
+    # `make_original` would be replacing at the same moment.
+    if enrichment_jobs.active_job(session, asset_id, KIND_REMUX) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "remux_in_progress",
+                "message": "This video's file is being repaired. Let it finish first.",
             },
         )
 
@@ -187,3 +200,44 @@ def make_original(
             asset, storage, tag_service.tags_for(session, asset.id), parent=parent
         )
     )
+
+
+@router.post("/{asset_id}/remux", response_model=DataResponse[ActivityJobRead], status_code=202)
+def start_remux(
+    asset_id: str, user: CurrentUser, session: Session = Depends(get_session)
+) -> DataResponse[ActivityJobRead]:
+    """Queue a rewrite of this recording's file, with a duration and a seek index.
+
+    For what a browser recorded: a live-stream WebM has neither, so a player cannot show
+    its length or seek, and Video Creator cannot tell how long it is. Nothing is
+    re-encoded, and the asset keeps its id; only the file behind it is replaced, and only
+    once the new one has been checked against the old.
+    """
+    asset = session.get(Asset, asset_id)
+    if not asset or asset.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "not_found", "message": "No such asset"},
+        )
+    if asset.asset_type not in (TYPE_VIDEO, TYPE_AUDIO) or not asset.storage_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "not_remuxable",
+                "message": "Only a video or sound that owns a file can be repaired",
+            },
+        )
+    _require_no_version_job(session, asset.id)
+    # A cut reads this file when it starts, so it must not be replaced under one.
+    if enrichment_jobs.active_job(session, asset.id, KIND_EXTRACT_SUBVIDEO) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "extraction_in_progress",
+                "message": "A sub-video is being cut from this video. Let it finish first.",
+            },
+        )
+    capacity.require_room()
+
+    job = enrichment_jobs.submit(session, asset, KIND_REMUX)
+    return DataResponse(data=KINDS["enrichment"].to_activity(job))
