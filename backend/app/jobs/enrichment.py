@@ -34,6 +34,7 @@ from app.enrichment.autotag import run as run_autotag
 from app.enrichment.bulk import run as run_bulk
 from app.enrichment.describe import run as run_describe
 from app.enrichment.extract_subvideo import run as run_extract_subvideo
+from app.enrichment.remux import RemuxError, run as run_remux
 from app.enrichment.versions import VersionError, run as run_make_version
 from app.enrichment.extract_text import TextExtractionError
 from app.enrichment.extract_text import run as run_extract_text
@@ -72,6 +73,7 @@ from app.models.job import (
     KIND_EMBED,
     KIND_EXTRACT_SUBVIDEO,
     KIND_MAKE_VERSION,
+    KIND_REMUX,
     KIND_EXTRACT_TEXT,
     GENERATION_JOB_KINDS,
     KIND_GENERATE,
@@ -322,6 +324,8 @@ def _run(job_id: str, q: JobQueue) -> None:
                     job.payload = json.dumps({"created_asset_id": created_asset_id})
             elif job.kind == KIND_MAKE_VERSION:
                 detail = run_make_version(session, asset, job.payload, progress)
+            elif job.kind == KIND_REMUX:
+                detail = run_remux(session, asset, progress)
             elif job.kind == KIND_SUMMARIZE:
                 detail = run_summarize(session, asset, progress)
             elif job.kind == KIND_AUTOTAG:
@@ -453,7 +457,9 @@ def _run(job_id: str, q: JobQueue) -> None:
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)
 
-        except VersionError as exc:
+        except (VersionError, RemuxError) as exc:
+            # Neither is an enrichment of the asset, so a failure does not mark it failed:
+            # the file is exactly as it was.
             message = str(exc)
             set_fields(session, job, status="error", stage="", error_message=message)
             logger.info("Enrichment job %s failed: %s", job_id, message)

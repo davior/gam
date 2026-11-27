@@ -15,7 +15,7 @@ from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.jobs import enrichment as enrichment_jobs
 from app.jobs.registry import KINDS
 from app.models.asset import Asset
-from app.models.job import KIND_EXTRACT_SUBVIDEO
+from app.models.job import KIND_EXTRACT_SUBVIDEO, KIND_REMUX
 from app.routers.assets import get_storage
 from app.schemas import DataResponse, ListResponse
 from app.schemas_assets import AssetRead
@@ -47,6 +47,15 @@ def _require_no_active_extraction(session: Session, asset_id: str) -> None:
             detail={
                 "code": "already_running",
                 "message": "A sub-video extraction is already running for this asset",
+            },
+        )
+    # The cut reads the file when it starts; a repair is replacing it.
+    if enrichment_jobs.active_job(session, asset_id, KIND_REMUX) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "remux_in_progress",
+                "message": "This video's file is being repaired. Let it finish first.",
             },
         )
 

@@ -21,6 +21,7 @@ const LABELS: Record<string, string> = {
   extract_text: 'Reading text',
   import_url: 'Importing',
   make_version: 'Making a version',
+  remux: 'Repairing a recording',
   import_track: 'Importing a track',
   generate: 'Generating',
   harvest_attribution: 'Reading file metadata',

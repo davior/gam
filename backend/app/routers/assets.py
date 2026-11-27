@@ -21,6 +21,7 @@ from app.models.job import (
     KIND_EXTRACT_SUBVIDEO,
     KIND_HARVEST_ATTRIBUTION,
     KIND_MAKE_VERSION,
+    KIND_REMUX,
 )
 from app.models.tag import Tag
 from app.schemas import DataResponse, ListResponse
@@ -460,7 +461,7 @@ def delete_asset(
         for row in (asset, *clips)
         # A version being made ends the same way: a row whose asset is gone, and a
         # file nothing points at.
-        for kind in (KIND_EXTRACT_SUBVIDEO, KIND_MAKE_VERSION)
+        for kind in (KIND_EXTRACT_SUBVIDEO, KIND_MAKE_VERSION, KIND_REMUX)
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

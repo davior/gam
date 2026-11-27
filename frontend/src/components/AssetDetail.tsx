@@ -38,6 +38,7 @@ import AssetThumb from '@/components/AssetThumb'
 import AttributionPanel from '@/components/AttributionPanel'
 import AddToPlaylist from '@/components/AddToPlaylist'
 import ClipEditor from '@/components/ClipEditor'
+import RepairLengthButton from '@/components/RepairLengthButton'
 import ClipRangeForm from '@/components/ClipRangeForm'
 import DocumentTextPanel from '@/components/DocumentTextPanel'
 import EmbedButton from '@/components/EmbedButton'
@@ -518,6 +519,7 @@ export default function AssetDetail({
         />
       )}
       <EmbedButton assetId={asset.id} />
+      <RepairLengthButton asset={asset} />
 
       <dl className="divide-y divide-gray-100 border-t border-gray-100 pt-2 dark:divide-gray-800 dark:border-gray-800">
         <Fact label="Type" value={asset.asset_type} />
