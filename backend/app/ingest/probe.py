@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -22,6 +22,16 @@ logger = logging.getLogger(__name__)
 # Generous, but bounded: ffprobe on a healthy file is milliseconds. A minute means
 # something is wrong, and an upload must not hang on it.
 PROBE_TIMEOUT_SECONDS = 60
+
+# Reading every packet header of a long recording takes seconds, not milliseconds, so
+# this is a separate and much longer bound. It is only ever paid for a file whose own
+# header could not say how long it is.
+SCAN_TIMEOUT_SECONDS = 600
+
+# Above this a "duration" implies a bitrate no camera or screen recorder produces, so
+# the header is more likely wrong than the file is huge. 400 Mbit/s is past every
+# consumer codec and below ProRes 4K, where the scan merely agrees and costs a moment.
+IMPLAUSIBLE_BYTES_PER_SECOND = 50_000_000
 
 
 @dataclass(frozen=True)
@@ -74,7 +84,76 @@ def probe(path: Path) -> ProbeResult:
     except ValueError:
         return ProbeResult()
 
-    return _interpret(payload)
+    result = _interpret(payload)
+    return _repair_duration(path, payload, result)
+
+
+def _repair_duration(path: Path, payload: dict[str, Any], result: ProbeResult) -> ProbeResult:
+    """Measure the file when its header cannot say how long it is, or says something absurd.
+
+    A browser's MediaRecorder (Gecko Notes' camera and screen recordings) writes WebM
+    as a live stream: no duration, no seek index, since the length is unknown when the
+    first byte goes out. ffprobe reports `N/A`, and a library that believed it stored a
+    30-minute recording as having no duration at all, which every consumer then handled
+    differently (a player showing 0:08, a renderer giving the clip a tenth of a second).
+    The packets themselves always know, so they are read.
+    """
+    if not (result.has_video or result.has_audio):
+        return result
+    format_name = str((payload.get("format") or {}).get("format_name") or "")
+    # A still image is one "frame"; its 0.04s is already handled by the caller.
+    if "image2" in format_name or format_name.endswith("_pipe"):
+        return result
+    if result.duration_seconds is not None and not _implausible(path, result.duration_seconds):
+        return result
+
+    scanned = _scan_duration(path, "v:0" if result.has_video else "a:0")
+    if scanned is None:
+        return result
+    # Never shorten a believable header; only replace a missing or absurd one.
+    if result.duration_seconds is None or scanned > result.duration_seconds:
+        logger.info("%s: header said %s s, packets say %.2f s",
+                    path.name, result.duration_seconds, scanned)
+        return replace(result, duration_seconds=scanned)
+    return result
+
+
+def _implausible(path: Path, duration: float) -> bool:
+    try:
+        return path.stat().st_size / duration > IMPLAUSIBLE_BYTES_PER_SECOND
+    except OSError:
+        return False
+
+
+def _scan_duration(path: Path, selector: str) -> Optional[float]:
+    """The end of the last packet of one stream, read from the packets themselves."""
+    try:
+        completed = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-select_streams", selector,
+                "-show_entries", "packet=pts_time,duration_time",
+                "-of", "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=SCAN_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("packet scan failed on %s: %s", path.name, exc)
+        return None
+    if completed.returncode != 0:
+        return None
+
+    end = 0.0
+    for line in completed.stdout.splitlines():
+        pts, _, length = line.partition(",")
+        start = _float(pts)
+        if start is None:
+            continue
+        end = max(end, start + (_float(length) or 0.0))
+    return end or None
 
 
 def _interpret(payload: dict[str, Any]) -> ProbeResult:
