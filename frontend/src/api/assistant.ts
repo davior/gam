@@ -81,6 +81,17 @@ export interface ProposalClip {
   reason: string | null
 }
 
+/** A picture of one page of a PDF, made at once on Apply. */
+export interface ProposalGrab {
+  grab_id: string
+  asset_id: string
+  asset_name: string
+  /** Counted from 1. */
+  page: number
+  name: string | null
+  reason: string | null
+}
+
 /** One moment (or whole asset) of a proposed playlist. Both points null: the whole asset. */
 export interface ProposalPlaylistItem {
   asset_id: string
@@ -176,6 +187,8 @@ export interface Proposal {
   items: ProposalItem[]
   /** Absent on a turn from before clips could be proposed. */
   clips?: ProposalClip[]
+  /** Absent on a turn from before PDF pages could be grabbed. */
+  grabs?: ProposalGrab[]
   /** Absent on a turn from before playlists could be proposed. */
   playlists?: ProposalPlaylist[]
   /** Absent on a turn from before notes could be proposed. */
@@ -221,6 +234,9 @@ export interface ApplyResult {
   clip_id?: string | null
   /** The clip that was made. A cut has none yet: a job makes it. */
   created_asset_id?: string | null
+  /** Set on the result of a page grab: which proposed one. `created_asset_id` is then the
+   *  picture. */
+  grab_id?: string | null
   /** Set on the result of a playlist: which proposed one, and the playlist it made or
    *  added to. */
   playlist_ref?: string | null
@@ -239,6 +255,7 @@ export interface ApplyResult {
 export interface ApplySelection {
   assetIds?: string[]
   clipIds?: string[]
+  grabIds?: string[]
   playlistRefs?: string[]
   noteRefs?: string[]
   tagOpRefs?: string[]
@@ -318,6 +335,7 @@ export const assistantApi = {
       .post<DataResponse<ApplyResult[]>>(`/assistant/turns/${id}/apply`, {
         asset_ids: selection?.assetIds ?? null,
         clip_ids: selection?.clipIds ?? null,
+        grab_ids: selection?.grabIds ?? null,
         playlist_refs: selection?.playlistRefs ?? null,
         note_refs: selection?.noteRefs ?? null,
         tag_op_refs: selection?.tagOpRefs ?? null,

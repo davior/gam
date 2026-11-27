@@ -153,6 +153,7 @@ describe('AssistantPanel', () => {
     expect(apply).toHaveBeenCalledWith('t1', {
       assetIds: ['a1'],
       clipIds: [],
+      grabIds: [],
       playlistRefs: [],
       noteRefs: [],
       tagOpRefs: [],
@@ -211,6 +212,7 @@ describe('AssistantPanel', () => {
     expect(apply).toHaveBeenCalledWith('t1', {
       assetIds: [],
       clipIds: ['k1'],
+      grabIds: [],
       playlistRefs: [],
       noteRefs: [],
       tagOpRefs: [],
@@ -286,6 +288,7 @@ describe('AssistantPanel', () => {
     expect(apply).toHaveBeenCalledWith('t1', {
       assetIds: [],
       clipIds: [],
+      grabIds: [],
       playlistRefs: ['p1'],
       noteRefs: [],
       tagOpRefs: [],
@@ -455,6 +458,7 @@ describe('AssistantPanel', () => {
     expect(apply).toHaveBeenCalledWith('t1', {
       assetIds: [],
       clipIds: [],
+      grabIds: [],
       playlistRefs: [],
       noteRefs: [],
       tagOpRefs: ['o2'],
@@ -549,6 +553,67 @@ describe('AssistantPanel', () => {
       '/a/c9'
     )
     expect(within(card).getByText(/Cut queued\./)).toBeInTheDocument()
+  })
+
+  it('shows a proposed page picture, applies it with its own id, and links to the picture', async () => {
+    const apply = vi.spyOn(assistantApi, 'apply').mockResolvedValue([
+      {
+        asset_id: 'p1',
+        asset_name: 'Report',
+        applied: ['picture of page 3 made'],
+        skipped: [],
+        grab_id: 'g1',
+        created_asset_id: 'img9',
+      },
+    ])
+    const proposal = {
+      items: [],
+      grabs: [
+        {
+          grab_id: 'g1',
+          asset_id: 'p1',
+          asset_name: 'Report',
+          page: 3,
+          name: 'Signal table',
+          reason: 'The table of signal types.',
+        },
+        {
+          grab_id: 'g2',
+          asset_id: 'p1',
+          asset_name: 'Report',
+          page: 1,
+          name: null,
+          reason: null,
+        },
+      ],
+    }
+    vi.spyOn(assistantApi, 'getTurn').mockResolvedValue(
+      turn({ outcome: 'applied', proposal })
+    )
+    await show(READY, [turn({ outcome: 'pending', proposal })])
+
+    const card = await screen.findByLabelText(/proposed changes/i)
+    expect(within(card).getByText('Signal table')).toBeInTheDocument()
+    expect(within(card).getByText(/Page 3 of/)).toBeInTheDocument()
+    expect(within(card).getByText('Report p.1')).toBeInTheDocument()
+
+    await userEvent.click(within(card).getByLabelText('Include Report p.1'))
+    await userEvent.click(await screen.findByRole('button', { name: /apply 1 of 2/i }))
+    expect(apply).toHaveBeenCalledWith('t1', {
+      assetIds: [],
+      clipIds: [],
+      grabIds: ['g1'],
+      playlistRefs: [],
+      noteRefs: [],
+      tagOpRefs: [],
+    })
+
+    const after = await screen.findByLabelText(/proposed changes/i)
+    expect(await within(after).findByText(/Picture made\./)).toBeInTheDocument()
+    expect(within(after).getByRole('link', { name: 'Open it' })).toHaveAttribute(
+      'href',
+      '/a/img9'
+    )
   })
 
   it('discards without applying', async () => {

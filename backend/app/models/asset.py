@@ -79,6 +79,10 @@ class Asset(SQLModel, table=True):
     # clip or extraction — never edited afterwards (M7 does not build a trim editor).
     in_point: Optional[float] = None
     out_point: Optional[float] = None
+    # The 1-based page of the parent PDF this picture was rendered from. Its own column
+    # rather than `in_point`/`out_point`, which are seconds and drive clip, playlist and
+    # tab logic that a page number would silently confuse.
+    source_page: Optional[int] = None
 
     original_name: Optional[str] = None
     mime_type: Optional[str] = None

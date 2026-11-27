@@ -724,7 +724,12 @@ export default function AssetDetail({
             id: 'text',
             label: 'Text',
             icon: FileText,
-            content: <DocumentTextPanel assetId={asset.id} />,
+            content: (
+              <DocumentTextPanel
+                assetId={asset.id}
+                isPdf={asset.file_format?.toLowerCase() === 'pdf'}
+              />
+            ),
           },
         ]
       : []),

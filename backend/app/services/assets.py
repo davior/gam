@@ -25,6 +25,7 @@ from app.ingest import embedded_metadata, thumbnails
 from app.ingest.filetypes import (
     SOURCE_AI,
     SOURCE_CLIP,
+    SOURCE_PDF_PAGE,
     SOURCE_SUBVIDEO,
     SOURCE_UPLOAD,
     TYPE_AUDIO,
@@ -112,6 +113,8 @@ def ingest_file(
     source: str = SOURCE_UPLOAD,
     content_type: Optional[str] = None,
     audio_kind: Optional[str] = None,
+    parent_asset_id: Optional[str] = None,
+    source_page: Optional[int] = None,
 ) -> Asset:
     """`ingest_upload` for bytes that are already a file on disk.
 
@@ -141,6 +144,8 @@ def ingest_file(
         content_type=content_type,
         name=name,
         audio_kind=audio_kind,
+        parent_asset_id=parent_asset_id,
+        source_page=source_page,
     )
 
 
@@ -165,6 +170,8 @@ def _catalogue(
     origin_project_id: Optional[str] = None,
     origin_reference_id: Optional[str] = None,
     audio_kind: Optional[str] = None,
+    parent_asset_id: Optional[str] = None,
+    source_page: Optional[int] = None,
 ) -> Asset:
     """Everything that happens once the bytes are safely stored."""
     extension = extension_of(filename)
@@ -182,6 +189,10 @@ def _catalogue(
         origin_project_id=origin_project_id,
         origin_reference_id=origin_reference_id,
         audio_kind=audio_kind if asset_type == TYPE_AUDIO else None,
+        # Set on the row before its first commit, so a derived file is never visible
+        # half-linked to the thing it came from.
+        parent_asset_id=parent_asset_id,
+        source_page=source_page,
     )
     session.add(asset)
     session.commit()
@@ -843,11 +854,18 @@ def list_children(session: Session, parent_id: str, user_id: str) -> list[Asset]
     and the delete guard's promote UI filters this down to `source == SOURCE_CLIP`
     itself, so one endpoint serves both rather than needing a second for the narrower
     question `blocking_clips` already answers for the guard itself.
+
+    Pictures rendered from a PDF's pages are children too, but they are not clips of
+    anything: they are found in the library like any image, so they stay out of this list.
     """
     return list(
         session.exec(
             select(Asset)
-            .where(col(Asset.parent_asset_id) == parent_id, Asset.user_id == user_id)
+            .where(
+                col(Asset.parent_asset_id) == parent_id,
+                Asset.user_id == user_id,
+                col(Asset.source) != SOURCE_PDF_PAGE,
+            )
             .order_by(col(Asset.upload_date).desc())
         ).all()
     )
@@ -1048,6 +1066,7 @@ def to_read_model(
         source=asset.source,
         parent_asset_id=asset.parent_asset_id,
         in_point=asset.in_point,
+        source_page=asset.source_page,
         out_point=asset.out_point,
         original_name=asset.original_name,
         mime_type=asset.mime_type,

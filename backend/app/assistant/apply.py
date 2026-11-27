@@ -53,7 +53,8 @@ from app import notes_client
 from app.services import assets as asset_service
 from app.services import playlists as playlist_service
 from app.services import tags as tag_service
-from app.storage import capacity
+from app.services import pdf_grab
+from app.storage import build_storage, capacity
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ def apply(session: Session, user_id: str, proposal: dict,
           only_playlists: Optional[Iterable[str]] = None,
           only_notes: Optional[Iterable[str]] = None,
           only_tag_ops: Optional[Iterable[str]] = None, *,
+          only_grabs: Optional[Iterable[str]] = None,
           token: Optional[str] = None, origin: str = "") -> list[dict]:
     """Apply the proposal's items, clips, playlists and notes, one result per entry.
 
@@ -77,11 +79,12 @@ def apply(session: Session, user_id: str, proposal: dict,
     or playlists, and must not get them as a side effect).
     """
     everything = (only is None and only_clips is None and only_playlists is None
-                  and only_notes is None and only_tag_ops is None)
+                  and only_notes is None and only_tag_ops is None and only_grabs is None)
     wanted_ops = set(only_tag_ops) if only_tag_ops is not None else set()
     wanted_notes = set(only_notes) if only_notes is not None else set()
     wanted = set(only) if only is not None else set()
     wanted_clips = set(only_clips) if only_clips is not None else set()
+    wanted_grabs = set(only_grabs) if only_grabs is not None else set()
     wanted_playlists = set(only_playlists) if only_playlists is not None else set()
     results = []
     for item in proposal.get("items", []):
@@ -90,6 +93,9 @@ def apply(session: Session, user_id: str, proposal: dict,
     for entry in proposal.get("clips", []):
         if everything or entry["clip_id"] in wanted_clips:
             results.append(_apply_clip(session, user_id, entry))
+    for entry in proposal.get("grabs", []):
+        if everything or entry["grab_id"] in wanted_grabs:
+            results.append(_apply_grab(session, user_id, entry))
     for entry in proposal.get("playlists", []):
         if everything or entry["playlist_ref"] in wanted_playlists:
             results.append(_apply_playlist(session, user_id, entry))
@@ -413,6 +419,27 @@ def _apply_clip(session: Session, user_id: str, entry: dict) -> dict:
         return result
     result["applied"].append("clip made")
     result["created_asset_id"] = clip.id
+    return result
+
+
+def _apply_grab(session: Session, user_id: str, entry: dict) -> dict:
+    result = {"asset_id": entry["asset_id"], "asset_name": entry.get("asset_name", ""),
+              "applied": [], "skipped": [], "grab_id": entry["grab_id"],
+              "created_asset_id": None}
+    asset = session.get(Asset, entry["asset_id"])
+    if asset is None or asset.user_id != user_id:
+        result["skipped"].append("The PDF no longer exists.")
+        return result
+    try:
+        picture = pdf_grab.grab_page(session, build_storage(), asset, int(entry["page"]),
+                                     name=entry.get("name"))
+    except pdf_grab.GrabError as exc:
+        # Checked again inside `grab_page`, since the file may have changed since the tool
+        # looked; its sentence is the one the person should read.
+        result["skipped"].append(str(exc))
+        return result
+    result["applied"].append(f"picture of page {entry['page']} made")
+    result["created_asset_id"] = picture.id
     return result
 
 

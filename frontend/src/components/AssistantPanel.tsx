@@ -8,6 +8,7 @@ import {
   type AssistantTurn,
   type Proposal,
   type ProposalClip,
+  type ProposalGrab,
   type ProposalNote,
   type ProposalPlaylist,
   type ProposalItem,
@@ -397,6 +398,7 @@ function ProposalCard({
   const discard = useAssistantStore((s) => s.discard)
   const items = proposal.items
   const clips = proposal.clips ?? []
+  const grabs = proposal.grabs ?? []
   const playlists = proposal.playlists ?? []
   const notes = proposal.notes ?? []
   const tagOps = proposal.tag_ops ?? []
@@ -405,14 +407,21 @@ function ProposalCard({
   const [skipped, setSkipped] = useState<Set<string>>(new Set())
   const chosen = items.filter((item) => !skipped.has(item.asset_id))
   const chosenClips = clips.filter((clip) => !skipped.has(clip.clip_id))
+  const chosenGrabs = grabs.filter((grab) => !skipped.has(grab.grab_id))
   const chosenPlaylists = playlists.filter((p) => !skipped.has(p.playlist_ref))
   const chosenNotes = notes.filter((n) => !skipped.has(n.note_ref))
   const chosenTagOps = tagOps.filter((op) => !skipped.has(op.op_ref))
   const total =
-    items.length + clips.length + playlists.length + notes.length + tagOps.length
+    items.length +
+    clips.length +
+    grabs.length +
+    playlists.length +
+    notes.length +
+    tagOps.length
   const picked =
     chosen.length +
     chosenClips.length +
+    chosenGrabs.length +
     chosenPlaylists.length +
     chosenNotes.length +
     chosenTagOps.length
@@ -461,7 +470,9 @@ function ProposalCard({
             <Changes item={item} />
             {!pending && turn.outcome === 'applied' && (
               <Outcome
-                result={applied?.find((r) => !r.clip_id && r.asset_id === item.asset_id)}
+                result={applied?.find(
+                  (r) => !r.clip_id && !r.grab_id && r.asset_id === item.asset_id
+                )}
               />
             )}
           </li>
@@ -476,6 +487,20 @@ function ProposalCard({
             result={
               !pending && turn.outcome === 'applied'
                 ? applied?.find((r) => r.clip_id === clip.clip_id)
+                : undefined
+            }
+          />
+        ))}
+        {grabs.map((grab) => (
+          <GrabRow
+            key={grab.grab_id}
+            grab={grab}
+            pending={pending}
+            included={!skipped.has(grab.grab_id)}
+            onToggle={() => toggle(grab.grab_id)}
+            result={
+              !pending && turn.outcome === 'applied'
+                ? applied?.find((r) => r.grab_id === grab.grab_id)
                 : undefined
             }
           />
@@ -537,6 +562,7 @@ function ProposalCard({
                   : {
                       assetIds: chosen.map((c) => c.asset_id),
                       clipIds: chosenClips.map((c) => c.clip_id),
+                      grabIds: chosenGrabs.map((g) => g.grab_id),
                       playlistRefs: chosenPlaylists.map((p) => p.playlist_ref),
                       noteRefs: chosenNotes.map((n) => n.note_ref),
                       tagOpRefs: chosenTagOps.map((op) => op.op_ref),
@@ -631,6 +657,72 @@ function ClipOutcome({ result }: { result: ApplyResult }) {
         'Cut queued. The new video appears in the library when it has been made (see Background activity). '}
       {result.skipped.join(' ')}
     </p>
+  )
+}
+
+/** A picture of one PDF page: which page of what, and why this one. */
+function GrabRow({
+  grab,
+  pending,
+  included,
+  onToggle,
+  result,
+}: {
+  grab: ProposalGrab
+  pending: boolean
+  included: boolean
+  onToggle: () => void
+  result?: ApplyResult
+}) {
+  const title = grab.name || `${grab.asset_name} p.${grab.page}`
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        {pending && (
+          <input
+            type="checkbox"
+            aria-label={`Include ${title}`}
+            checked={included}
+            onChange={onToggle}
+          />
+        )}
+        <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+          Page picture
+        </span>
+        <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+          {title}
+        </span>
+      </div>
+      <p className="text-xs text-gray-600 dark:text-gray-400">
+        Page {grab.page} of{' '}
+        <Link
+          to={`/a/${grab.asset_id}`}
+          className="text-blue-700 hover:underline dark:text-blue-300"
+        >
+          {grab.asset_name}
+        </Link>
+      </p>
+      {grab.reason && (
+        <p className="text-xs italic text-gray-600 dark:text-gray-400">{grab.reason}</p>
+      )}
+      {result && (
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {result.created_asset_id && (
+            <>
+              Picture made.{' '}
+              <Link
+                to={`/a/${result.created_asset_id}`}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+              >
+                Open it
+              </Link>
+              .{' '}
+            </>
+          )}
+          {result.skipped.join(' ')}
+        </p>
+      )}
+    </li>
   )
 }
 

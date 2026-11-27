@@ -94,6 +94,7 @@ class ApplyBody(BaseModel):
     # not applied (see `apply_service.apply`).
     asset_ids: Optional[List[str]] = None
     clip_ids: Optional[List[str]] = None
+    grab_ids: Optional[List[str]] = None
     playlist_refs: Optional[List[str]] = None
     note_refs: Optional[List[str]] = None
     tag_op_refs: Optional[List[str]] = None
@@ -108,6 +109,9 @@ class ItemResult(BaseModel):
     # Set on the result of a clip or a cut (its `asset_id` is then the source's). For a
     # live clip, `created_asset_id` is the clip; a cut is made by a job and has none yet.
     clip_id: Optional[str] = None
+    # Set on the result of a page grab: which proposed one. `created_asset_id` is then the
+    # picture, made at once.
+    grab_id: Optional[str] = None
     created_asset_id: Optional[str] = None
     # Set on the result of a playlist: which proposed one, and the playlist it made or
     # added to.
@@ -356,6 +360,7 @@ def apply_turn(turn_id: str, user: CurrentUser, request: Request, body: ApplyBod
     session.commit()
     results = apply_service.apply(session, user.id, proposal, body.asset_ids, body.clip_ids,
                                   body.playlist_refs, body.note_refs, body.tag_op_refs,
+                                  only_grabs=body.grab_ids,
                                   token=_caller_token(request), origin=_origin(request))
     return DataResponse(data=[ItemResult(**r) for r in results])
 
