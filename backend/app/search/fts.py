@@ -340,25 +340,34 @@ def search_segments(session: Session, user_id: str, query: str, limit: int = 50)
     ]
 
 
-def search_pages(session: Session, user_id: str, query: str, limit: int = 50) -> list[FtsHit]:
+def search_pages(
+    session: Session, user_id: str, query: str, limit: int = 50, asset_id: str | None = None
+) -> list[FtsHit]:
     """Written-word hits inside documents, each carrying the page it is on.
 
     The page is to a document what the timestamp is to a recording: without it a hit on
     a 200-page PDF says "somewhere in here", which is the question the search was asked.
+
+    `asset_id` narrows to one document, applied in the query and not after it, so a busy
+    library cannot push the pages of the document being asked about past `limit`.
     """
     match = build_match_query(query)
     if not match:
         return []
 
+    only = " AND asset_id = :asset_id" if asset_id else ""
+    params: dict = {"match": match, "user_id": user_id, "limit": limit}
+    if asset_id:
+        params["asset_id"] = asset_id
     rows = session.execute(
         text(
             f"SELECT page_id, asset_id, bm25({PAGE_FTS}) AS score,"
             f"       snippet({PAGE_FTS}, 3, '«', '»', '…', 16) AS excerpt"
             f"  FROM {PAGE_FTS}"
-            f" WHERE {PAGE_FTS} MATCH :match AND user_id = :user_id"
+            f" WHERE {PAGE_FTS} MATCH :match AND user_id = :user_id{only}"
             "  ORDER BY score LIMIT :limit"
         ),
-        {"match": match, "user_id": user_id, "limit": limit},
+        params,
     ).all()
 
     return [

@@ -30,6 +30,7 @@ class AssetRead(BaseModel):
     parent_asset_id: Optional[str] = None
     in_point: Optional[float] = None
     out_point: Optional[float] = None
+    source_page: Optional[int] = None
 
     original_name: Optional[str] = None
     mime_type: Optional[str] = None

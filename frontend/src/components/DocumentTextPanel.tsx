@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FileText, Loader2, ScanText } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { FileText, ImagePlus, Loader2, ScanText } from 'lucide-react'
 import { enrichmentApi, type DocumentPage } from '@/api/enrichment'
+import { documentsApi } from '@/api/documents'
+import type { Asset } from '@/api/assets'
 import { activityApi, type ActivityJob } from '@/api/transcripts'
 import { apiErrorMessage } from '@/api/client'
 import EnrichmentButton from '@/components/EnrichmentButton'
@@ -8,6 +11,9 @@ import { useActivityStore } from '@/stores/activity'
 
 interface Props {
   assetId: string
+  /** Only a PDF has pages to render. A .docx has none until something lays it out, and
+   *  a slide or a worksheet is not a page of anything that can be photographed. */
+  isPdf?: boolean
 }
 
 /** How often to poll a running extraction. Matches TranscriptPanel: fast enough to feel
@@ -25,11 +31,58 @@ const POLL_MS = 2000
  * It exists at all because text nobody can see is indistinguishable from text that was
  * never extracted, and this repository has had enough of that.
  */
-export default function DocumentTextPanel({ assetId }: Props) {
+export default function DocumentTextPanel({ assetId, isPdf = false }: Props) {
   const [pages, setPages] = useState<DocumentPage[]>([])
   const [job, setJob] = useState<ActivityJob | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Grabbing a page as a picture. The count comes from the file, not from the extracted
+  // text: a scanned PDF has no text rows at all but still has pages to grab.
+  const [pageCount, setPageCount] = useState<number | null>(null)
+  const [pageInput, setPageInput] = useState('1')
+  const [grabbing, setGrabbing] = useState<number | null>(null)
+  const [grabbed, setGrabbed] = useState<Asset | null>(null)
+  const [grabError, setGrabError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setGrabbed(null)
+    setGrabError(null)
+    setPageCount(null)
+    if (!isPdf) return
+    let stale = false
+    documentsApi
+      .pageCount(assetId)
+      .then((count) => {
+        if (!stale) setPageCount(count)
+      })
+      .catch(() => {
+        // The grab itself reports a PDF it cannot open; no count just means no ceiling.
+      })
+    return () => {
+      stale = true
+    }
+  }, [assetId, isPdf])
+
+  async function grab(page: number) {
+    setGrabbing(page)
+    setGrabError(null)
+    try {
+      const made = await documentsApi.grabPage(assetId, { page })
+      setGrabbed(made)
+    } catch (err) {
+      setGrabbed(null)
+      setGrabError(apiErrorMessage(err, 'Could not grab that page'))
+    } finally {
+      setGrabbing(null)
+    }
+  }
+
+  const pageNumber = Number(pageInput)
+  const pageValid =
+    Number.isInteger(pageNumber) &&
+    pageNumber >= 1 &&
+    (pageCount === null || pageNumber <= pageCount)
 
   const load = useCallback(async () => {
     try {
@@ -124,6 +177,55 @@ export default function DocumentTextPanel({ assetId }: Props) {
           />
         </div>
 
+        {isPdf && (
+          <div className="mb-3 space-y-1 rounded-md border border-gray-200 p-2 dark:border-gray-700">
+            <p className="text-xs font-medium text-gray-700 dark:text-gray-200">
+              Grab a page as an image
+            </p>
+            <div className="flex items-center gap-2">
+              <label
+                className="text-xs text-gray-600 dark:text-gray-400"
+                htmlFor="grab-page"
+              >
+                Page
+              </label>
+              <input
+                id="grab-page"
+                type="number"
+                min={1}
+                max={pageCount ?? undefined}
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                className="input w-20 px-2 py-1 text-xs"
+              />
+              {pageCount !== null && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  of {pageCount}
+                </span>
+              )}
+              <button
+                type="button"
+                className="btn btn-secondary px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!pageValid || grabbing !== null}
+                onClick={() => void grab(pageNumber)}
+              >
+                {grabbing === pageNumber ? 'Grabbing…' : 'Grab page'}
+              </button>
+            </div>
+            {grabbed && (
+              <p className="text-xs text-green-700 dark:text-green-400">
+                Saved &ldquo;{grabbed.name}&rdquo; to the library &mdash;{' '}
+                <Link to={`/a/${grabbed.id}`} className="underline">
+                  view it
+                </Link>
+              </p>
+            )}
+            {grabError && (
+              <p className="text-xs text-red-600 dark:text-red-400">{grabError}</p>
+            )}
+          </div>
+        )}
+
         {error && (
           <p className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-300">
             {error}
@@ -148,8 +250,19 @@ export default function DocumentTextPanel({ assetId }: Props) {
           pages.map((page) => (
             <div key={page.id} className="mb-3">
               {page.label && (
-                <p className="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                <p className="mb-0.5 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
                   {page.label}
+                  {isPdf && page.page_number != null && (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 normal-case tracking-normal text-blue-700 hover:underline disabled:opacity-50 dark:text-blue-300"
+                      disabled={grabbing !== null}
+                      onClick={() => void grab(page.page_number as number)}
+                    >
+                      <ImagePlus className="h-3 w-3" />
+                      Grab as image
+                    </button>
+                  )}
                 </p>
               )}
               {/* `whitespace-pre-wrap`: the paragraph breaks extraction preserved are the

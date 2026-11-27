@@ -1,7 +1,7 @@
 """The assistant's tools: those that look, and those that propose.
 
 None of them writes to the library. `propose_changes`, `propose_enrichment`, `propose_clip`,
-`propose_cut`, `propose_playlist`, `propose_note` and the three `propose_tag_*` add to a
+`propose_cut`, `propose_grab`, `propose_playlist`, `propose_note` and the three `propose_tag_*` add to a
 `Working` proposal that the turn ends with, and that is all they do. The person applies
 it (routers/assistant.py) or throws it away, so a model that misreads a request costs a
 discarded card and not a rewritten library.
@@ -33,10 +33,14 @@ from app.enrichment.summarize import summarisable
 from app.ingest.filetypes import TYPE_AUDIO, TYPE_VIDEO
 from app.models.asset import Asset
 from app.models.tag import Tag, TagCategory
+from app.models.document import DocumentPage
 from app.models.transcript import TranscriptSegment
+from app.search import fts
 from app.services import assets as asset_service
+from app.services import pdf_grab
 from app.services import playlists as playlist_service
 from app.services import search as search_service
+from app.storage import build_storage
 from app.schemas_tags import MAX_CATEGORY_LENGTH, MAX_TAG_LENGTH
 from app.services import tags as tag_service
 
@@ -225,6 +229,39 @@ SPECS: List[ToolSpec] = [
                        "description": "One sentence on why this stretch, shown to the person."},
         }, "required": ["asset_id", "start_seconds", "end_seconds"]}),
     ToolSpec(
+        "find_pages",
+        "Find which pages of one PDF (or other paged document) talk about something. Returns "
+        "page numbers with a snippet of each. Use it to turn 'the table about signals' into "
+        "a page number before propose_grab; try other words if the first query finds nothing. "
+        "Scanned PDFs have no text to search.",
+        {"type": "object", "properties": {
+            "asset_id": {"type": "string", "description": "The document to look in."},
+            "query": {"type": "string", "description": "Words that would be on the page."},
+        }, "required": ["asset_id", "query"]}),
+    ToolSpec(
+        "read_page",
+        "The full text of one page of a document, to check it is the page wanted before "
+        "proposing a grab of it.",
+        {"type": "object", "properties": {
+            "asset_id": {"type": "string"},
+            "page": {"type": "integer", "description": "The page number, counted from 1."},
+        }, "required": ["asset_id", "page"]}),
+    ToolSpec(
+        "propose_grab",
+        "Propose a screen grab of one page of a PDF, saved as a picture in the library that "
+        "can then go in a playlist or over a video. Use it for 'get me the cover page', 'grab "
+        "the page with the table of signals'. Find the page with find_pages and check it with "
+        "read_page first, unless the person named it ('page 3', 'the front page' is page 1). "
+        "Nothing is made until the person applies the proposal. A whole page only: it cannot "
+        "crop to a table.",
+        {"type": "object", "properties": {
+            "asset_id": {"type": "string", "description": "The PDF."},
+            "page": {"type": "integer", "description": "The page number, counted from 1."},
+            "name": {"type": "string", "description": "A short plain name for the picture."},
+            "reason": {"type": "string",
+                       "description": "One sentence on why this page, shown to the person."},
+        }, "required": ["asset_id", "page"]}),
+    ToolSpec(
         "propose_cut",
         "Propose cutting a stretch out of a video or audio asset into a NEW video (or audio) "
         "file of its own: a real cut that takes a moment to make and uses disk space. Use it "
@@ -301,7 +338,7 @@ SPECS: List[ToolSpec] = [
 
 # Tools that only look. The worker reports a step for the rest.
 READS = frozenset({"search_assets", "get_asset", "read_transcript", "list_clips", "list_tags",
-                   "find_similar_tags", "list_playlists", "web_search"})
+                   "find_similar_tags", "list_playlists", "web_search", "find_pages", "read_page"})
 
 # What a web search may hand back to the model in one call. A page of results, not a crawl.
 MAX_WEB_CHARS = 6_000
@@ -368,6 +405,8 @@ class Working:
         # Clips and cuts proposed this turn, in order. Each has its own `clip_id`, since
         # several can be proposed from one asset and the person may take only some.
         self.clips: List[dict] = []
+        # Page grabs proposed this turn, each with its own `grab_id`.
+        self.grabs: List[dict] = []
         # Playlists proposed this turn, each with its own `playlist_ref` so the person can
         # take one and not another.
         self.playlists: List[dict] = []
@@ -399,6 +438,9 @@ class Working:
             "propose_enrichment": self.propose_enrichment,
             "propose_clip": self.propose_clip,
             "propose_cut": self.propose_cut,
+            "find_pages": self.find_pages,
+            "read_page": self.read_page,
+            "propose_grab": self.propose_grab,
             "propose_playlist": self.propose_playlist,
             "propose_note": self.propose_note,
             "propose_tag_groups": self.propose_tag_groups,
@@ -438,6 +480,8 @@ class Working:
                 if asset is None:
                     continue
                 where = f" at {_clock(hit.start_time)}" if hit.start_time is not None else ""
+                if getattr(hit, "page_number", None):
+                    where = f" on page {hit.page_number}"
                 more = f" (+{hit.other_matches} more moments)" if hit.other_matches else ""
                 snippet = " ".join((hit.snippet or "").split())[:240]
                 lines.append(f"- {asset.id} | {asset.asset_type} | {asset.name}{where}{more}"
@@ -458,11 +502,71 @@ class Working:
                 ("tags", ", ".join(names) or None),
                 ("duration", _clock(asset.duration_seconds) if asset.duration_seconds else None),
                 ("transcript", asset.transcript_status),
+                ("pages", self._page_count(asset)),
                 ("creator", asset.creator), ("publisher", asset.publisher),
                 ("source title", asset.source_title), ("published", asset.published_date),
                 ("source url", asset.source_url), ("license", asset.license),
             ]
             return "\n".join(f"{label}: {value}" for label, value in fields if value)
+
+    @staticmethod
+    def _page_count(asset: Asset) -> Optional[int]:
+        if not pdf_grab.is_pdf(asset):
+            return None
+        try:
+            return pdf_grab.page_count(build_storage(), asset)
+        except Exception:  # noqa: BLE001 - a damaged PDF just has no count to report
+            return None
+
+    def find_pages(self, args: dict) -> object:
+        query = _clean(args.get("query"))
+        if not query:
+            return _fail("Give words that would be on the page.")
+        with self._session() as session:
+            asset = self._owned(session, args.get("asset_id"))
+            if asset is None:
+                return _fail("No such asset. Use an id from search_assets.")
+            self._step("search", f"Looking for {query!r} in {asset.name}")
+            hits = fts.search_pages(session, self.user_id, query, limit=8, asset_id=asset.id)
+            if not hits:
+                has_text = session.exec(
+                    select(DocumentPage.id).where(DocumentPage.asset_id == asset.id)
+                ).first()
+                if has_text is None:
+                    return ("This document has no readable text, so its pages cannot be searched. "
+                            "It may be scanned. Ask the person which page they mean.")
+                return "No page matched. Try other words from the page."
+            pages = {
+                row.id: row for row in session.exec(
+                    select(DocumentPage).where(col(DocumentPage.id).in_([h.page_id for h in hits])))
+            }
+            lines = []
+            for hit in hits:
+                page = pages.get(hit.page_id)
+                if page is None or page.page_number is None:
+                    continue
+                snippet = " ".join((hit.snippet or "").split())[:240]
+                lines.append(f"- page {page.page_number}" + (f": {snippet}" if snippet else ""))
+        return "\n".join(lines) or "No page matched. Try other words from the page."
+
+    def read_page(self, args: dict) -> object:
+        page_number = args.get("page")
+        if not isinstance(page_number, int) or isinstance(page_number, bool) or page_number < 1:
+            return _fail("Give the page as a number from 1.")
+        with self._session() as session:
+            asset = self._owned(session, args.get("asset_id"))
+            if asset is None:
+                return _fail("No such asset. Use an id from search_assets.")
+            self._step("read", f"Reading page {page_number} of {asset.name}")
+            row = session.exec(
+                select(DocumentPage).where(DocumentPage.asset_id == asset.id,
+                                           DocumentPage.page_number == page_number)
+            ).first()
+            if row is None or not (row.text or "").strip():
+                return (f"Page {page_number} has no readable text. It may be a picture, or "
+                        "scanned, or past the end of the document.")
+            cap = settings.assistant_transcript_chars
+            return row.text[:cap] + ("\n[cut off]" if len(row.text) > cap else "")
 
     def read_transcript(self, args: dict) -> object:
         with self._session() as session:
@@ -719,6 +823,39 @@ class Working:
         self._step("propose", f"Proposing {what} from {entry['asset_name']} "
                               f"({_precise(start)}–{_precise(end)})")
         return (f"Recorded {what}: {entry['asset_name']} {_precise(start)}–{_precise(end)}"
+                + (f", called {name!r}." if name else "."))
+
+    def propose_grab(self, args: dict) -> object:
+        """Record a grab of one PDF page, after the checks apply would make anyway."""
+        page = args.get("page")
+        if not isinstance(page, int) or isinstance(page, bool):
+            return _fail("Give the page as a whole number, counted from 1.")
+        if len(self.grabs) >= MAX_CLIPS:
+            return _fail(f"That is {MAX_CLIPS} grabs already, the most one request may "
+                         "make. Say what is left and let the person ask for more.")
+        with self._session() as session:
+            asset = self._owned(session, args.get("asset_id"))
+            if asset is None:
+                return _fail("No such asset. Use an id from search_assets.")
+            problem = pdf_grab.grab_problem(build_storage(), asset, page)
+            if problem:
+                return _fail(problem)
+            name = _clean(args.get("name"))
+            if name and len(name) > NAME_MAX:
+                return _fail(f"The name is too long ({len(name)} of {NAME_MAX} characters).")
+            reason = _clean(args.get("reason"))
+            reason = reason[:REASON_MAX] if reason else None
+            for held in self.grabs:
+                if held["asset_id"] == asset.id and held["page"] == page:
+                    return f"Already proposed: page {page} of {asset.name}."
+            entry = {
+                "grab_id": str(uuid.uuid4()),
+                "asset_id": asset.id, "asset_name": asset.name,
+                "page": page, "name": name, "reason": reason,
+            }
+            self.grabs.append(entry)
+        self._step("propose", f"Proposing a picture of page {page} of {entry['asset_name']}")
+        return (f"Recorded a picture of page {page} of {entry['asset_name']}"
                 + (f", called {name!r}." if name else "."))
 
     def propose_playlist(self, args: dict) -> object:
@@ -1295,9 +1432,10 @@ class Working:
         items = [i for i in self.items.values()
                  if any(i.get(f) for f in ("name", "description", "summary", "add_tags",
                                            "remove_tags", "enrich"))]
-        if not (items or self.clips or self.playlists or self.notes or self.tag_ops):
+        if not (items or self.clips or self.grabs or self.playlists or self.notes or self.tag_ops):
             return None
-        return {"items": items, "clips": list(self.clips), "playlists": list(self.playlists),
+        return {"items": items, "clips": list(self.clips), "grabs": list(self.grabs),
+                "playlists": list(self.playlists),
                 "notes": list(self.notes), "tag_ops": list(self.tag_ops)}
 
     def proposal_json(self) -> Optional[str]:

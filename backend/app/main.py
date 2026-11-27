@@ -27,6 +27,7 @@ from app.routers import activity as activity_router
 from app.routers import assets as assets_router
 from app.routers import assistant as assistant_router
 from app.routers import clips as clips_router
+from app.routers import documents as documents_router
 from app.routers import embeddings as embeddings_router
 from app.routers import enrichment as enrichment_router
 from app.routers import generate as generate_router
@@ -233,6 +234,7 @@ app.include_router(assets_router.router, prefix="/api/assets", tags=["assets"])
 app.include_router(transcripts_router.router, prefix="/api/assets", tags=["transcripts"])
 app.include_router(enrichment_router.router, prefix="/api/assets", tags=["enrichment"])
 app.include_router(clips_router.router, prefix="/api/assets", tags=["clips"])
+app.include_router(documents_router.router, prefix="/api/assets", tags=["documents"])
 app.include_router(versions_router.router, prefix="/api/assets", tags=["versions"])
 app.include_router(imports_router.router, prefix="/api/assets", tags=["imports"])
 app.include_router(activity_router.router, prefix="/api/activity", tags=["activity"])

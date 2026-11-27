@@ -34,8 +34,8 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   and search falls back to keywords; jobs fail with a sentence and retry.
 - **The assistant exists only in `suite` mode, and never writes.** Its tools look
   (`search_assets`, `get_asset`, `read_transcript`, `list_clips`, `list_tags`,
-  `find_similar_tags`, `list_playlists`) or record a proposal (`propose_changes`,
-  `propose_enrichment`, `propose_clip`, `propose_cut`, `propose_playlist`, `propose_note`,
+  `find_similar_tags`, `list_playlists`, `find_pages`, `read_page`) or record a proposal (`propose_changes`,
+  `propose_enrichment`, `propose_clip`, `propose_cut`, `propose_grab`, `propose_playlist`, `propose_note`,
   `propose_tag_groups`, `propose_tag_rename`, `propose_tag_delete`);
   `assistant/apply.py` is the only place a proposal reaches the library, and only when a
   person presses Apply. A new tool that writes would break that, so make it a proposal
@@ -58,6 +58,10 @@ Gecko Suite, through the two functions every job already calls, `build_provider`
   exists is recorded as a merge. Apply runs them in dependency order (`TAG_OP_ORDER`) through
   `services/tags`, resolves categories proposed in the same turn by ref, skips a stale op
   with a sentence, and re-indexes the touched assets once at the end.
+  A `grab` (a proposal's `grabs`, each with its own `grab_id`) is a picture of one PDF page,
+  rendered on Apply through `services/pdf_grab.py` and filed as an ordinary `image` child of the
+  PDF (`source=pdf_page`, `parent_asset_id`, `source_page`), so it can go in a playlist or on a
+  video; a page, never a crop. `docs/pdf-grabs.md` has the endpoint GVC would call.
   `web_search` is one of the looking tools: the suite runs the search (its own backend, else
   DuckDuckGo) and credits it to the conversation, and what comes back is for the model to
   read and cite, never a write. A **persona** is the suite's, chosen per turn and kept on the

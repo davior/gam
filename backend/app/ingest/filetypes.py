@@ -51,6 +51,10 @@ SOURCE_GVC = "gvc_export"
 # flips `source` to `SOURCE_SUBVIDEO` — a real, standalone file from here on.
 SOURCE_CLIP = "clip"
 SOURCE_SUBVIDEO = "sub_video"
+# A page of a PDF, rendered to a picture. A real file of its own (unlike a clip), with
+# `parent_asset_id` naming the PDF and `source_page` the page, so it can go in a playlist
+# or on a video, which the PDF itself cannot.
+SOURCE_PDF_PAGE = "pdf_page"
 
 # Pillow can decode these directly. The rest of the image set (HEIC, AVIF without a
 # plugin, SVG) needs something else, so a thumbnail is skipped rather than attempted.
